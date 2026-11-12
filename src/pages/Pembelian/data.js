@@ -18,19 +18,19 @@ export const RULES = {
 // KEPALA_GUDANG (approval FPB nilai besar) dan ADMIN (Pengaturan) belum dipakai di prototype ini.
 export const roles = [
   { value: 'peminta', label: 'Peminta', color: 'teal', person: { name: 'Andi Wijaya', title: 'Staff Housekeeping' } },
-  { value: 'atasan', label: 'Atasan peminta', color: 'lime', person: { name: 'Siti Rahayu', title: 'Kepala Dept. Housekeeping' } },
   { value: 'accounting', label: 'Accounting', color: 'primary', person: { name: 'Maya Sari', title: 'Staff Accounting' } },
-  { value: 'approver_pengadaan', label: 'Approver pengadaan', color: 'orange', person: { name: 'Budi Hartono', title: 'Manager' } },
-  { value: 'gudang', label: 'Gudang', color: 'green', person: { name: 'Rudi Hermawan', title: 'Kepala Gudang' } },
-  { value: 'pic_jasa', label: 'PIC jasa', color: 'cyan', person: { name: 'Hendra Saputra', title: 'PIC Jasa Teknik' } },
-  { value: 'finance_manager', label: 'Finance Manager', color: 'violet', person: { name: 'Ratna Widodo', title: 'Finance Manager' } },
-  { value: 'kasir', label: 'Finance / Kasir', color: 'grape', person: { name: 'Dewi Lestari', title: 'Staff Finance' } },
+  { value: 'bm', label: 'Building Manager', color: 'orange', person: { name: 'Budi Hartono', title: 'Building Manager' } },
+  { value: 'gudang', label: 'Gudang / PIC Jasa', color: 'green', person: { name: 'Rudi Hermawan', title: 'Kepala Gudang' } },
+  { value: 'finance', label: 'Finance', color: 'grape', person: { name: 'Dewi Lestari', title: 'Staff Finance' } },
   // Superadmin memegang semua hak sekaligus, termasuk melewati pemisahan tugas.
-  // Dipakai untuk setup, perbaikan data, dan menelusuri alur tanpa berpindah peran.
   { value: 'superadmin', label: 'Superadmin', color: 'dark', person: { name: 'Admin Sistem', title: 'Superadmin' } },
 ];
-// Data lama memakai peran gabungan; dipetakan ke peran baru supaya state tersimpan tetap terbaca.
-const legacyRole = { approver: 'approver_pengadaan', finance: 'kasir' };
+// Peran lama dipetakan ke peran baru supaya data dan state tersimpan tetap terbaca.
+const legacyRole = {
+  atasan: 'bm', chief_seksi: 'bm', chief_engineering: 'bm',
+  approver: 'bm', approver_pengadaan: 'bm', building_manager: 'bm',
+  finance_manager: 'bm', kasir: 'finance', pic_jasa: 'gudang',
+};
 export const normalizeRole = (v) => (roles.some((r) => r.value === v) ? v : legacyRole[v] ?? 'accounting');
 export const roleOf = (v) => roles.find((r) => r.value === normalizeRole(v));
 // "Nama · Jabatan" untuk pengguna pada peran tertentu.

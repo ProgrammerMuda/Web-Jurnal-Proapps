@@ -27,6 +27,7 @@ import BiddingForm from './BiddingSheet.jsx';
 import {
   biddingReady,
   minQuotesFor,
+  poAllJasa,
   needsBiddingNote,
   formatDate,
   approverFor,
@@ -36,6 +37,7 @@ import {
   repeatCheck,
   repeatReady,
   rupiah,
+  termParts,
   termText,
   lineTaxes,
   taxSummary,
@@ -335,15 +337,17 @@ export function BiddingSection({ f, pb, role, patchProc, onAddQuote, onEditQuote
           <Text fz="xs" c="slate.6">{single ? 'Belum ada penawaran. Unggah penawaran dari vendor tunggal; hanya satu penawaran yang dibutuhkan.' : 'Belum ada penawaran. Daftarkan vendor dan unggah penawaran dari tiap vendor.'}</Text>
         ) : (
           <Box style={frame}>
-            <Table verticalSpacing="xs" horizontalSpacing="sm" miw={760} styles={th}>
+            <Table verticalSpacing="xs" horizontalSpacing="sm" miw={820} styles={th}>
               <Table.Thead bg="slate.0">
                 <Table.Tr>
-                  <Table.Th>Vendor</Table.Th>
-                  <Table.Th w={90}>Termin</Table.Th>
-                  <Table.Th w={90}>Lead time</Table.Th>
-                  <Table.Th w={90}>Garansi</Table.Th>
-                  <Table.Th ta="right" w={150}>Total penawaran</Table.Th>
-                  <Table.Th w={220}>Berkas</Table.Th>
+                  {/* Vendor dan Termin sama-sama butuh ruang; kolom lain dipersempit secukupnya. */}
+                  <Table.Th miw={190}>Vendor</Table.Th>
+                  <Table.Th w={165}>Termin</Table.Th>
+                  {/* Barang diukur waktu kirimnya, jasa waktu pengerjaannya. */}
+                  <Table.Th w={74}>{poAllJasa(f) ? 'Waktu kerja' : 'Waktu kirim'}</Table.Th>
+                  <Table.Th w={74}>Garansi</Table.Th>
+                  <Table.Th ta="right" w={140}>Total penawaran</Table.Th>
+                  <Table.Th w={150}>Berkas</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -366,7 +370,13 @@ export function BiddingSection({ f, pb, role, patchProc, onAddQuote, onEditQuote
                           </Group>
                         </UnstyledButton>
                       </Table.Td>
-                      <Table.Td fz="sm">{termText(q.term)}</Table.Td>
+                      <Table.Td>
+                        {/* Nama termin di baris pertama, parameternya di baris kedua yang lebih kecil. */}
+                        <Text fz="sm" lh={1.3}>{termParts(q.term).label}</Text>
+                        {termParts(q.term).detail && (
+                          <Text fz={11} c="slate.6" lh={1.3}>{termParts(q.term).detail}</Text>
+                        )}
+                      </Table.Td>
                       <Table.Td fz="sm">{q.lead} hari</Table.Td>
                       <Table.Td fz="sm">{q.warranty || '—'}</Table.Td>
                       <Table.Td ta="right">
@@ -564,7 +574,7 @@ export function ApprovalBar({ st, role, ready, onSubmit, onApprove, onReject, la
   // Setelah disetujui tidak ada alert lagi: kabar sukses ditampilkan lewat modal saat tombol Setujui ditekan.
   if (st === 'disetujui') return null;
   if (st === 'diajukan') {
-    if (!canApprove(role, 'procurement')) return <Hint role="approver_pengadaan" />;
+    if (!canApprove(role, 'procurement')) return <Hint role="building_manager" />;
     // Pemisahan tugas 2.4: pembuat FPBJ tidak boleh menyetujui pengadaannya sendiri.
     if (blockedBySoD(role, fpbj)) {
       return (

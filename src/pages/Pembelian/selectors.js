@@ -116,7 +116,7 @@ export function actionsFor(role, pb) {
   r.receipt
     .filter((p) => canCreate(role, receiptDoc(poAllJasa(p))))
     .forEach((p) => add({ id: `r-${p.id}`, title: poAllJasa(p) ? 'Catat BAST' : poAllBarang(p) ? 'Catat penerimaan barang' : 'Catat penerimaan (FPB/BAST)', sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name}`, cta: 'Catat', to: { name: 'po', id: p.id } }));
-  // Atasan: BAST jasa yang menunggu persetujuannya.
+  // BAST jasa yang menunggu persetujuan Building Manager.
   if (canApprove(role, 'bast')) {
     pb.receipts
       .filter((x) => !receiptConfirmed(x))

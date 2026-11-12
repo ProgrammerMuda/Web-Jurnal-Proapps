@@ -28,11 +28,22 @@ const pbSeed = {
   returns: returnsSeed,
   vouchers: vouchersSeed,
 };
+// Vendor tersimpan sering lebih tua dari seed dan belum punya kolom yang ditambahkan
+// belakangan (mis. email). Kolom yang hilang diisi ulang dari seed tanpa menimpa isian
+// pengguna, dan vendor contoh yang belum ada ikut ditambahkan.
+function mergeVendors(saved) {
+  if (!Array.isArray(saved)) return vendorsSeed;
+  const seed = Object.fromEntries(vendorsSeed.map((v) => [v.id, v]));
+  const merged = saved.map((v) => ({ ...seed[v.id], ...v }));
+  const ids = new Set(merged.map((v) => v.id));
+  return [...merged, ...vendorsSeed.filter((v) => !ids.has(v.id))];
+}
+
 function loadPb() {
   try {
     const raw = JSON.parse(localStorage.getItem(PB_KEY));
     // Gabung dengan seed supaya data lama yang belum punya koleksi baru tetap bisa dibuka.
-    if (raw?.fpbj && raw?.pos) return { ...pbSeed, ...raw };
+    if (raw?.fpbj && raw?.pos) return { ...pbSeed, ...raw, vendors: mergeVendors(raw.vendors) };
   } catch {
     /* abaikan: pakai data contoh */
   }

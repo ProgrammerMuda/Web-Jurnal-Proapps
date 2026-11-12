@@ -250,7 +250,7 @@ export function parseWarranty(text) {
 export const CRITERIA = [
   { key: 'harga', label: 'Harga', weight: 45, guide: '5 = termurah / di bawah estimasi · 1 = jauh di atas estimasi' },
   { key: 'spek', label: 'Spesifikasi', weight: 30, guide: '5 = sesuai penuh dan ada kelebihan · 1 = tidak sesuai' },
-  { key: 'waktu', label: 'Lead time', weight: 15, guide: '5 = jauh sebelum tanggal dibutuhkan · 1 = lewat tanggal dibutuhkan' },
+  { key: 'waktu', label: 'Waktu penyerahan', weight: 15, guide: '5 = jauh sebelum tanggal dibutuhkan · 1 = lewat tanggal dibutuhkan' },
   { key: 'termin', label: 'Termin', weight: 10, guide: '5 = tempo panjang tanpa DP · 1 = harus lunas di muka' },
 ];
 // Arti angka 1-5 yang dipakai di semua kriteria.
@@ -355,14 +355,15 @@ export function expandSchedule(items, term) {
   });
 }
 
-// Teks termin untuk ditampilkan, lengkap dengan parameternya.
-export function termText(t) {
-  if (!t) return '—';
+// Termin dipecah jadi nama pendek + rincian parameter, supaya tabel bisa menaruhnya di dua
+// baris dan teks panjang tidak memaksa kolom sempit membungkus jadi banyak baris.
+export function termParts(t) {
+  if (!t) return { label: '—', detail: '' };
   const svc = serviceTerms.find((o) => o.value === t.type);
   if (!svc) {
     // Termin barang: CAD / DP x% / CBD.
     const base = dpOptions.find((o) => o.value === t.type)?.label.split(' (')[0] ?? t.type;
-    return t.type === 'dp' && t.dpPct > 0 ? `${base} ${t.dpPct}%` : base;
+    return { label: t.type === 'dp' && t.dpPct > 0 ? `${base} ${t.dpPct}%` : base, detail: '' };
   }
   const parts = [];
   if (svc.fields.includes('dp')) parts.push(`DP ${t.dpPct ?? 0}%`);
@@ -372,8 +373,14 @@ export function termText(t) {
     const unit = periodOptions.find((o) => o.value === t.period)?.label ?? t.period ?? '';
     parts.push(t.periods > 1 ? `${unit} × ${t.periods}` : unit);
   }
-  if (svc.fields.includes('due') && t.dueDays > 0) parts.push(`jatuh tempo ${t.dueDays} hari`);
-  return parts.length ? `${svc.label} · ${parts.join(' · ')}` : svc.label;
+  if (svc.fields.includes('due') && t.dueDays > 0) parts.push(`tempo ${t.dueDays} hari`);
+  return { label: svc.label, detail: parts.join(' · ') };
+}
+
+// Teks termin satu baris, untuk PDF dan kolom informasi yang lebar.
+export function termText(t) {
+  const { label, detail } = termParts(t);
+  return detail ? `${label} · ${detail}` : label;
 }
 // Minimal peserta bidding: total estimasi sampai Rp10 juta cukup 2 penawaran, di atasnya 3.
 export const minQuotesFor = (f) => (fpbjTotal(f) <= 10_000_000 ? 2 : 3);
@@ -390,7 +397,7 @@ export const finalTermOf = (f, vendorId) => {
   const base = { type: 'cad', dpPct: 0, ...(q?.term ?? {}), lead: q?.lead ?? 0, ...parseWarranty(q?.warranty) };
   return { ...base, ...(f.procurement?.finalTerms?.[vendorId] ?? {}) };
 };
-// Syarat berubah bila termin, lead time, atau garansi berbeda dari penawaran.
+// Syarat berubah bila termin, waktu penyerahan, atau garansi berbeda dari penawaran.
 export const termChanged = (f, vendorId) => {
   const q = f.quotes.find((x) => x.vendorId === vendorId);
   if (!q) return false;
