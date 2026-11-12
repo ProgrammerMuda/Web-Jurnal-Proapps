@@ -1,0 +1,7 @@
+node_modules
+dist
+.DS_Store
+*.local
+
+# Hasil tangkapan layar dari sesi pengujian browser, tidak perlu ikut repo.
+.playwright-mcp

@@ -1,0 +1,327 @@
+// Daftar dokumen per tab (permintaan, PO, Penerimaan, Faktur, Pembayaran, Retur) dengan pola tabel seperti halaman Kontak.
+import { Badge, Button, Select, Switch, Table, Text, Tooltip } from '@mantine/core';
+import { useState } from 'react';
+import {
+  ArrowCounterClockwise,
+  Check,
+  ClipboardText,
+  CurrencyCircleDollar,
+  Eye,
+  Invoice,
+  PencilSimple,
+  ShoppingCart,
+  Truck,
+  Wallet,
+  X,
+} from '@/components/Icon.jsx';
+import { DocNumber, EmptyState, ListShell, RowMenu, StatusPill } from './components.jsx';
+import { TODAY, personLabel } from './data.js';
+import { ROUTE_OPTIONS } from './procurement.jsx';
+import {
+  formatDate,
+  canReturn as canReturnInv,
+  requesterOf,
+  routeLabel,
+  poAllJasa,
+  poDocLabel,
+  FPBJ_STATUS,
+  fpbjTotal,
+  INV_STATUS,
+  invStatus,
+  invTotals,
+  PO_STATUS,
+  poStatus,
+  poTotal,
+  PR_STATUS,
+  returnValue,
+  RECEIPT_STATUS,
+  receiptConfirmed,
+  rupiah,
+  sum,
+  uninvoicedLines,
+} from './utils.js';
+import { canApprove, canCreate, hidesPrices, prBlockedBySoD, receiptDoc } from './permissions.js';
+import { toast } from './usePb.js';
+
+const Money = ({ children, c }) => (
+  <Text fz="sm" fw={700} c={c ?? 'slate.9'} ta="right" style={{ whiteSpace: 'nowrap' }}>{children}</Text>
+);
+const Sub = ({ children }) => <Text fz={11} c="slate.6" style={{ whiteSpace: 'nowrap' }}>{children}</Text>;
+const statusOptions = (map) => Object.entries(map).map(([value, s]) => ({ value, label: s.label }));
+const match = (q, ...vals) => !q.trim() || vals.some((v) => v?.toLowerCase().includes(q.trim().toLowerCase()));
+const settleLabel = { potong: 'Potong hutang', kredit: 'Kredit vendor', refund: 'Refund' };
+
+// Badge jalur pengadaan: latar abu muda, teks abu, dengan ikon sesuai jalur.
+function RouteBadge({ f }) {
+  const key = f.single?.on ? 'single' : f.route;
+  const Icon = ROUTE_OPTIONS.find((o) => o.value === key)?.icon;
+  return (
+    <Badge size="sm" radius="sm" variant="light" color="gray" c="slate.6" fw={700} tt="none" leftSection={Icon ? <Icon size={12} /> : null}>
+      {routeLabel(f)}
+    </Badge>
+  );
+}
+
+export default function ListTab({ tab, pb, go, openDialog }) {
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState(null);
+  const [onlyDue, setOnlyDue] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState('10');
+  // Setiap perubahan pencarian/filter mengembalikan ke halaman pertama.
+  const reset = (fn) => (v) => {
+    fn(v);
+    setPage(1);
+  };
+  const vendor = (id) => pb.vendorsById[id]?.name ?? '—';
+  const role = pb.role;
+  const shell = { query: q, onQuery: reset(setQ), page, setPage, pageSize, setPageSize };
+  const statusFilter = (map) => (
+    <Select size="sm" radius="md" w={220} clearable placeholder="Semua status" data={statusOptions(map)} value={status} onChange={reset(setStatus)} />
+  );
+
+  if (tab === 'fpbj') {
+    const rows = pb.fpbj.filter((f) => match(q, f.number, f.purpose, f.dept, requesterOf(f)) && (!status || f.status === status));
+    return (
+      <ListShell
+        {...shell}
+        noun="permintaan"
+        placeholder="Cari nomor, keperluan, departemen, atau peminta..."
+        filters={statusFilter(FPBJ_STATUS)}
+        head={[{ label: 'Permintaan & Tanggal' }, { label: 'Keperluan' }, { label: 'Departemen' }, { label: 'Jalur' }, { label: 'Status' }, { label: 'Estimasi', align: 'right' }, { label: 'Aksi', align: 'right', w: 70 }]}
+        minWidth={1000}
+        empty={pb.fpbj.length === 0 ? <EmptyState icon={ClipboardText} title="Belum ada permintaan" text="Pembelian dimulai dari permintaan dan IOM yang disetujui atasan." actions={canCreate(role, 'fpbj') ? [<Button key="n" size="xs" radius="md" onClick={() => go({ name: 'fpbj-new' })}>Buat permintaan</Button>] : null} /> : undefined}
+        rows={rows.map((f) => (
+          <Table.Tr key={f.id}>
+            <Table.Td>
+              <DocNumber onClick={() => go({ name: 'fpbj', id: f.id })}>{f.number}</DocNumber>
+              <Sub>{formatDate(f.date)} · {requesterOf(f)}</Sub>
+            </Table.Td>
+            <Table.Td maw={320}>
+              <Text fz="sm" fw={600} c="slate.9" truncate>{f.purpose}</Text>
+              <Sub>Dibutuhkan {formatDate(f.neededBy)}</Sub>
+            </Table.Td>
+            <Table.Td fz="sm">{f.dept}</Table.Td>
+            <Table.Td>{f.route ? <RouteBadge f={f} /> : <Text fz="xs" c="slate.6">Belum dipilih</Text>}</Table.Td>
+            <Table.Td><StatusPill map={FPBJ_STATUS} status={f.status} size="xs" /></Table.Td>
+            <Table.Td><Money>{rupiah(fpbjTotal(f))}</Money></Table.Td>
+            <Table.Td ta="right">
+              <RowMenu label={f.number} items={[
+                { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'fpbj', id: f.id }) },
+                ['draft', 'dikembalikan'].includes(f.status) && canCreate(role, 'fpbj') && { label: 'Ubah permintaan', icon: PencilSimple, onClick: () => go({ name: 'fpbj-edit', id: f.id }) },
+              ]} />
+            </Table.Td>
+          </Table.Tr>
+        ))}
+      />
+    );
+  }
+
+  if (tab === 'orders') {
+    // Spesifikasi 2.1: Gudang tidak melihat harga.
+    const noPrice = hidesPrices(role);
+    const rows = pb.pos.filter((p) => match(q, p.number, vendor(p.vendorId)) && (!status || poStatus(p, pb.calc) === status));
+    return (
+      <ListShell
+        {...shell}
+        noun="pesanan"
+        placeholder="Cari nomor atau vendor..."
+        filters={statusFilter(PO_STATUS)}
+        head={[{ label: 'Nomor & Tanggal' }, { label: 'Vendor' }, { label: 'Perkiraan Tiba' }, { label: 'Status' }, ...(noPrice ? [] : [{ label: 'Nilai', align: 'right' }, { label: 'Hutang ke Vendor', align: 'right' }]), { label: 'Aksi', align: 'right', w: 70 }]}
+        minWidth={1000}
+        empty={pb.pos.length === 0 ? <EmptyState icon={ShoppingCart} title="Belum ada pesanan" text="PO (barang) dan SPK (jasa) dibuat dari permintaan yang pengadaannya sudah disetujui." /> : undefined}
+        rows={rows.map((p) => {
+          const st = poStatus(p, pb.calc);
+          const debt = sum(pb.invoices.filter((i) => i.poId === p.id), (i) => invTotals(i, pb.calc).balance);
+          return (
+            <Table.Tr key={p.id}>
+              <Table.Td>
+                <DocNumber onClick={() => go({ name: 'po', id: p.id })}>{p.number}</DocNumber>
+                <Sub>{poDocLabel(p)} · {formatDate(p.date)}</Sub>
+              </Table.Td>
+              <Table.Td fz="sm" fw={600} c="slate.9">{vendor(p.vendorId)}</Table.Td>
+              <Table.Td fz="sm">{formatDate(p.expectedAt)}</Table.Td>
+              <Table.Td><StatusPill map={PO_STATUS} status={st} size="xs" /></Table.Td>
+              {!noPrice && <Table.Td><Money>{rupiah(poTotal(p))}</Money></Table.Td>}
+              {!noPrice && <Table.Td><Money c={debt ? 'red.8' : 'slate.6'}>{rupiah(debt)}</Money></Table.Td>}
+              <Table.Td ta="right">
+                <RowMenu label={p.number} items={[
+                  { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'po', id: p.id }) },
+                  canCreate(role, receiptDoc(poAllJasa(p))) && ['dikirim', 'sebagian'].includes(st) && { label: poAllJasa(p) ? 'Catat BAST' : 'Catat Penerimaan', icon: Truck, onClick: () => openDialog({ type: 'receipt', poId: p.id }) },
+                ]} />
+              </Table.Td>
+            </Table.Tr>
+          );
+        })}
+      />
+    );
+  }
+
+  if (tab === 'receipts') {
+    const rows = pb.receipts.filter((r) => match(q, r.number, vendor(r.vendorId), r.doNumber, pb.posById[r.poId]?.number));
+    return (
+      <ListShell
+        {...shell}
+        noun="penerimaan"
+        placeholder="Cari nomor, vendor, atau surat jalan..."
+        head={[{ label: 'Penerimaan & Tanggal' }, { label: 'Vendor' }, { label: 'Surat Jalan / BAST' }, { label: 'Jumlah Diterima', align: 'right' }, { label: 'Faktur' }, { label: 'Aksi', align: 'right', w: 70 }]}
+        minWidth={940}
+        empty={pb.receipts.length === 0 ? <EmptyState icon={Truck} title="Belum ada penerimaan" text="Penerimaan dicatat dari PO yang sudah dikirim ke vendor, saat barang atau jasa sudah sampai." /> : undefined}
+        rows={rows.map((r) => {
+          const open = uninvoicedLines(r, pb.invoices).length > 0;
+          return (
+            <Table.Tr key={r.id}>
+              <Table.Td>
+                <DocNumber onClick={() => go({ name: 'receipt', id: r.id })}>{r.number}</DocNumber>
+                <Sub>{formatDate(r.date)} · {pb.posById[r.poId]?.number}</Sub>
+              </Table.Td>
+              <Table.Td fz="sm" fw={600} c="slate.9">{vendor(r.vendorId)}</Table.Td>
+              <Table.Td fz="sm">{r.doNumber}</Table.Td>
+              <Table.Td><Money>{r.lines.reduce((n, l) => n + l.qty, 0)}</Money></Table.Td>
+              <Table.Td>{!receiptConfirmed(r)
+                ? <StatusPill map={RECEIPT_STATUS} status={r.status} size="xs" />
+                : <Badge size="xs" radius="sm" variant="light" color={open ? 'orange' : 'green'} fw={700} tt="none">{open ? 'Belum difaktur' : 'Sudah difaktur'}</Badge>}</Table.Td>
+              <Table.Td ta="right">
+                <RowMenu label={r.number} items={[
+                  { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'receipt', id: r.id }) },
+                  !receiptConfirmed(r) && canApprove(role, 'bast') && { label: 'Setujui BAST', icon: Check, onClick: () => { pb.update('receipts', r.id, (d) => ({ ...d, status: 'dikonfirmasi', approvedBy: personLabel(role) })); toast('BAST disetujui. Sudah bisa difaktur.'); } },
+                  receiptConfirmed(r) && open && canCreate(role, 'invoice') && { label: 'Buat Faktur', icon: Invoice, onClick: () => openDialog({ type: 'invoice', receiptIds: [r.id] }) },
+                ]} />
+              </Table.Td>
+            </Table.Tr>
+          );
+        })}
+      />
+    );
+  }
+
+  if (tab === 'bills') {
+    const rows = pb.invoices
+      .map((i) => ({ i, t: invTotals(i, pb.calc) }))
+      .filter(({ i, t }) => match(q, i.number, i.vendorNo, vendor(i.vendorId)) && (!status || invStatus(i, t) === status) && (!onlyDue || (t.balance > 0 && i.dueDate < TODAY)));
+    return (
+      <ListShell
+        {...shell}
+        noun="faktur"
+        placeholder="Cari nomor faktur, no. invoice vendor, atau vendor..."
+        filters={
+          <>
+            {statusFilter(INV_STATUS)}
+            <Switch size="sm" label="Hanya yang jatuh tempo" checked={onlyDue} onChange={(e) => reset(setOnlyDue)(e.currentTarget.checked)} />
+          </>
+        }
+        head={[{ label: 'Faktur & No. Vendor' }, { label: 'Vendor' }, { label: 'Jatuh Tempo' }, { label: 'Status' }, { label: 'Hutang', align: 'right' }, { label: 'Sisa Hutang', align: 'right' }, { label: 'Aksi', align: 'right', w: 70 }]}
+        minWidth={1040}
+        empty={pb.invoices.length === 0 ? <EmptyState icon={Invoice} title="Belum ada faktur" text="Faktur dibuat dari penerimaan (FPB/BAST) yang sudah dikonfirmasi, lalu dicocokkan 3 arah dengan PO." /> : undefined}
+        rows={rows.map(({ i, t }) => {
+          const late = t.balance > 0 && i.dueDate < TODAY;
+          const po = pb.posById[i.poId];
+          const canReturn = canReturnInv(i, po, pb.returns);
+          return (
+            <Table.Tr key={i.id}>
+              <Table.Td>
+                <DocNumber onClick={() => go({ name: 'invoice', id: i.id })}>{i.number}</DocNumber>
+                <Sub>{i.vendorNo}</Sub>
+              </Table.Td>
+              <Table.Td fz="sm" fw={600} c="slate.9">{vendor(i.vendorId)}</Table.Td>
+              <Table.Td fz="sm" c={late ? 'red.7' : 'slate.8'} fw={late ? 600 : 400} style={{ whiteSpace: 'nowrap' }}>{formatDate(i.dueDate)}</Table.Td>
+              <Table.Td><StatusPill map={INV_STATUS} status={invStatus(i, t)} size="xs" /></Table.Td>
+              <Table.Td>
+                <Money>{rupiah(t.total)}</Money>
+                {t.paid > 0 && <Text fz={11} c="green.8" ta="right">Terbayar: {rupiah(t.paid)}</Text>}
+              </Table.Td>
+              <Table.Td><Money c={t.balance ? 'red.8' : 'green.8'}>{rupiah(t.balance)}</Money></Table.Td>
+              <Table.Td ta="right">
+                <RowMenu label={i.number} items={[
+                  { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'invoice', id: i.id }) },
+                  t.free > 0 && canCreate(role, 'pr') && { label: 'Ajukan Pembayaran', icon: Wallet, onClick: () => openDialog({ type: 'pr', kind: 'pelunasan', invoiceIds: [i.id] }) },
+                  canReturn && canCreate(role, 'return') && { label: 'Buat Retur', icon: ArrowCounterClockwise, onClick: () => openDialog({ type: 'return', invoiceId: i.id }) },
+                ]} />
+              </Table.Td>
+            </Table.Tr>
+          );
+        })}
+      />
+    );
+  }
+
+  if (tab === 'payments') {
+    const rows = pb.prs.filter((p) => match(q, p.number, vendor(p.vendorId), p.note) && (!status || p.status === status));
+    return (
+      <ListShell
+        {...shell}
+        noun="Payment Request"
+        placeholder="Cari nomor, vendor, atau catatan..."
+        filters={statusFilter(PR_STATUS)}
+        head={[{ label: 'Payment Request & Tanggal' }, { label: 'Vendor' }, { label: 'Jenis' }, { label: 'Status' }, { label: 'Payment Voucher' }, { label: 'Jumlah', align: 'right' }, { label: 'Aksi', align: 'right', w: 70 }]}
+        minWidth={1100}
+        empty={pb.prs.length === 0 ? <EmptyState icon={Wallet} title="Belum ada Payment Request" text="Payment Request DP dibuat dari PO, pelunasan dibuat dari faktur. Approver menyetujui, Finance membayar." /> : undefined}
+        rows={rows.map((p) => {
+          const pv = pb.voucherOfPr(p.id);
+          return (
+          <Table.Tr key={p.id}>
+            <Table.Td>
+              <DocNumber onClick={() => go({ name: 'pr', id: p.id })}>{p.number}</DocNumber>
+              <Sub>{formatDate(p.date)}</Sub>
+            </Table.Td>
+            <Table.Td fz="sm" fw={600} c="slate.9">{vendor(p.vendorId)}</Table.Td>
+            <Table.Td fz="sm">{p.kind === 'dp' ? 'Di muka' : 'Pelunasan'}</Table.Td>
+            <Table.Td>
+              <Tooltip label={p.note} disabled={p.status !== 'ditolak' || !p.note} withArrow fz="xs"><span><StatusPill map={PR_STATUS} status={p.status} size="xs" /></span></Tooltip>
+            </Table.Td>
+            <Table.Td>
+              {pv ? (
+                <>
+                  <DocNumber onClick={() => go({ name: 'voucher', id: pv.id })}>{pv.number}</DocNumber>
+                  <Sub>{formatDate(pv.date)}</Sub>
+                </>
+              ) : (
+                <Text fz="xs" c="slate.5">Belum terbit</Text>
+              )}
+            </Table.Td>
+            <Table.Td><Money>{rupiah(p.amount)}</Money></Table.Td>
+            <Table.Td ta="right">
+              <RowMenu label={p.number} items={[
+                { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'pr', id: p.id }) },
+                p.status === 'diajukan' && canApprove(role, 'pr') && !prBlockedBySoD(role, p) && { label: 'Setujui', icon: Check, onClick: () => { pb.update('prs', p.id, (d) => ({ ...d, status: 'disetujui' })); toast('Payment Request disetujui.'); } },
+                p.status === 'diajukan' && canApprove(role, 'pr') && !prBlockedBySoD(role, p) && { label: 'Tolak', icon: X, color: 'red', onClick: () => openDialog({ type: 'pr-reject', prId: p.id }) },
+                p.status === 'disetujui' && canCreate(role, 'pv') && { label: 'Bayar', icon: CurrencyCircleDollar, onClick: () => openDialog({ type: 'pay', prId: p.id }) },
+                pv && { label: 'Lihat Payment Voucher', icon: CurrencyCircleDollar, onClick: () => go({ name: 'voucher', id: pv.id }) },
+              ]} />
+            </Table.Td>
+          </Table.Tr>
+          );
+        })}
+      />
+    );
+  }
+
+  // retur
+  const rows = pb.returns.filter((r) => match(q, r.number, vendor(r.vendorId), r.reason, pb.invoicesById[r.invoiceId]?.number));
+  return (
+    <ListShell
+      {...shell}
+      noun="retur"
+      placeholder="Cari nomor, vendor, alasan, atau faktur..."
+      head={[{ label: 'Retur & Tanggal' }, { label: 'Vendor' }, { label: 'Referensi Faktur' }, { label: 'Alasan' }, { label: 'Penyelesaian' }, { label: 'Nilai Retur', align: 'right' }, { label: 'Aksi', align: 'right', w: 70 }]}
+      minWidth={1000}
+      empty={pb.returns.length === 0 ? <EmptyState icon={ArrowCounterClockwise} title="Belum ada retur pembelian" text="Barang ditolak saat diterima cukup dicatat di FPB. Retur dibuat dari faktur bila barang dikembalikan ke vendor setelah difaktur." /> : undefined}
+      rows={rows.map((r) => (
+        <Table.Tr key={r.id}>
+          <Table.Td>
+            <DocNumber onClick={() => openDialog({ type: 'detail', kind: 'returns', id: r.id })}>{r.number}</DocNumber>
+            <Sub>{formatDate(r.date)}</Sub>
+          </Table.Td>
+          <Table.Td fz="sm" fw={600} c="slate.9">{vendor(r.vendorId)}</Table.Td>
+          <Table.Td fz="sm">{pb.invoicesById[r.invoiceId]?.number}</Table.Td>
+          <Table.Td fz="sm">{r.reason}</Table.Td>
+          <Table.Td fz="sm">{settleLabel[r.settlement]}</Table.Td>
+          <Table.Td><Money>{rupiah(Math.round(returnValue(r) * 1.11))}</Money></Table.Td>
+          <Table.Td ta="right">
+            <RowMenu label={r.number} items={[{ label: 'Lihat Rincian', icon: Eye, onClick: () => openDialog({ type: 'detail', kind: 'returns', id: r.id }) }]} />
+          </Table.Td>
+        </Table.Tr>
+      ))}
+    />
+  );
+}

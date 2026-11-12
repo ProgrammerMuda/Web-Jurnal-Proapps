@@ -1,0 +1,115 @@
+/* Global overrides only. Styling mengikuti token Mantine (spacing, radius, typography). */
+
+/* Tabel di dalam bingkai: baris terakhir tidak perlu garis bawah,
+   karena sudah ada border bingkai (mencegah garis bawah dobel/tebal). */
+.table-frame tbody tr:last-of-type {
+  border-bottom: 0;
+}
+
+/* Tombol naik/turun NumberField (meniru gaya kontrol NumberInput Mantine). */
+.number-field-controls {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: calc(var(--input-height) - 2px);
+  margin-inline-start: auto;
+}
+
+.number-field-control {
+  flex: 0 0 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  border-inline-start: 1px solid var(--input-bd);
+  color: var(--mantine-color-text);
+}
+
+.number-field-control:first-of-type {
+  border-bottom: 1px solid var(--input-bd);
+  border-start-end-radius: calc(var(--input-radius) - 1px);
+}
+
+.number-field-control:last-of-type {
+  border-end-end-radius: calc(var(--input-radius) - 1px);
+}
+
+.number-field-control:hover:not(:disabled) {
+  background-color: var(--mantine-color-gray-0);
+}
+
+.number-field-control:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Stepper Tambah Kontak: step aktif = subtle secondary, step yang sudah lewat = filled secondary + ikon putih. */
+.contact-stepper .mantine-Stepper-stepIcon[data-progress] {
+  background-color: var(--mantine-color-secondary-0);
+  border-color: var(--mantine-color-secondary-7);
+  color: var(--mantine-color-secondary-7);
+}
+
+.contact-stepper .mantine-Stepper-stepIcon[data-completed] {
+  background-color: var(--mantine-color-secondary-7);
+  border-color: var(--mantine-color-secondary-7);
+  color: var(--mantine-color-white);
+}
+
+/* Step yang sudah pernah dilewati tetap terisi (filled) walau pengguna kembali ke step sebelumnya. */
+.contact-stepper .step-reached .mantine-Stepper-stepIcon:not([data-progress]) {
+  background-color: var(--mantine-color-secondary-7);
+  border-color: var(--mantine-color-secondary-7);
+  color: var(--mantine-color-white);
+}
+
+.contact-stepper .mantine-Stepper-step:where(:not(.step-reached)) .mantine-Stepper-stepIcon {
+  cursor: default;
+}
+
+/* Caret dropdown Select: bawah (tertutup) / atas (terbuka). Input memakai aria-expanded saat dropdown terbuka. */
+.select-caret {
+  display: inline-flex;
+}
+
+.select-caret-up {
+  display: none;
+}
+
+.mantine-InputWrapper-root:has(input[aria-expanded='true']) .select-caret-down,
+.mantine-Input-wrapper:has(input[aria-expanded='true']) .select-caret-down {
+  display: none;
+}
+
+.mantine-InputWrapper-root:has(input[aria-expanded='true']) .select-caret-up,
+.mantine-Input-wrapper:has(input[aria-expanded='true']) .select-caret-up {
+  display: block;
+}
+
+/* Badge status di dalam tabel jangan terpotong (ellipsis bawaan Mantine) saat kolom sempit. */
+.table-frame .mantine-Badge-root,
+.table-frame .mantine-Badge-label {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* Label isian di modul Pembelian: seragam, tebal, dan cukup besar. */
+.pb-form .mantine-InputWrapper-label,
+.pb-form .mantine-Input-label {
+  font-size: var(--mantine-font-size-sm);
+  font-weight: 600;
+  color: var(--mantine-color-slate-9);
+  margin-bottom: 6px;
+}
+.pb-form .mantine-InputWrapper-required { color: var(--mantine-color-red-6); }
+.pb-form .mantine-InputWrapper-description { font-size: var(--mantine-font-size-xs); }
+
+/* DateField: sembunyikan ikon kalender bawaan browser; seluruh kolom tetap membuka pemilih tanggal. */
+.date-field input[type='date']::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
