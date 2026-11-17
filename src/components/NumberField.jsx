@@ -6,7 +6,19 @@ import { CaretDown, CaretUp } from '@/components/Icon.jsx';
 
 const iconSizes = { xs: 10, sm: 14, md: 16, lg: 18, xl: 20 };
 
-export default function NumberField({ size = 'sm', disabled, readOnly, hideControls, ...props }) {
+// Format rupiah untuk kolom nominal: ribuan dengan titik, dua angka di belakang koma
+// yang selalu ditampilkan (1.500.000,00) — sama dengan cara angka dicetak di layar.
+const MONEY = {
+  thousandSeparator: '.',
+  decimalSeparator: ',',
+  decimalScale: 2,
+  fixedDecimalScale: true,
+  allowNegative: false,
+  min: 0,
+};
+
+// money: pakai untuk kolom harga/nominal. Prop lain tetap bisa menimpa presetnya.
+export default function NumberField({ size = 'sm', money, disabled, readOnly, hideControls, ...props }) {
   const handlers = useRef(null);
   const iconSize = iconSizes[size] ?? 14;
   const off = disabled || readOnly;
@@ -27,6 +39,7 @@ export default function NumberField({ size = 'sm', disabled, readOnly, hideContr
 
   return (
     <NumberInput
+      {...(money ? MONEY : null)}
       {...props}
       size={size}
       disabled={disabled}

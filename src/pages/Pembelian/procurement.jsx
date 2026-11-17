@@ -275,7 +275,7 @@ export function BiddingSection({ f, pb, role, patchProc, onAddQuote, onEditQuote
                         {readOnly ? (
                           <Text fz="sm" fw={700}>{rupiah(final)}</Text>
                         ) : (
-                          <NumberField size="xs" radius="md" min={0} thousandSeparator="." decimalSeparator="," prefix="Rp " value={final} onChange={(v) => patchProc({ finals: { ...proc.finals, [it.id]: Number(v) || 0 } })} />
+                          <NumberField size="xs" radius="md" money prefix="Rp " value={final} onChange={(v) => patchProc({ finals: { ...proc.finals, [it.id]: Number(v) || 0 } })} />
                         )}
                       </Table.Td>
                     </Table.Tr>
@@ -552,7 +552,7 @@ export function RepeatSection({ f, pb, role, patchProc, onAddQuote, onSubmit, on
               {c.rows.filter((r) => r.kind === 'baru').map((r) => (
                 <SimpleGrid key={r.item.id} cols={{ base: 1, sm: 3 }} p="xs" style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 'var(--mantine-radius-md)' }}>
                   <Text fz="sm" fw={600} style={{ alignSelf: 'center' }}>{r.item.desc}</Text>
-                  <NumberField size="xs" radius="md" min={0} thousandSeparator="." decimalSeparator="," prefix="Rp " placeholder="Contoh: Rp 1.500.000" disabled={locked || !canCreate(role, 'procurement')} value={comps[r.item.id]?.price ?? 0} onChange={(val) => patchProc({ comparators: { ...comps, [r.item.id]: { ...comps[r.item.id], price: Number(val) || 0 } } })} />
+                  <NumberField size="xs" radius="md" money prefix="Rp " placeholder="Contoh: Rp 1.500.000" disabled={locked || !canCreate(role, 'procurement')} value={comps[r.item.id]?.price ?? 0} onChange={(val) => patchProc({ comparators: { ...comps, [r.item.id]: { ...comps[r.item.id], price: Number(val) || 0 } } })} />
                   <TextInput size="xs" radius="md" placeholder="Contoh: tokopedia.com atau Toko Sinar Jaya" disabled={locked || !canCreate(role, 'procurement')} value={comps[r.item.id]?.source ?? ''} onChange={(e) => patchProc({ comparators: { ...comps, [r.item.id]: { ...comps[r.item.id], source: e.currentTarget.value } } })} />
                 </SimpleGrid>
               ))}

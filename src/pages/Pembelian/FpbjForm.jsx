@@ -286,7 +286,7 @@ export default function FpbjForm({ pb, prefill, editing, onBack, onSaved }) {
                         </Table.Td>
                         <Table.Td><NumberField size="xs" radius="md" min={1} value={i.qty} onChange={(v) => setItem(i.id, { qty: Number(v) || 0 })} /></Table.Td>
                         <Table.Td><Select size="xs" radius="md" allowDeselect={false} data={units} value={i.unit} onChange={(v) => setItem(i.id, { unit: v })} /></Table.Td>
-                        <Table.Td><NumberField size="xs" radius="md" min={0} thousandSeparator="." decimalSeparator="," prefix="Rp " value={i.estPrice} onChange={(v) => setItem(i.id, { estPrice: Number(v) || 0 })} /></Table.Td>
+                        <Table.Td><NumberField size="xs" radius="md" money prefix="Rp " value={i.estPrice} onChange={(v) => setItem(i.id, { estPrice: Number(v) || 0 })} /></Table.Td>
                         <Table.Td ta="right" fz="sm" fw={600}>{rupiah(i.qty * i.estPrice)}</Table.Td>
                         <Table.Td>
                           <ActionIcon variant="subtle" color="red" aria-label="Hapus baris" disabled={items.length === 1} onClick={() => setItems((l) => l.filter((x) => x.id !== i.id))}>

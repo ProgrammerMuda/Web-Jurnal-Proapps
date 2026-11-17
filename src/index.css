@@ -43,27 +43,27 @@
   opacity: 0.6;
 }
 
-/* Stepper Tambah Kontak: step aktif = subtle secondary, step yang sudah lewat = filled secondary + ikon putih. */
-.contact-stepper .mantine-Stepper-stepIcon[data-progress] {
+/* Stepper (form Kontak & Faktur): step aktif = subtle secondary, step yang sudah lewat = filled secondary + ikon putih. */
+.app-stepper .mantine-Stepper-stepIcon[data-progress] {
   background-color: var(--mantine-color-secondary-0);
   border-color: var(--mantine-color-secondary-7);
   color: var(--mantine-color-secondary-7);
 }
 
-.contact-stepper .mantine-Stepper-stepIcon[data-completed] {
+.app-stepper .mantine-Stepper-stepIcon[data-completed] {
   background-color: var(--mantine-color-secondary-7);
   border-color: var(--mantine-color-secondary-7);
   color: var(--mantine-color-white);
 }
 
 /* Step yang sudah pernah dilewati tetap terisi (filled) walau pengguna kembali ke step sebelumnya. */
-.contact-stepper .step-reached .mantine-Stepper-stepIcon:not([data-progress]) {
+.app-stepper .step-reached .mantine-Stepper-stepIcon:not([data-progress]) {
   background-color: var(--mantine-color-secondary-7);
   border-color: var(--mantine-color-secondary-7);
   color: var(--mantine-color-white);
 }
 
-.contact-stepper .mantine-Stepper-step:where(:not(.step-reached)) .mantine-Stepper-stepIcon {
+.app-stepper .mantine-Stepper-step:where(:not(.step-reached)) .mantine-Stepper-stepIcon {
   cursor: default;
 }
 
@@ -112,4 +112,23 @@
   height: 100%;
   opacity: 0;
   cursor: pointer;
+}
+
+/* Tombol yang diblokir validasi (lihat blockedProps di components/common.jsx).
+   Tombolnya sengaja tidak memakai atribut `disabled` supaya tooltip alasannya tetap
+   muncul dan kliknya masih bisa memunculkan pesan error. Warnanya ditulis di sini,
+   bukan menumpang gaya [data-disabled] bawaan Mantine, karena gaya itu bergantung
+   pada token --mantine-color-disabled: begitu token itu tidak ada, seluruh aturannya
+   gugur dan tombolnya kembali terlihat aktif. */
+.btn-blocked[data-disabled] {
+  background-color: var(--mantine-color-gray-2) !important;
+  background-image: none !important;
+  color: var(--mantine-color-gray-6) !important;
+  border-color: var(--mantine-color-gray-3) !important;
+  box-shadow: none !important;
+  cursor: not-allowed;
+}
+.btn-blocked[data-disabled]:hover {
+  background-color: var(--mantine-color-gray-2) !important;
+  color: var(--mantine-color-gray-6) !important;
 }

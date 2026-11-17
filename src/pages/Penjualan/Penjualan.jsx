@@ -1,470 +1,471 @@
+// Shell modul Penjualan: menentukan tab aktif dari hash, lalu memasang halaman tab itu.
+// Tab yang belum dibangun memakai Placeholder — struktur menu dan rutenya sudah jalan.
+import { Stack } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
+import { useEffect, useState } from 'react';
 import {
-  ActionIcon,
-  Box,
-  Button,
-  Card,
-  Center,
-  Group,
-  Menu,
-  Pagination,
-  ScrollArea,
-  Select,
-  SimpleGrid,
-  Stack,
-  Table,
-  Text,
-  TextInput,
-  ThemeIcon,
-  UnstyledButton,
-} from '@mantine/core';
-import { useMemo, useState } from 'react';
-import {
-  ArrowsClockwise,
-  Check,
-  Clock,
-  DotsThreeVertical,
-  DownloadSimple,
-  Eye,
-  FileText,
-  Invoice,
-  Link,
-  MagnifyingGlass,
-  Plus,
-  Warning,
+  ChartBar,
+  CheckCircle,
+  Invoice as InvoiceIcon,
 } from '@/components/Icon.jsx';
-import { CopyIcon, PageIntro, StatusBadge } from './components.jsx';
-import PaymentModal from './PaymentModal.jsx';
-import SaleDetail from './SaleDetail.jsx';
-import SaleFormModal from './SaleFormModal.jsx';
-import {
-  computeTotals,
-  formatDate,
-  isOverdue,
-  nowIso,
-  rupiah,
-  rupiahShort,
-  statusOf,
-  useCustomer,
-} from './utils.js';
 import { useData } from '@/lib/store.jsx';
-import { toCustomer } from '@/pages/Kontak/utils.js';
+import Invoices from './Invoices.jsx';
+import Orders from './Orders.jsx';
+import Payments from './Payments.jsx';
+import Quotes from './Quotes.jsx';
+import Placeholder from './Placeholder.jsx';
+import Returns from './Returns.jsx';
+import ReturnForm from './ReturnForm.jsx';
+import SaleForm from './SaleForm.jsx';
+import {
+  applyReturnToSale,
+  canEditReturn,
+  nextReturnNumber,
+  newReturnFrom,
+} from './returns.js';
+import { DOC } from './docTypes.js';
+import {
+  applyInvoicedQty,
+  canEditOrder,
+  canInvoiceOrder,
+  invoicePrefillFromOrder,
+  nextOrderNumber,
+} from './orders.js';
+import {
+  canConvertQuote,
+  canEditQuote,
+  invoicePrefillFromQuote,
+  nextQuoteNumber,
+  orderPrefillFromQuote,
+  QUOTE_VALID_DAYS,
+} from './quotes.js';
+import { formatHash, parseHash } from './routes.js';
+import { formatAddress } from '@/pages/Kontak/utils.js';
+import { LATE_FEE_RATE, paymentTerms, TODAY } from './data.js';
+import {
+  addDays,
+  canEdit,
+  lateFeeAmount,
+  nextInvoiceNumber,
+  nowIso,
+  numberTaken,
+} from './utils.js';
 
-const tabs = [
-  { value: 'all', label: 'Semua Penjualan', icon: Invoice, match: () => true },
-  { value: 'unpaid', label: 'Belum Lunas', icon: Clock, match: (s) => statusOf(s) === 'sent' },
-  { value: 'paid', label: 'Lunas', icon: Check, match: (s) => statusOf(s) === 'paid' },
-  { value: 'draft', label: 'Draft', icon: FileText, match: (s) => statusOf(s) === 'draft' },
-  { value: 'overdue', label: 'Jatuh Tempo', icon: Warning, match: isOverdue },
-];
+// Isi tiap tab yang belum dibangun: ikon, judul, deskripsi, dan rencana isinya.
+// Tab yang belum dibangun: ikon, judul, deskripsi, dan rencana isinya.
+const stubs = {
+  receivables: {
+    icon: ChartBar,
+    title: 'Piutang Usaha',
+    description:
+      'Umur piutang per pelanggan, dihitung dari faktur yang belum lunas dan tanggal jatuh temponya.',
+    plan: [
+      'Kelompok umur: belum jatuh tempo, 1\u201330, 31\u201360, 61\u201390, > 90 hari',
+      'Rekap per pelanggan dengan rincian faktur di dalamnya',
+      'Ekspor dan penanda faktur yang perlu segera ditagih',
+    ],
+  },
+};
 
-const pageSizes = ['10', '20', '50'].map((v) => ({ value: v, label: `${v} / hal` }));
-
-function StatCard({ label, value, hint, icon: Icon, color }) {
-  return (
-    <Card withBorder radius="md" padding="md" bg="white">
-      <Group justify="space-between" align="flex-start" wrap="nowrap">
-        <Box>
-          <Text fz={11} fw={600} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }}>
-            {label}
-          </Text>
-          <Text fz={22} fw={700} c="slate.9" lh={1.3}>
-            {value}
-          </Text>
-          <Text fz={11} c="slate.6">
-            {hint}
-          </Text>
-        </Box>
-        <ThemeIcon variant="light" color={color} size={36} radius="md">
-          <Icon size={18} />
-        </ThemeIcon>
-      </Group>
-    </Card>
-  );
+// #29: isian faktur denda — satu baris denda, nilainya dari sisa tagihan yang telat.
+function lateFeePrefill(sale) {
+  const { bulan, amount } = lateFeeAmount(sale, LATE_FEE_RATE);
+  return {
+    customerId: sale.customerId,
+    unit: sale.unit,
+    billingAddress: sale.billingAddress,
+    date: TODAY,
+    dueDate: addDays(TODAY, 14),
+    term: 'net15',
+    items: [
+      {
+        productId: 'denda',
+        description: `Denda ${bulan} bulan atas ${sale.number} (jatuh tempo ${sale.dueDate})`,
+        qty: 1,
+        price: amount,
+        tax: null,
+      },
+    ],
+    memo: `Denda keterlambatan ${LATE_FEE_RATE * 100}% per bulan atas faktur ${sale.number}.`,
+  };
 }
 
-function SaleRow({ sale, onOpen, onPay, onCreateLink }) {
-  const t = computeTotals(sale);
-  const status = statusOf(sale);
-  const customer = useCustomer(sale.customerId);
+// Halaman form faktur: menyimpan ke store, lalu pindah ke rincian faktur yang tersimpan.
+function SalePage({ view }) {
+  const { sales, setSales, orders, setOrders, quotes, setQuotes, contactsById } = useData();
+  const editing = view.name === 'sale-edit' ? sales.find((s) => s.id === view.id) : null;
 
-  return (
-    <Table.Tr>
-      <Table.Td>
-        <Group gap={4} wrap="nowrap">
-          <UnstyledButton onClick={onOpen}>
-            <Text fz="sm" fw={700} c="primary.9" style={{ whiteSpace: 'nowrap' }}>
-              {sale.number}
-            </Text>
-          </UnstyledButton>
-          <CopyIcon value={sale.number} />
-        </Group>
-        {sale.ref && (
-          <Text fz={11} c="slate.6">
-            Ref: {sale.ref}
-          </Text>
-        )}
-      </Table.Td>
-      <Table.Td>
-        <Text fz="sm" fw={600} c="slate.9">
-          {customer?.name}
-        </Text>
-        {customer?.email && (
-          <Text fz={11} c="slate.6">
-            {customer.email}
-          </Text>
-        )}
-      </Table.Td>
-      <Table.Td fz="sm" c="slate.8" style={{ whiteSpace: 'nowrap' }}>
-        {formatDate(sale.date)}
-      </Table.Td>
-      <Table.Td
-        fz="sm"
-        c={isOverdue(sale) ? 'red.7' : 'slate.8'}
-        fw={isOverdue(sale) ? 600 : 400}
-        style={{ whiteSpace: 'nowrap' }}
-      >
-        {formatDate(sale.dueDate)}
-      </Table.Td>
-      <Table.Td ta="right">
-        <Text fz="sm" fw={700} c="slate.9" style={{ whiteSpace: 'nowrap' }}>
-          {rupiah(t.total)}
-        </Text>
-        {t.discount > 0 && (
-          <Text fz={11} c="slate.6" style={{ whiteSpace: 'nowrap' }}>
-            Diskon: -{rupiah(t.discount)}
-          </Text>
-        )}
-      </Table.Td>
-      <Table.Td ta="right">
-        <Text
-          fz="sm"
-          fw={700}
-          c={t.balance > 0 ? 'red.8' : 'green.8'}
-          style={{ whiteSpace: 'nowrap' }}
-        >
-          {rupiah(t.balance)}
-        </Text>
-        {t.paid > 0 && (
-          <Text fz={11} c="green.8" style={{ whiteSpace: 'nowrap' }}>
-            Terbayar: {rupiah(t.paid)}
-          </Text>
-        )}
-      </Table.Td>
-      <Table.Td ta="center">
-        <StatusBadge status={status} size="xs" />
-      </Table.Td>
-      <Table.Td ta="center">
-        <Menu position="bottom-end" withinPortal shadow="md" width={200}>
-          <Menu.Target>
-            <ActionIcon variant="subtle" color="slate" aria-label={`Aksi ${sale.number}`}>
-              <DotsThreeVertical size={18} />
-            </ActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item fz="xs" leftSection={<Eye size={14} />} onClick={onOpen}>
-              Lihat Rincian
-            </Menu.Item>
-            {status === 'sent' && (
-              <Menu.Item fz="xs" leftSection={<Invoice size={14} />} onClick={onPay}>
-                Catat Pembayaran
-              </Menu.Item>
-            )}
-            <Menu.Item fz="xs" leftSection={<Link size={14} />} onClick={onCreateLink}>
-              Tautan Invoice
-            </Menu.Item>
-            <Menu.Item fz="xs" leftSection={<DownloadSimple size={14} />}>
-              Unduh Faktur PDF
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-      </Table.Td>
-    </Table.Tr>
-  );
-}
+  // S1/S5: faktur yang dibuat dari pesanan atau penawaran datang dengan isian awal.
+  const [jenis, sumberId] = (view.from ?? '').split(':');
+  const order = jenis === 'order' ? orders.find((o) => o.id === sumberId) : null;
+  const quote = jenis === 'quote' ? quotes.find((q) => q.id === sumberId) : null;
+  // #29: faktur denda atas faktur yang lewat jatuh tempo.
+  const telat = jenis === 'late' ? sales.find((s) => s.id === sumberId) : null;
+  const sumber = order ?? quote;
+  const kontak = sumber ? contactsById[sumber.customerId] : null;
+  const hariIni = TODAY;
+  const termDays = sumber
+    ? (paymentTerms.find((t) => t.value === sumber.term)?.days ?? 30)
+    : null;
+  const prefill = telat
+    ? lateFeePrefill(telat)
+    : order
+    ? invoicePrefillFromOrder(order, {
+        billingAddress: kontak ? formatAddress(kontak.billing) : '',
+        dueDate: addDays(hariIni, termDays),
+      })
+    : quote
+      ? {
+          ...invoicePrefillFromQuote(quote, {
+            billingAddress: kontak ? formatAddress(kontak.billing) : '',
+            dueDate: addDays(hariIni, termDays),
+          }),
+        }
+      : null;
 
-// params (dari halaman lain): { saleId } membuka rincian, { createFor } membuka form untuk kontak itu.
-export default function Penjualan({ params }) {
-  const { sales, setSales, contactsById } = useData();
-  const [detailId, setDetailId] = useState(params?.saleId ?? null);
-  const [createOpen, setCreateOpen] = useState(!!params?.createFor);
-  const [payId, setPayId] = useState(null);
+  // Faktur yang sudah terkirim tidak bisa diubah: rutenya dikembalikan ke rinciannya.
+  if (view.name === 'sale-edit' && (!editing || !canEdit(editing))) {
+    return <Invoices key={view.id} params={{ saleId: view.id }} />;
+  }
 
-  const [tab, setTab] = useState('all');
-  const [query, setQuery] = useState('');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState('10');
-
-  const updateSale = (id, fn) =>
-    setSales((list) => list.map((s) => (s.id === id ? { ...fn(s), updatedAt: nowIso() } : s)));
-
-  const openDetail = (id) => {
-    setDetailId(id);
-    window.scrollTo({ top: 0 });
-  };
-
-  // Tautan faktur dibuat sekali, lalu disalin ke clipboard setiap kali diminta.
-  const createLink = (id) => {
-    const sale = sales.find((s) => s.id === id);
-    const link = sale.invoiceLink ?? `https://jurnal.proapps.id/invoice/${id}`;
-    if (!sale.invoiceLink) updateSale(id, (s) => ({ ...s, invoiceLink: link }));
-    navigator.clipboard?.writeText(link).catch(() => {});
-  };
-
-  const savePayment = (payment) => {
-    updateSale(payId, (s) => ({ ...s, payments: [...s.payments, payment] }));
-    setPayId(null);
-  };
-
-  const saveSale = (sale) => {
-    setSales((list) => [sale, ...list]);
-    setCreateOpen(false);
-    setTab('all');
-    setQuery('');
-    setPage(1);
-  };
-
-  const stats = useMemo(() => {
-    const active = sales.filter((s) => !s.draft).map(computeTotals);
-    const sum = (k) => active.reduce((n, t) => n + t[k], 0);
-    const overdue = sales.filter(isOverdue).length;
-    return [
-      {
-        label: 'Total Penjualan',
-        value: rupiahShort(sum('total')),
-        hint: `${sales.length} faktur tercatat`,
-        icon: Invoice,
-        color: 'primary',
-      },
-      {
-        label: 'Sisa Tagihan (Piutang)',
-        value: rupiahShort(sum('balance')),
-        hint: 'Menunggu pelunasan',
-        icon: Clock,
-        color: 'orange',
-      },
-      {
-        label: 'Sudah Diterima (Lunas)',
-        value: rupiahShort(sum('paid')),
-        hint: 'Pembayaran terverifikasi',
-        icon: Check,
-        color: 'green',
-      },
-      {
-        label: 'Lewat Jatuh Tempo',
-        value: `${overdue} Faktur`,
-        hint: overdue ? 'Perlu segera ditagih' : 'Tidak ada tunggakan',
-        icon: Warning,
-        color: overdue ? 'red' : 'gray',
-      },
-    ];
-  }, [sales]);
-
-  const filtered = useMemo(() => {
-    const match = tabs.find((t) => t.value === tab).match;
-    const q = query.trim().toLowerCase();
-    return sales.filter((s) => {
-      if (!match(s)) return false;
-      if (!q) return true;
-      const c = toCustomer(contactsById[s.customerId]);
-      return [s.number, s.ref, c?.name, c?.email].some((v) => v?.toLowerCase().includes(q));
+  const save = (sale) => {
+    setSales((list) =>
+      list.some((s) => s.id === sale.id)
+        ? list.map((s) => (s.id === sale.id ? sale : s))
+        : [sale, ...list],
+    );
+    // S4: qty yang difakturkan dikurangkan dari sisa pesanan, dan fakturnya dicatat
+    // sebagai turunan. Penautan terjadi di sini, bukan saat tombol diklik.
+    if (!sale.draft && sale.fromOrder) {
+      setOrders((list) =>
+        list.map((o) =>
+          o.id === sale.fromOrder
+            ? {
+                ...o,
+                items: applyInvoicedQty(o, sale.items),
+                invoiceIds: [...(o.invoiceIds ?? []), sale.id],
+                updatedAt: nowIso(),
+              }
+            : o,
+        ),
+      );
+    }
+    if (!sale.draft && sale.fromQuote) {
+      setQuotes((list) =>
+        list.map((q) =>
+          q.id === sale.fromQuote ? { ...q, invoiceId: sale.id, updatedAt: nowIso() } : q,
+        ),
+      );
+    }
+    notifications.show({
+      color: 'green',
+      icon: <CheckCircle size={18} />,
+      title: editing ? 'Faktur diperbarui' : 'Faktur tersimpan',
+      message: `${sale.number} ${sale.draft ? 'disimpan sebagai draf' : 'diterbitkan'}.`,
+      autoClose: 5000,
+      withBorder: true,
+      radius: 'md',
     });
-  }, [sales, contactsById, tab, query]);
+    goHash({ name: 'invoice', id: sale.id });
+  };
 
-  const size = Number(pageSize);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / size));
-  const current = Math.min(page, totalPages);
-  const pageRows = filtered.slice((current - 1) * size, current * size);
+  // #7: dokumen yang masih boleh dijadikan sumber faktur.
+  const sumberFaktur = (customerId) =>
+    !customerId
+      ? []
+      : [
+          ...orders
+            .filter((o) => o.customerId === customerId && canInvoiceOrder(o))
+            .map((o) => ({ value: `order:${o.id}`, label: `${o.number} · pesanan` })),
+          ...quotes
+            .filter((q) => q.customerId === customerId && canConvertQuote(q))
+            .map((q) => ({ value: `quote:${q.id}`, label: `${q.number} · penawaran` })),
+        ];
 
-  const detail = sales.find((s) => s.id === detailId);
-  const paying = sales.find((s) => s.id === payId);
+  const ambilSumber = (key) => {
+    const [jenis, id] = key.split(':');
+    const kontakDari = (c) => (contactsById[c] ? formatAddress(contactsById[c].billing) : '');
+    if (jenis === 'order') {
+      const o = orders.find((x) => x.id === id);
+      return (
+        o &&
+        invoicePrefillFromOrder(o, {
+          billingAddress: kontakDari(o.customerId),
+          dueDate: addDays(TODAY, paymentTerms.find((t) => t.value === o.term)?.days ?? 30),
+        })
+      );
+    }
+    const q = quotes.find((x) => x.id === id);
+    return (
+      q &&
+      invoicePrefillFromQuote(q, {
+        billingAddress: kontakDari(q.customerId),
+        dueDate: addDays(TODAY, paymentTerms.find((t) => t.value === q.term)?.days ?? 30),
+      })
+    );
+  };
 
-  const modals = (
-    <>
-      <SaleFormModal
-        opened={createOpen}
-        initialCustomerId={params?.createFor}
-        onClose={() => setCreateOpen(false)}
-        onSave={saveSale}
-      />
-      <PaymentModal sale={paying} onClose={() => setPayId(null)} onSave={savePayment} />
-    </>
+  return (
+    <SaleForm
+      key={editing?.id ?? 'new'}
+      sourcesFor={editing ? null : sumberFaktur}
+      loadSource={ambilSumber}
+      nextNumber={() => nextInvoiceNumber(sales)}
+      numberTaken={(n, id) => numberTaken(sales, n, id)}
+      prefill={prefill}
+      sourceLabel={
+        telat
+          ? `Denda keterlambatan atas ${telat.number}`
+          : sumber
+            ? `Dibuat dari ${sumber.number}`
+            : null
+      }
+      editing={editing}
+      initialCustomerId={view.customerId}
+      onCancel={() => goHash(editing ? { name: 'invoice', id: editing.id } : { name: 'tab', tab: 'invoices' })}
+      onSave={save}
+    />
+  );
+}
+
+// Halaman form penawaran. Masa berlaku bawaannya diisi di sini, bukan di form,
+// karena itu aturan penawaran — bukan aturan form.
+function QuotePage({ view }) {
+  const { quotes, setQuotes } = useData();
+  const editing = view.name === 'quote-edit' ? quotes.find((q) => q.id === view.id) : null;
+
+  if (view.name === 'quote-edit' && (!editing || !canEditQuote(editing))) {
+    return <Quotes key={view.id} params={{ quoteId: view.id }} />;
+  }
+
+  const save = (quote) => {
+    setQuotes((list) =>
+      list.some((q) => q.id === quote.id)
+        ? list.map((q) => (q.id === quote.id ? quote : q))
+        : [quote, ...list],
+    );
+    notifications.show({
+      color: 'green',
+      icon: <CheckCircle size={18} />,
+      title: editing ? 'Penawaran diperbarui' : 'Penawaran tersimpan',
+      message: `${quote.number} ${quote.draft ? 'disimpan sebagai draf' : 'siap dikirim'}.`,
+      autoClose: 5000,
+      withBorder: true,
+      radius: 'md',
+    });
+    goHash({ name: 'quote', id: quote.id });
+  };
+
+  return (
+    <SaleForm
+      key={editing?.id ?? 'new'}
+      doc={DOC.quote}
+      nextNumber={() => nextQuoteNumber(quotes)}
+      numberTaken={(n, id) => numberTaken(quotes, n, id)}
+      defaultDueDays={QUOTE_VALID_DAYS}
+      editing={editing}
+      initialCustomerId={view.customerId}
+      onCancel={() =>
+        goHash(editing ? { name: 'quote', id: editing.id } : { name: 'tab', tab: 'quotes' })
+      }
+      onSave={save}
+    />
+  );
+}
+
+// Halaman form pesanan: memakai form yang sama dengan faktur, hanya istilah dan
+// penomorannya yang mengikuti jenis dokumen pesanan.
+function OrderPage({ view }) {
+  const { orders, setOrders, quotes, setQuotes } = useData();
+  const editing = view.name === 'order-edit' ? orders.find((o) => o.id === view.id) : null;
+
+  const [jenis, sumberId] = (view.from ?? '').split(':');
+  const quote = jenis === 'quote' ? quotes.find((q) => q.id === sumberId) : null;
+  const prefill = quote ? orderPrefillFromQuote(quote) : null;
+
+  if (view.name === 'order-edit' && (!editing || !canEditOrder(editing))) {
+    return <Orders key={view.id} params={{ orderId: view.id }} />;
+  }
+
+  const save = (order) => {
+    setOrders((list) =>
+      list.some((o) => o.id === order.id)
+        ? list.map((o) => (o.id === order.id ? order : o))
+        : [order, ...list],
+    );
+    // Penawaran asal ditandai sudah jadi pesanan begitu pesanannya tersimpan (S5).
+    if (order.fromQuote) {
+      setQuotes((list) =>
+        list.map((q) =>
+          q.id === order.fromQuote ? { ...q, orderId: order.id, updatedAt: nowIso() } : q,
+        ),
+      );
+    }
+    notifications.show({
+      color: 'green',
+      icon: <CheckCircle size={18} />,
+      title: editing ? 'Pesanan diperbarui' : 'Pesanan tersimpan',
+      message: `${order.number} ${order.draft ? 'disimpan sebagai draf' : 'siap dikirim'}.`,
+      autoClose: 5000,
+      withBorder: true,
+      radius: 'md',
+    });
+    goHash({ name: 'order', id: order.id });
+  };
+
+  return (
+    <SaleForm
+      key={editing?.id ?? 'new'}
+      doc={DOC.order}
+      sourcesFor={
+        editing
+          ? null
+          : (customerId) =>
+              !customerId
+                ? []
+                : quotes
+                    .filter((q) => q.customerId === customerId && canConvertQuote(q))
+                    .map((q) => ({ value: `quote:${q.id}`, label: `${q.number} · penawaran` }))
+      }
+      loadSource={(key) => {
+        const q = quotes.find((x) => x.id === key.split(':')[1]);
+        return q ? orderPrefillFromQuote(q) : null;
+      }}
+      nextNumber={() => nextOrderNumber(orders)}
+      numberTaken={(n, id) => numberTaken(orders, n, id)}
+      prefill={prefill}
+      sourceLabel={quote ? `Dibuat dari ${quote.number}` : null}
+      editing={editing}
+      initialCustomerId={view.customerId}
+      onCancel={() =>
+        goHash(editing ? { name: 'order', id: editing.id } : { name: 'tab', tab: 'orders' })
+      }
+      onSave={save}
+    />
+  );
+}
+
+// Halaman form retur. Fakturnya ditentukan dari rute (?from=invoice:<id>) karena
+// retur tidak pernah berdiri sendiri; retur yang langsung diterbitkan sekalian
+// menempel ke fakturnya di sini, sama seperti saat diterbitkan dari daftar.
+function ReturnPage({ view }) {
+  const { salesReturns, setSalesReturns, sales, setSales } = useData();
+  const editing = view.name === 'return-edit' ? salesReturns.find((r) => r.id === view.id) : null;
+  const sumberId = (view.from ?? '').split(':')[1];
+  const sale = sales.find((s) => s.id === (editing ? editing.invoiceId : sumberId));
+  const [draft] = useState(() =>
+    editing ?? (sale ? newReturnFrom(sale, nextReturnNumber(salesReturns)) : null),
   );
 
-  if (detail) {
+  // Rute tanpa faktur yang sah, atau retur yang sudah terbit: kembali ke daftarnya.
+  if (!sale || !draft || (editing && !canEditReturn(editing))) {
+    return <Returns params={editing ? { returnId: editing.id } : null} />;
+  }
+
+  const save = (ret) => {
+    setSalesReturns((list) =>
+      list.some((r) => r.id === ret.id)
+        ? list.map((r) => (r.id === ret.id ? ret : r))
+        : [ret, ...list],
+    );
+    if (!ret.draft) {
+      setSales((list) =>
+        list.map((s) => (s.id === ret.invoiceId ? { ...applyReturnToSale(s, ret), updatedAt: nowIso() } : s)),
+      );
+    }
+    notifications.show({
+      color: 'green',
+      icon: <CheckCircle size={18} />,
+      title: editing ? 'Retur diperbarui' : 'Retur tersimpan',
+      message: `${ret.number} ${ret.draft ? 'disimpan sebagai draf' : 'diterbitkan'}.`,
+      autoClose: 5000,
+      withBorder: true,
+      radius: 'md',
+    });
+    goHash({ name: 'return', id: ret.id });
+  };
+
+  return (
+    <ReturnForm
+      key={draft.id}
+      draft={draft}
+      sale={sale}
+      numberTaken={(n, id) => numberTaken(salesReturns, n, id)}
+      onCancel={() =>
+        goHash(editing ? { name: 'return', id: editing.id } : { name: 'tab', tab: 'returns' })
+      }
+      onSave={save}
+    />
+  );
+}
+
+const goHash = (v) => {
+  window.location.hash = formatHash(v);
+  window.scrollTo({ top: 0 });
+};
+
+// params (dari halaman lain): { saleId } membuka rincian faktur, { createFor } membuka form.
+export default function Penjualan({ params }) {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const on = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, []);
+
+  const { tab, view } = parseHash(hash);
+
+  if (tab === 'invoices') {
+    // Form faktur punya halaman sendiri (stepper), bukan modal.
+    if (view.name === 'sale-new' || view.name === 'sale-edit') {
+      return <SalePage view={view} />;
+    }
+    // #penjualan/invoice/<id> membuka rincian faktur langsung dari URL.
+    const p = view.name === 'invoice' ? { ...params, saleId: view.id } : params;
+    return <Invoices key={view.name === 'invoice' ? view.id : 'list'} params={p} />;
+  }
+
+  if (tab === 'payments') return <Payments />;
+
+  if (tab === 'quotes') {
+    if (view.name === 'quote-new' || view.name === 'quote-edit') return <QuotePage view={view} />;
     return (
-      <>
-        <SaleDetail
-          sale={detail}
-          onBack={() => setDetailId(null)}
-          onPay={() => setPayId(detail.id)}
-          onCreateLink={() => createLink(detail.id)}
-        />
-        {modals}
-      </>
+      <Quotes
+        key={view.name === 'quote' ? view.id : 'list'}
+        params={view.name === 'quote' ? { quoteId: view.id } : null}
+      />
     );
   }
 
+  if (tab === 'orders') {
+    if (view.name === 'order-new' || view.name === 'order-edit') return <OrderPage view={view} />;
+    return (
+      <Orders
+        key={view.name === 'order' ? view.id : 'list'}
+        params={view.name === 'order' ? { orderId: view.id } : null}
+      />
+    );
+  }
+
+  if (tab === 'returns') {
+    if (view.name === 'return-new' || view.name === 'return-edit') return <ReturnPage view={view} />;
+    return (
+      <Returns
+        key={view.name === 'return' ? view.id : 'list'}
+        params={view.name === 'return' ? { returnId: view.id } : null}
+      />
+    );
+  }
+
+  const stub = stubs[tab];
   return (
     <Stack gap="lg" p="lg" maw={1440} mx="auto">
-      <PageIntro
-        title="Daftar Penjualan & Faktur"
-        description="Kelola seluruh tagihan penjualan, invoice ke pelanggan/unit properti, catat penerimaan kas, dan pantau status jatuh tempo pembayaran secara akurat."
-        actions={
-          <>
-            <ActionIcon
-              variant="default"
-              size="lg"
-              radius="md"
-              aria-label="Segarkan data penjualan"
-            >
-              <ArrowsClockwise size={16} />
-            </ActionIcon>
-            <Button
-              radius="md"
-              leftSection={<Plus size={16} />}
-              onClick={() => setCreateOpen(true)}
-            >
-              Buat Penjualan
-            </Button>
-          </>
-        }
+      <Placeholder
+        icon={stub.icon ?? InvoiceIcon}
+        title={stub.title}
+        description={stub.description}
+        plan={stub.plan}
       />
-
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-        {stats.map((s) => (
-          <StatCard key={s.label} {...s} />
-        ))}
-      </SimpleGrid>
-
-      <Card withBorder radius="lg" padding="lg" bg="white">
-        <Group gap={4} mb="md">
-          {tabs.map((t) => {
-            const active = tab === t.value;
-            return (
-              <Button
-                key={t.value}
-                size="sm"
-                radius="md"
-                variant={active ? 'filled' : 'subtle'}
-                color={active ? 'primary.9' : 'slate.7'}
-                leftSection={<t.icon size={16} />}
-                fw={active ? 700 : 500}
-                fz="xs"
-                onClick={() => {
-                  setTab(t.value);
-                  setPage(1);
-                }}
-              >
-                {t.label}
-              </Button>
-            );
-          })}
-        </Group>
-
-        <TextInput
-          placeholder="Cari nomor transaksi, pelanggan, atau referensi..."
-          size="sm"
-          radius="md"
-          w={320}
-          maw="100%"
-          mb="md"
-          leftSection={<MagnifyingGlass size={14} />}
-          value={query}
-          onChange={(e) => {
-            setQuery(e.currentTarget.value);
-            setPage(1);
-          }}
-        />
-
-        <Box
-          className="table-frame"
-          style={{
-            border: '1px solid var(--mantine-color-gray-3)',
-            borderRadius: 'var(--mantine-radius-md)',
-            overflow: 'hidden',
-          }}
-        >
-          <ScrollArea type="auto">
-            <Table
-              verticalSpacing="sm"
-              horizontalSpacing="md"
-              miw={1100}
-              highlightOnHover
-              styles={{
-                th: {
-                  fontSize: 'var(--mantine-font-size-xs)',
-                  color: 'var(--mantine-color-slate-7)',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                },
-              }}
-            >
-              <Table.Thead bg="slate.0">
-                <Table.Tr>
-                  <Table.Th>No. Transaksi</Table.Th>
-                  <Table.Th>Pelanggan</Table.Th>
-                  <Table.Th>Tanggal</Table.Th>
-                  <Table.Th>Jatuh Tempo</Table.Th>
-                  <Table.Th ta="right">Total Faktur</Table.Th>
-                  <Table.Th ta="right">Sisa Tagihan</Table.Th>
-                  <Table.Th ta="center">Status</Table.Th>
-                  <Table.Th ta="center" w={60}>
-                    Aksi
-                  </Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {pageRows.map((s) => (
-                  <SaleRow
-                    key={s.id}
-                    sale={s}
-                    onOpen={() => openDetail(s.id)}
-                    onPay={() => setPayId(s.id)}
-                    onCreateLink={() => createLink(s.id)}
-                  />
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        </Box>
-
-        {filtered.length === 0 && (
-          <Center py="xl">
-            <Text fz="sm" c="slate.6">
-              Tidak ada faktur penjualan yang cocok.
-            </Text>
-          </Center>
-        )}
-
-        <Group justify="space-between" mt="md" gap="sm">
-          <Text fz="xs" c="slate.7">
-            Menampilkan {pageRows.length} dari {filtered.length} data faktur
-          </Text>
-          <Group gap="sm">
-            <Select
-              size="xs"
-              radius="md"
-              w={96}
-              allowDeselect={false}
-              data={pageSizes}
-              value={pageSize}
-              onChange={(v) => {
-                setPageSize(v);
-                setPage(1);
-              }}
-            />
-            <Pagination
-              size="sm"
-              radius="md"
-              total={totalPages}
-              value={current}
-              onChange={setPage}
-            />
-          </Group>
-        </Group>
-      </Card>
-
-      {modals}
     </Stack>
   );
 }

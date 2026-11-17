@@ -1,4 +1,7 @@
 import {
+  ActionIcon,
+  Alert,
+  Badge,
   Anchor,
   Box,
   Button,
@@ -6,6 +9,8 @@ import {
   Divider,
   Grid,
   Group,
+  Menu,
+  Progress,
   SimpleGrid,
   Stack,
   Table,
@@ -14,22 +19,48 @@ import {
   Title,
 } from '@mantine/core';
 import {
-  ArrowLeft,
+  ArrowCounterClockwise,
   ArrowUpRight,
+  ClipboardText,
+  ClockCounterClockwise,
+  Copy,
+  DotsThreeVertical,
   DownloadSimple,
+  EnvelopeSimple,
   FileText,
+  HandCoins,
   Invoice,
   Link,
   Notebook,
+  Paperclip,
+  PaperPlaneTilt,
+  PencilSimple,
+  Prohibit,
   Tag,
+  Trash,
+  Warning,
   User,
 } from '@/components/Icon.jsx';
-import { CopyIcon, Field, PageIntro, StatusBadge } from './components.jsx';
-import { paymentTerms, products } from './data.js';
+import { BackLink, CopyIcon, Field, PageIntro, StatusBadge } from './components.jsx';
+import { downloadInvoice } from './invoicePdf.js';
+import { formatHash } from './routes.js';
+import { depositAccounts, paymentTerms, products } from './data.js';
+import { canReturnInvoice } from './returns.js';
+import { downloadFile } from '@/lib/fileStore.js';
 import {
+  ACTIVITY,
+  badgeOf,
+  canDelete,
+  canEdit,
+  canPay,
+  canResend,
+  canSend,
+  canVoid,
   computeTotals,
   formatDate,
   formatDateTime,
+  isOverdue,
+  lastSend,
   lineAmount,
   rupiah,
   statusOf,
@@ -66,28 +97,89 @@ function SummaryRow({ label, value, strong, color }) {
   );
 }
 
-export default function SaleDetail({ sale, onBack, onPay, onCreateLink }) {
+// Satu penerimaan pembayaran, lengkap dengan bukti transfer yang diunggah.
+function PaymentRow({ payment }) {
+  const account = depositAccounts.find((a) => a.value === payment.account)?.label ?? payment.account;
+  const proofs = payment.proofs ?? [];
+  return (
+    <Box
+      p="sm"
+      style={{
+        border: '1px solid var(--mantine-color-gray-3)',
+        borderRadius: 'var(--mantine-radius-md)',
+      }}
+    >
+      <Group justify="space-between" align="flex-start" gap="sm" wrap="nowrap">
+        <Box style={{ minWidth: 0 }}>
+          <Text fz="sm" fw={600} c="slate.9">
+            {formatDate(payment.date)} · {payment.method}
+          </Text>
+          <Text fz={11} c="slate.6">
+            Disetor ke {account}
+          </Text>
+          {payment.memo && (
+            <Text fz={11} c="slate.6">
+              {payment.memo}
+            </Text>
+          )}
+        </Box>
+        <Text fz="sm" fw={700} c="green.8" style={{ whiteSpace: 'nowrap' }}>
+          {rupiah(payment.amount)}
+        </Text>
+      </Group>
+      {payment.tags?.length > 0 && (
+        <Group gap={6} mt="xs">
+          {payment.tags.map((name) => (
+            <Badge key={name} size="sm" radius="sm" variant="light" color="slate" tt="none">
+              {name}
+            </Badge>
+          ))}
+        </Group>
+      )}
+      {proofs.length > 0 && (
+        <Group gap="xs" mt="xs">
+          {proofs.map((name) => (
+            <Button
+              key={name}
+              size="compact-xs"
+              variant="light"
+              color="slate"
+              radius="md"
+              leftSection={<Paperclip size={13} />}
+              onClick={() => downloadFile(name)}
+            >
+              {name}
+            </Button>
+          ))}
+        </Group>
+      )}
+    </Box>
+  );
+}
+
+export default function SaleDetail({ sale, source, onBack, onPay, onCreateLink, actions }) {
   const t = computeTotals(sale);
   const status = statusOf(sale);
+  const badge = badgeOf(sale);
   const customer = useCustomer(sale.customerId);
   const term = paymentTerms.find((p) => p.value === sale.term)?.label ?? '—';
+  const sent = lastSend(sale);
   const hasTax = sale.items.some((l) => l.tax);
+  // B7: dasar progres adalah tagihan setelah retur, bukan nilai faktur mula-mula.
+  const paidPct = t.billed > 0 ? Math.min(100, Math.round((t.paid / t.billed) * 100)) : 100;
+  const docReturns = sale.returns ?? [];
+  const returnsDeducted = docReturns
+    .filter((r) => r.settlement === 'deduct')
+    .reduce((n, r) => n + r.amount, 0);
 
   return (
     <Stack gap="lg" p="lg" maw={1440} mx="auto">
+      <BackLink label="Daftar faktur" onClick={onBack} />
+
       <PageIntro
+        icon={Invoice}
         title="Detail penjualan"
         description="Rincian faktur, pembayaran, dan dokumen penjualan."
-        actions={
-          <Button
-            variant="default"
-            radius="md"
-            leftSection={<ArrowLeft size={16} />}
-            onClick={onBack}
-          >
-            Daftar penjualan
-          </Button>
-        }
       />
 
       {/* Ringkasan faktur */}
@@ -109,29 +201,125 @@ export default function SaleDetail({ sale, onBack, onPay, onCreateLink }) {
               <CopyIcon value={sale.number} size={16} />
             </Group>
             <Box my={6}>
-              <StatusBadge status={status} />
+              <StatusBadge status={badge} />
             </Box>
             <Text fz="xs" c="slate.7">
               {customer?.name}
             </Text>
           </Box>
-          <Group gap="xs">
-            <Button variant="default" radius="md" leftSection={<DownloadSimple size={16} />}>
+          {/* Satu tombol utama sesuai keadaan faktur, satu tombol unduh, sisanya di menu.
+              Sebelumnya sampai lima tombol berjajar dan tidak ada yang menonjol. */}
+          <Group gap="xs" wrap="nowrap">
+            <Button
+              variant="default"
+              radius="md"
+              leftSection={<DownloadSimple size={16} />}
+              onClick={() => downloadInvoice(sale, { customer })}
+            >
               Unduh PDF
             </Button>
-            <Button
-              variant="outline"
-              radius="md"
-              leftSection={<Link size={16} />}
-              onClick={onCreateLink}
-            >
-              {sale.invoiceLink ? 'Salin tautan faktur' : 'Buat tautan faktur'}
-            </Button>
-            {status === 'sent' && (
+            {canSend(sale) && (
+              <Button
+                radius="md"
+                leftSection={<PaperPlaneTilt size={16} />}
+                onClick={() => actions.send(sale)}
+              >
+                Kirim faktur
+              </Button>
+            )}
+            {canPay(sale) && (
               <Button radius="md" leftSection={<Invoice size={16} />} onClick={onPay}>
                 Catat pembayaran
               </Button>
             )}
+            <Menu position="bottom-end" withinPortal shadow="md" width={220}>
+              <Menu.Target>
+                <ActionIcon variant="default" size="lg" radius="md" aria-label="Aksi lainnya">
+                  <DotsThreeVertical size={18} />
+                </ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {canEdit(sale) && (
+                  <Menu.Item
+                    fz="xs"
+                    leftSection={<PencilSimple size={14} />}
+                    onClick={() => actions.edit(sale)}
+                  >
+                    Ubah faktur
+                  </Menu.Item>
+                )}
+                {canResend(sale) && (
+                  <Menu.Item
+                    fz="xs"
+                    leftSection={<EnvelopeSimple size={14} />}
+                    onClick={() => actions.resend(sale)}
+                  >
+                    Kirim ulang email
+                  </Menu.Item>
+                )}
+                <Menu.Item
+                  fz="xs"
+                  leftSection={<Notebook size={14} />}
+                  onClick={() => actions.journal(sale)}
+                >
+                  Lihat jurnal
+                </Menu.Item>
+                {/* B4: faktur batal tidak dikirim atau ditautkan lagi ke pelanggan. */}
+                {status !== 'cancelled' && (
+                  <Menu.Item fz="xs" leftSection={<Link size={14} />} onClick={onCreateLink}>
+                    {sale.invoiceLink ? 'Salin tautan faktur' : 'Buat tautan faktur'}
+                  </Menu.Item>
+                )}
+                <Menu.Item
+                  fz="xs"
+                  leftSection={<Copy size={14} />}
+                  onClick={() => actions.duplicate(sale)}
+                >
+                  Duplikat faktur
+                </Menu.Item>
+                {isOverdue(sale) && (
+                  <Menu.Item
+                    fz="xs"
+                    leftSection={<Warning size={14} />}
+                    onClick={() => actions.lateFee(sale)}
+                  >
+                    Buat faktur denda
+                  </Menu.Item>
+                )}
+                {canReturnInvoice(sale) && (
+                  <Menu.Item
+                    fz="xs"
+                    leftSection={<ArrowCounterClockwise size={14} />}
+                    onClick={() => actions.makeReturn(sale)}
+                  >
+                    Buat retur
+                  </Menu.Item>
+                )}
+                {(canVoid(sale) || canDelete(sale)) && <Menu.Divider />}
+                {canVoid(sale) && (
+                  <Menu.Item
+                    fz="xs"
+                    color="red"
+                    leftSection={<Prohibit size={14} />}
+                    onClick={() => actions.void(sale)}
+                  >
+                    Batalkan faktur
+                  </Menu.Item>
+                )}
+                {canDelete(sale) && (
+                  <>
+                    <Menu.Item
+                      fz="xs"
+                      color="red"
+                      leftSection={<Trash size={14} />}
+                      onClick={() => actions.remove(sale)}
+                    >
+                      Hapus faktur
+                    </Menu.Item>
+                  </>
+                )}
+              </Menu.Dropdown>
+            </Menu>
           </Group>
         </Group>
 
@@ -156,97 +344,199 @@ export default function SaleDetail({ sale, onBack, onPay, onCreateLink }) {
             </Text>
           </Box>
         </SimpleGrid>
+
+        {status === 'cancelled' && (
+          <Alert variant="light" color="red" radius="md" icon={<Prohibit size={16} />} mt="md">
+            <Text fz="xs">
+              Dibatalkan pada {formatDateTime(sale.cancelledAt)}
+              {sale.cancelReason ? ` — ${sale.cancelReason}` : ''}. Jurnalnya sudah dibalik dan
+              faktur ini tidak lagi dihitung sebagai piutang.
+            </Text>
+          </Alert>
+        )}
+
+        {/* Progres pembayaran: menggantikan baris "Sudah dibayar" yang dulu diulang
+            di kaki tabel, dan sekaligus menunjukkan seberapa jauh tagihan tertutup. */}
+        {!['draft', 'cancelled'].includes(status) && (
+          <Box mt="md">
+            <Group justify="space-between" gap="sm" mb={6}>
+              <Text fz={11} fw={600} c="slate.7">
+                Progres pembayaran
+              </Text>
+              <Text fz={11} c="slate.6">
+                {paidPct}% terbayar
+              </Text>
+            </Group>
+            <Progress value={paidPct} size="sm" radius="xl" color={paidPct >= 100 ? 'green' : 'primary.9'} />
+            <Text fz={11} c="slate.6" mt={6}>
+              {rupiah(t.paid)} diterima dari {rupiah(t.billed)}
+              {t.returned > 0 && ` (setelah retur ${rupiah(t.returned)})`}
+            </Text>
+          </Box>
+        )}
       </Card>
 
       <Grid gutter="md" align="flex-start">
         {/* Barang dan jasa */}
         <Grid.Col span={{ base: 12, lg: 8 }}>
-          <Card withBorder radius="lg" padding="md" bg="white">
-            <Group justify="space-between" align="flex-start" mb="md">
-              <Box>
-                <Text fw={600} fz="sm" c="slate.9">
-                  Barang dan jasa
-                </Text>
-                <Text fz={11} c="slate.6">
-                  {sale.items.length} item
-                </Text>
-              </Box>
+          <Card withBorder radius="lg" padding="lg" bg="white">
+            <Group gap="sm" mb="md" wrap="nowrap">
               <ThemeIcon variant="light" bg="slate.0" c="slate.7" size={32} radius="md">
                 <Invoice size={16} />
               </ThemeIcon>
+              <Box>
+                <Text fw={700} fz="sm" c="slate.9">
+                  Barang dan jasa
+                </Text>
+                <Text fz={11} c="slate.6">
+                  {sale.items.length} baris ditagihkan
+                </Text>
+              </Box>
             </Group>
 
-            <Table
-              verticalSpacing="sm"
-              horizontalSpacing="sm"
-              styles={{
-                th: {
-                  fontSize: 'var(--mantine-font-size-xs)',
-                  color: 'var(--mantine-color-slate-7)',
-                  fontWeight: 600,
-                },
+            {/* Kolom dan bingkainya disamakan dengan tabel baris di form faktur,
+                supaya rincian terbaca sebagai tabel yang sama dalam keadaan terkunci. */}
+            <Box
+              className="table-frame"
+              style={{
+                border: '1px solid var(--mantine-color-gray-3)',
+                borderRadius: 'var(--mantine-radius-md)',
+                overflow: 'auto',
               }}
             >
-              <Table.Thead bg="slate.0">
-                <Table.Tr>
-                  <Table.Th>Barang / jasa</Table.Th>
-                  <Table.Th ta="right">Kuantitas</Table.Th>
-                  <Table.Th ta="right">Harga satuan</Table.Th>
-                  <Table.Th>Pajak</Table.Th>
-                  <Table.Th ta="right">Jumlah</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {sale.items.map((line, i) => (
-                  <Table.Tr key={i}>
-                    <Table.Td>
-                      <Group gap={4} wrap="nowrap">
-                        <Text fz="xs" fw={700} c="primary.9">
+              <Table
+                verticalSpacing="sm"
+                horizontalSpacing="md"
+                miw={620}
+                styles={{
+                  th: {
+                    fontSize: 'var(--mantine-font-size-xs)',
+                    color: 'var(--mantine-color-slate-7)',
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                  },
+                }}
+              >
+                <Table.Thead bg="slate.0">
+                  <Table.Tr>
+                    <Table.Th w={40}>No</Table.Th>
+                    <Table.Th>Produk / jasa</Table.Th>
+                    <Table.Th w={80} ta="right">
+                      Qty
+                    </Table.Th>
+                    <Table.Th w={140} ta="right">
+                      Harga satuan
+                    </Table.Th>
+                    <Table.Th w={110}>Pajak</Table.Th>
+                    <Table.Th w={150} ta="right">
+                      Total
+                    </Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {sale.items.map((line, i) => (
+                    <Table.Tr key={i}>
+                      <Table.Td fz="xs" c="slate.6">
+                        {i + 1}
+                      </Table.Td>
+                      <Table.Td>
+                        <Text fz="sm" fw={600} c="slate.9">
                           {productName(line)}
                         </Text>
-                        <ArrowUpRight size={12} color="var(--mantine-color-primary-9)" />
-                      </Group>
-                      <Text fz={11} c="slate.6">
-                        {line.description}
-                      </Text>
-                      {t.paid > 0 && (
-                        <Anchor fz={11} fw={600} c="primary.9" component="button">
-                          <Group gap={4}>
-                            <Notebook size={12} /> Lihat jurnal transaksi
-                          </Group>
-                        </Anchor>
-                      )}
-                    </Table.Td>
-                    <Table.Td ta="right" fz="xs">
-                      {line.qty}
-                    </Table.Td>
-                    <Table.Td ta="right" fz="xs">
-                      {rupiah(line.price)}
-                    </Table.Td>
-                    <Table.Td fz="xs">{taxLabel(line.tax) ?? '—'}</Table.Td>
-                    <Table.Td ta="right" fz="xs" fw={700}>
-                      {rupiah(lineAmount(line))}
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
+                        {line.description && line.description !== productName(line) && (
+                          <Text fz={11} c="slate.6">
+                            {line.description}
+                          </Text>
+                        )}
+                        {line.returnedQty > 0 && (
+                          <Text fz={11} c="orange.8" fw={600}>
+                            {line.returnedQty} diretur
+                          </Text>
+                        )}
+                      </Table.Td>
+                      <Table.Td ta="right" fz="sm">
+                        {line.qty}
+                      </Table.Td>
+                      <Table.Td ta="right" fz="sm" style={{ whiteSpace: 'nowrap' }}>
+                        {rupiah(line.price)}
+                      </Table.Td>
+                      <Table.Td fz="xs" c={line.tax ? 'slate.8' : 'slate.5'}>
+                        {taxLabel(line.tax) ?? 'Tanpa pajak'}
+                      </Table.Td>
+                      <Table.Td ta="right" fz="sm" fw={700} style={{ whiteSpace: 'nowrap' }}>
+                        {rupiah(lineAmount(line))}
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Box>
 
-            <Box ml="auto" mt="lg" maw={340}>
+            {/* Berhenti di Total faktur. Sudah dibayar dan sisa tagihan sudah ada di
+                kartu atas, jadi tidak diulang lagi di sini. */}
+            <Box
+              ml="auto"
+              mt="md"
+              p="md"
+              bg="slate.0"
+              w={{ base: '100%', sm: 340 }}
+              style={{ borderRadius: 'var(--mantine-radius-md)' }}
+            >
               <SummaryRow label="Subtotal" value={rupiah(t.subtotal)} />
               {t.discount > 0 && (
                 <SummaryRow label="Diskon" value={`-${rupiah(t.discount)}`} color="red.7" />
               )}
-              {hasTax && <SummaryRow label="Pajak" value={`+${rupiah(t.tax)}`} />}
+              {hasTax && <SummaryRow label="PPN" value={`+${rupiah(t.tax)}`} />}
               {t.withholding > 0 && (
-                <SummaryRow label="Potongan" value={`-${rupiah(t.withholding)}`} color="red.7" />
+                <SummaryRow
+                  label="Potongan (PPh)"
+                  value={`-${rupiah(t.withholding)}`}
+                  color="red.7"
+                />
               )}
-              <Divider my={6} color="gray.3" />
+              <Divider my={8} color="gray.3" />
               <SummaryRow strong label="Total faktur" value={rupiah(t.total)} />
-              <SummaryRow label="Sudah dibayar" value={rupiah(t.paid)} />
-              <SummaryRow strong label="Sisa tagihan" value={rupiah(t.balance)} />
+              {/* Retur yang memotong tagihan mengurangi sisa, bukan total fakturnya:
+                  nilai faktur yang pernah terbit tidak diubah belakangan. */}
+              {returnsDeducted > 0 && (
+                <>
+                  <SummaryRow
+                    label="Retur"
+                    value={`-${rupiah(returnsDeducted)}`}
+                    color="orange.8"
+                  />
+                  <SummaryRow
+                    strong
+                    label="Tagihan setelah retur"
+                    value={rupiah(Math.max(t.total - returnsDeducted, 0))}
+                  />
+                </>
+              )}
             </Box>
           </Card>
+
+          {sale.payments.length > 0 && (
+            <Card withBorder radius="lg" padding="lg" bg="white" mt="md">
+              <Group gap="sm" mb="md" wrap="nowrap">
+                <ThemeIcon variant="light" bg="slate.0" c="slate.7" size={32} radius="md">
+                  <HandCoins size={16} />
+                </ThemeIcon>
+                <Box>
+                  <Text fw={700} fz="sm" c="slate.9">
+                    Riwayat pembayaran
+                  </Text>
+                  <Text fz={11} c="slate.6">
+                    {sale.payments.length} penerimaan · {rupiah(t.paid)} diterima
+                  </Text>
+                </Box>
+              </Group>
+              <Stack gap="xs">
+                {sale.payments.map((p, i) => (
+                  <PaymentRow key={i} payment={p} />
+                ))}
+              </Stack>
+            </Card>
+          )}
         </Grid.Col>
 
         {/* Sisi kanan */}
@@ -261,24 +551,137 @@ export default function SaleDetail({ sale, onBack, onPay, onCreateLink }) {
               </Stack>
             </SideCard>
 
-            <SideCard icon={FileText} title="Dokumen">
-              {sale.invoiceLink ? (
-                <Group gap={4} wrap="nowrap">
-                  <Anchor href={sale.invoiceLink} target="_blank" fz="xs" truncate="end">
-                    {sale.invoiceLink}
+            {docReturns.length > 0 && (
+              <SideCard icon={ArrowCounterClockwise} title="Retur dari faktur ini">
+                <Stack gap="xs">
+                  {docReturns.map((r) => (
+                    <Group key={r.id} justify="space-between" wrap="nowrap" align="flex-start">
+                      <Box>
+                        <Anchor
+                          fz="sm"
+                          fw={600}
+                          component="button"
+                          onClick={() => {
+                            window.location.hash = formatHash({ name: 'return', id: r.id });
+                            window.scrollTo({ top: 0 });
+                          }}
+                        >
+                          {r.number}
+                        </Anchor>
+                        <Text fz={11} c="slate.6">
+                          {formatDate(r.date)} ·{' '}
+                          {r.settlement === 'deduct' ? 'Potong tagihan' : 'Kredit pelanggan'}
+                        </Text>
+                      </Box>
+                      <Text fz="sm" fw={700} c="orange.8" style={{ whiteSpace: 'nowrap' }}>
+                        -{rupiah(r.amount)}
+                      </Text>
+                    </Group>
+                  ))}
+                </Stack>
+              </SideCard>
+            )}
+
+            {source && (
+              <SideCard icon={ClipboardText} title="Dokumen asal">
+                <Box>
+                  <Text fz={11} c="slate.6">
+                    {source.kind === 'order' ? 'Dari pesanan' : 'Dari penawaran'}
+                  </Text>
+                  <Anchor
+                    fz="sm"
+                    fw={600}
+                    component="button"
+                    onClick={() => {
+                      window.location.hash = formatHash({ name: source.kind, id: source.doc.id });
+                      window.scrollTo({ top: 0 });
+                    }}
+                  >
+                    {source.doc.number}
                   </Anchor>
-                  <CopyIcon value={sale.invoiceLink} />
-                </Group>
-              ) : (
-                <Text fz="xs" c="slate.7">
-                  Tautan faktur belum dibuat.
-                </Text>
-              )}
+                  {sale.shippingNote && (
+                    <>
+                      <Text fz={11} c="slate.6" mt={6}>
+                        Alamat pengiriman
+                      </Text>
+                      <Text fz="xs" c="slate.8">
+                        {sale.shippingNote}
+                      </Text>
+                    </>
+                  )}
+                </Box>
+              </SideCard>
+            )}
+
+            <SideCard icon={FileText} title="Dokumen">
+              <Stack gap="sm">
+                {sale.invoiceLink ? (
+                  <Box>
+                    <Group gap={4} wrap="nowrap">
+                      <Anchor href={sale.invoiceLink} target="_blank" fz="xs" truncate="end">
+                        {sale.invoiceLink}
+                      </Anchor>
+                      <CopyIcon value={sale.invoiceLink} />
+                    </Group>
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      radius="md"
+                      mt={6}
+                      leftSection={<ArrowUpRight size={13} />}
+                      component="a"
+                      href={sale.invoiceLink}
+                      target="_blank"
+                    >
+                      Buka halaman faktur
+                    </Button>
+                  </Box>
+                ) : (
+                  <Text fz="xs" c="slate.7">
+                    Tautan faktur belum dibuat.
+                  </Text>
+                )}
+                {/* Riwayat kirim kosong pada faktur lama yang terbit sebelum fitur ini ada. */}
+                {sent ? (
+                  <Field label={`Terakhir dikirim (${sale.sends.length}x)`}>
+                    {formatDateTime(sent.at)} · {sent.to}
+                  </Field>
+                ) : (
+                  <Field label="Riwayat kirim">
+                    {status === 'draft' ? 'Belum pernah dikirim' : '—'}
+                  </Field>
+                )}
+              </Stack>
             </SideCard>
+
+            {(sale.activity ?? []).length > 0 && (
+              <SideCard icon={ClockCounterClockwise} title="Riwayat aktivitas">
+                <Stack gap="sm">
+                  {[...sale.activity].reverse().map((a, i) => (
+                    <Box key={i}>
+                      <Text fz="xs" fw={600} c="slate.9">
+                        {ACTIVITY[a.type] ?? a.type}
+                        {a.note ? ` · ${a.note}` : ''}
+                      </Text>
+                      <Text fz={11} c="slate.6">
+                        {formatDateTime(a.at)} · {a.by}
+                      </Text>
+                    </Box>
+                  ))}
+                </Stack>
+              </SideCard>
+            )}
 
             <SideCard icon={Tag} title="Informasi lainnya">
               <Stack gap="sm">
+                {sale.unit && <Field label="Unit / Tower">{sale.unit}</Field>}
                 {sale.ref && <Field label="Referensi pelanggan">{sale.ref}</Field>}
+                {sale.taxInvoiceNumber && (
+                  <Field label="Nomor seri faktur pajak">{sale.taxInvoiceNumber}</Field>
+                )}
+                {sale.dppOther > 0 && (
+                  <Field label="DPP Nilai Lain">{rupiah(sale.dppOther)}</Field>
+                )}
                 {sale.message && <Field label="Pesan di faktur">{sale.message}</Field>}
                 {sale.memo && <Field label="Memo internal">{sale.memo}</Field>}
                 <Field label="Dibuat">{formatDateTime(sale.createdAt)}</Field>

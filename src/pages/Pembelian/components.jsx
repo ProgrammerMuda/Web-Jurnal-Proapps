@@ -19,10 +19,12 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { Fragment, useState } from 'react';
-import { ArrowLeft, Buildings, Check, CheckCircle, DotsThreeVertical, Info, MagnifyingGlass, Warning } from '@/components/Icon.jsx';
+import { Buildings, Check, CheckCircle, DotsThreeVertical, Info, MagnifyingGlass, Warning } from '@/components/Icon.jsx';
 import { roleOf } from './data.js';
 
-export { CopyIcon, Field, PageIntro } from '@/components/common.jsx';
+import { FormModal } from '@/components/common.jsx';
+
+export { BackLink, CopyIcon, Field, FormModal, PageIntro } from '@/components/common.jsx';
 
 // Opsi dropdown vendor referensi: ikon, nama vendor, dan jumlah PO sebelumnya.
 // Jumlah PO dihitung dari PO yang benar-benar ada, bukan statistik vendor, supaya sama dengan isi dropdown PO referensi.
@@ -56,18 +58,6 @@ export function SuccessModal({ opened, onClose, title, text, children }) {
         <Group gap="sm" mt="md" justify="center">{children}</Group>
       </Stack>
     </Modal>
-  );
-}
-
-// Tautan kembali kecil di atas judul halaman penuh (bukan tombol aksi di header).
-export function BackLink({ label, onClick }) {
-  return (
-    <UnstyledButton onClick={onClick} style={{ alignSelf: 'flex-start' }} c="slate.7" aria-label={label}>
-      <Group gap={6} wrap="nowrap">
-        <ArrowLeft size={14} />
-        <Text fz="sm" fw={600}>{label}</Text>
-      </Group>
-    </UnstyledButton>
   );
 }
 
@@ -186,66 +176,6 @@ export function Callout({ tone = 'info', title, children }) {
         </Box>
       </Group>
     </Box>
-  );
-}
-
-// Modal dengan pola proyek: header, footer beku dan full-bleed; hanya body yang scroll.
-export function FormModal({ opened, onClose, title, subtitle, icon: Icon, size = 720, footer, children }) {
-  return (
-    <Modal
-      className="pb-form"
-      opened={opened}
-      onClose={onClose}
-      centered
-      size={size}
-      radius="lg"
-      padding={0}
-      styles={{
-        content: { display: 'flex', flexDirection: 'column', overflow: 'hidden' },
-        header: {
-          flexShrink: 0,
-          padding: 'var(--mantine-spacing-lg)',
-          borderBottom: '1px solid var(--mantine-color-gray-3)',
-        },
-        title: { flex: 1 },
-        body: { padding: 0, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' },
-      }}
-      title={
-        <Group gap="sm" wrap="nowrap">
-          {Icon && (
-            <ThemeIcon variant="light" bg="primary.0" c="primary.9" size={32} radius="md">
-              <Icon size={18} />
-            </ThemeIcon>
-          )}
-          <div>
-            <Text fw={700} fz="sm" c="slate.9">
-              {title}
-            </Text>
-            {subtitle && (
-              <Text fz={11} c="slate.6">
-                {subtitle}
-              </Text>
-            )}
-          </div>
-        </Group>
-      }
-    >
-      <Box style={{ flex: 1, minHeight: 0, overflowY: 'auto', maxHeight: 'calc(100vh - 220px)' }} p="lg">
-        <Stack gap="md">{children}</Stack>
-      </Box>
-      {footer && (
-        <Group
-          justify="flex-end"
-          gap="sm"
-          p="md"
-          px="lg"
-          bg="white"
-          style={{ flexShrink: 0, borderTop: '1px solid var(--mantine-color-gray-3)' }}
-        >
-          {footer}
-        </Group>
-      )}
-    </Modal>
   );
 }
 

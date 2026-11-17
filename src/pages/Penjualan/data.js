@@ -5,31 +5,64 @@ import { accounts } from '@/pages/DaftarAkun/accounts.js';
 // Tanggal "hari ini" prototype mengikuti tanggal di header aplikasi.
 export const TODAY = '2026-11-04';
 
+// tax: pajak bawaan yang terisi otomatis saat produk dipilih (P10). null = tanpa pajak.
+// Listrik dan air dibiarkan kosong karena sifatnya penerusan tagihan, bukan penyerahan jasa.
 export const products = [
   {
     id: 'drain-ac',
     name: 'PEMBERSIHAN DRAIN AC',
     description: 'PEMBERSIHAN DRAIN AC',
     price: 320000,
+    tax: 'ppn11',
   },
-  { id: 'pameran', name: 'Pameran', description: 'Pameran', price: 1000000 },
+  { id: 'pameran', name: 'Pameran', description: 'Pameran', price: 1000000,
+    tax: 'ppn11',
+  },
   {
     id: 'ipl',
     name: 'Iuran Pengelolaan Lingkungan',
     description: 'IPL bulanan unit',
     price: 300000,
+    tax: 'ppn11',
   },
   {
     id: 'sewa',
     name: 'Sewa Ruang Usaha',
     description: 'Sewa ruang usaha per bulan',
     price: 2000000,
+    tax: 'ppn11',
   },
-  { id: 'listrik', name: 'Tagihan Listrik', description: 'Pemakaian listrik unit', price: 200000 },
-  { id: 'air', name: 'Tagihan Air', description: 'Pemakaian air unit', price: 50000 },
-  { id: 'fitout', name: 'Deposit Fit Out', description: 'Deposit renovasi unit', price: 10000000 },
-  { id: 'parkir', name: 'Sewa Parkir', description: 'Sewa parkir kendaraan', price: 222000 },
+  { id: 'listrik', name: 'Tagihan Listrik', description: 'Pemakaian listrik unit', price: 200000,
+    tax: null,
+  },
+  { id: 'air', name: 'Tagihan Air', description: 'Pemakaian air unit', price: 50000,
+    tax: null,
+  },
+  { id: 'fitout', name: 'Deposit Fit Out', description: 'Deposit renovasi unit', price: 10000000,
+    tax: null,
+  },
+  { id: 'parkir', name: 'Sewa Parkir', description: 'Sewa parkir kendaraan', price: 222000,
+    tax: 'ppn11',
+  },
+  // #29: dipakai faktur denda. Tanpa PPN karena sifatnya ganti rugi keterlambatan.
+  {
+    id: 'denda',
+    name: 'Denda Keterlambatan',
+    description: 'Denda atas keterlambatan pembayaran',
+    price: 0,
+    tax: null,
+  },
 ];
+
+// #26: periode yang sudah tutup buku. Dokumen dan pembayaran tidak boleh bertanggal
+// di dalamnya. Nantinya diambil dari menu Tutup Buku; sementara dikunci di sini.
+export const CLOSED_BEFORE = '2026-10-01';
+
+// #29: denda keterlambatan per bulan dari sisa tagihan. Nantinya diatur di Pengaturan.
+export const LATE_FEE_RATE = 0.02;
+export const periodLocked = (date) => !!date && date < CLOSED_BEFORE;
+export const lockedMessage = (date) =>
+  `Periode ${new Date(date).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })} sudah ditutup`;
 
 export const taxes = [{ value: 'ppn11', label: 'PPN 11%', rate: 0.11 }];
 
@@ -39,6 +72,19 @@ export const paymentTerms = [
   { value: 'net15', label: 'Net 15', days: 15 },
   { value: 'net60', label: 'Net 60', days: 60 },
   { value: 'custom', label: 'Custom', days: null },
+];
+
+// Tag transaksi untuk mengelompokkan penerimaan (nantinya dari menu Pengaturan →
+// Tag Transaksi). Daftar ini hanya saran: tag baru boleh diketik langsung.
+export const transactionTags = [
+  'IPL',
+  'Sewa',
+  'Air',
+  'Listrik',
+  'Parkir',
+  'Deposit fit out',
+  'Home service',
+  'Denda',
 ];
 
 export const paymentMethods = [
@@ -61,6 +107,15 @@ const item = (productId, qty = 1, price, tax = null) => {
 
 const base = {
   ref: '',
+  // #27: unit/tower yang ditagih — tagihan di sini hampir selalu per unit.
+  unit: '',
+  // #32: nomor seri faktur pajak dan DPP Nilai Lain untuk e-Faktur / Coretax.
+  taxInvoiceNumber: '',
+  dppOther: 0,
+  // #8 & #31
+  cancelledAt: null,
+  cancelReason: null,
+  activity: [],
   term: 'net30',
   taxInclusive: false,
   discountType: 'percent',
@@ -72,8 +127,13 @@ const base = {
   memo: '',
   draft: false,
   payments: [],
+  // Riwayat pengiriman faktur ke email pelanggan: { at, to }.
+  sends: [],
   invoiceLink: null,
 };
+
+// Bentuk faktur kosong, dipakai pembuat faktur massal (#28).
+export const initialSale = () => ({ ...base, items: [], payments: [], sends: [], activity: [] });
 
 export const seedSales = [
   {
@@ -162,7 +222,7 @@ export const seedSales = [
   {
     ...base,
     id: 's7',
-    number: '0124123123',
+    number: '0124123124',
     customerId: 'aaljooz',
     date: '2026-11-02',
     dueDate: '2026-11-17',

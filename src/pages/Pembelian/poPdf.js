@@ -1,6 +1,6 @@
 // Susun PO / SPK menjadi PDF satu halaman yang bisa diunduh dan dikirim ke vendor.
 import { TODAY } from './data.js';
-import { buildPdf, line, PAGE, rect, saveBlob, text, wrap } from './pdf.js';
+import { buildPdf, line, PAGE, rect, saveBlob, text, wrap } from '@/lib/pdf.js';
 import { bankLine, formatDate, poAllJasa, poDpAmount, poDocLabel, poPpn, poSubtotal, poTotal, ppnLabel, rupiah, termText } from './utils.js';
 
 const M = 48; // margin kiri/kanan

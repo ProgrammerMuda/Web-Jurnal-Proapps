@@ -35,10 +35,23 @@ export function nowIso() {
   return `${TODAY}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export function generateInvoiceNumber() {
-  const rand = Math.random().toString(16).slice(2, 8).toUpperCase();
-  return `INV-${Date.now()}-${rand}`;
+// Pola penomoran faktur. Nantinya diambil dari Pengaturan → Penomoran Dokumen;
+// sementara dikunci di sini supaya nomor otomatis konsisten.
+export const INVOICE_PREFIX = 'PRO/INV';
+
+// Nomor berjalan per bulan: PRO/INV/202611/00007.
+export function nextInvoiceNumber(sales = [], date = TODAY) {
+  const prefix = `${INVOICE_PREFIX}/${date.slice(0, 4)}${date.slice(5, 7)}/`;
+  const last = sales
+    .filter((s) => s.number?.startsWith(prefix))
+    .map((s) => Number(s.number.slice(prefix.length)) || 0)
+    .reduce((a, b) => Math.max(a, b), 0);
+  return `${prefix}${String(last + 1).padStart(5, '0')}`;
 }
+
+// #1: nomor dokumen tidak boleh dipakai dua kali. Dipakai form dan daftar.
+export const numberTaken = (docs, number, selfId) =>
+  docs.some((d) => d.id !== selfId && d.number?.trim().toLowerCase() === number.trim().toLowerCase());
 
 // Pelanggan faktur diambil dari data Kontak (store bersama).
 export const useCustomer = (id) => toCustomer(useData().contactsById[id]);
@@ -69,7 +82,20 @@ export function computeTotals(sale) {
   const withholding = sale.withholdingType === 'percent' ? (afterDiscount * wv) / 100 : wv;
 
   const total = Math.round(afterDiscount + tax - withholding);
-  const paid = sale.payments.reduce((s, p) => s + p.amount, 0);
+  // Penawaran dan pesanan tidak punya pembayaran sama sekali, jadi kolomnya memang
+  // tidak ada di dokumen itu — bukan berarti datanya rusak.
+  const paid = (sale.payments ?? []).reduce((s, p) => s + p.amount, 0);
+  // Satu retur bisa terbagi: sebagian memotong tagihan, sisanya jadi kredit pelanggan.
+  // Yang mengurangi piutang hanya porsi yang memotong tagihan.
+  const daftarRetur = sale.returns ?? [];
+  const returned = daftarRetur.reduce(
+    (s, r) => s + (r.deducted ?? (r.settlement === 'deduct' ? r.amount : 0)),
+    0,
+  );
+  // Seluruh nilai retur, apa pun penyelesaiannya: dipakai laporan penjualan neto.
+  const returnedTotal = daftarRetur.reduce((s, r) => s + r.amount, 0);
+  // B4: faktur yang dibatalkan berhenti menagih, jadi sisanya nol — bukan nilai penuh.
+  const cancelled = !!sale.cancelledAt;
   return {
     subtotal: Math.round(subtotal),
     discount: Math.round(discount),
@@ -77,19 +103,109 @@ export function computeTotals(sale) {
     withholding: Math.round(withholding),
     total,
     paid,
-    balance: Math.max(total - paid, 0),
+    returned,
+    returnedTotal,
+    // Tagihan yang tersisa setelah retur memotongnya — dasar progres pembayaran (B7).
+    billed: Math.max(total - returned, 0),
+    balance: cancelled ? 0 : Math.max(total - paid - returned, 0),
   };
 }
 
+// Status faktur: Draf → Terbit → Dibayar Sebagian → Lunas (Dibatalkan menyusul di Tahap 2).
+// Jatuh tempo BUKAN status, melainkan penanda tambahan — lihat isOverdue.
 export const STATUS = {
-  draft: { label: 'DRAFT', color: 'gray' },
-  sent: { label: 'TERKIRIM', color: 'blue' },
+  draft: { label: 'DRAF', color: 'gray' },
+  issued: { label: 'BELUM LUNAS', color: 'orange' },
+  // Biru: sudah ada uang masuk, jadi bedanya terlihat dari yang belum dibayar sama sekali.
+  partial: { label: 'DIBAYAR SEBAGIAN', color: 'blue' },
   paid: { label: 'LUNAS', color: 'green' },
+  // Tagihannya habis karena diretur, bukan karena dibayar — dibedakan supaya tidak
+  // terbaca sebagai uang masuk.
+  returned: { label: 'DIRETUR', color: 'orange' },
+  cancelled: { label: 'DIBATALKAN', color: 'red' },
 };
 
 export function statusOf(sale) {
   if (sale.draft) return 'draft';
-  return computeTotals(sale).balance <= 0 ? 'paid' : 'sent';
+  // #8: faktur yang dibatalkan berhenti di situ — tidak lagi menagih apa pun.
+  if (sale.cancelledAt) return 'cancelled';
+  // B6: seluruh barisnya sudah diretur — tagihannya gugur, bukan terbayar.
+  if (fullyReturned(sale)) return 'returned';
+  const t = computeTotals(sale);
+  if (t.balance <= 0) return t.paid > 0 || t.returned === 0 ? 'paid' : 'returned';
+  return t.paid > 0 ? 'partial' : 'issued';
 }
 
-export const isOverdue = (sale) => statusOf(sale) === 'sent' && sale.dueDate < TODAY;
+// Seluruh qty tiap baris sudah diretur. Faktur tanpa baris tidak terhitung.
+export const fullyReturned = (sale) =>
+  (sale.returns ?? []).length > 0 &&
+  sale.items.length > 0 &&
+  sale.items.every((l) => (l.returnedQty ?? 0) >= l.qty);
+
+// Faktur terbit yang masih bersisa dan tanggalnya sudah lewat.
+export const isOverdue = (sale) =>
+  ['issued', 'partial'].includes(statusOf(sale)) && sale.dueDate < TODAY;
+
+// Lencana memakai status apa adanya; jatuh tempo ditampilkan sebagai penanda terpisah.
+export const badgeOf = statusOf;
+
+// Aturan aksi, mengikuti aplikasi asli: faktur yang sudah terkirim tidak bisa diubah
+// atau dihapus lagi — koreksinya lewat retur atau faktur pengganti.
+export const canEdit = (sale) => statusOf(sale) === 'draft';
+export const canDelete = (sale) => statusOf(sale) === 'draft';
+export const canSend = (sale) => statusOf(sale) === 'draft';
+export const canPay = (sale) => ['issued', 'partial'].includes(statusOf(sale));
+// Faktur yang sudah terbit boleh dikirim ulang ke email pelanggan.
+export const canResend = (sale) => !['draft', 'cancelled'].includes(statusOf(sale));
+// #8: hanya faktur terbit yang belum menerima pembayaran sama sekali yang boleh
+// dibatalkan. Yang sudah dibayar dikoreksi lewat retur, bukan dibatalkan.
+export const canVoid = (sale) => statusOf(sale) === 'issued';
+
+// #29: denda keterlambatan = sisa tagihan × tarif × bulan keterlambatan (minimal 1).
+export function lateFeeAmount(sale, rate) {
+  const bulan = Math.max(Math.ceil((new Date(TODAY) - new Date(sale.dueDate)) / 86400000 / 30), 1);
+  return { bulan, amount: Math.round(computeTotals(sale).balance * rate * bulan) };
+}
+
+// #31: jejak aktivitas dokumen. Ditambahkan, tidak pernah diubah atau dihapus,
+// supaya riwayatnya bisa dipercaya sebagai jejak audit.
+export const ACTIVITY = {
+  created: 'Dibuat',
+  updated: 'Diubah',
+  issued: 'Diterbitkan',
+  sent: 'Dikirim ke pelanggan',
+  resent: 'Dikirim ulang',
+  paid: 'Pembayaran dicatat',
+  cancelled: 'Dibatalkan',
+  converted: 'Jadi dokumen lanjutan',
+  accepted: 'Diterima pelanggan',
+  rejected: 'Ditolak pelanggan',
+  confirmed: 'Dikonfirmasi pelanggan',
+};
+
+export const logActivity = (doc, type, note = '', by = 'Finance') => ({
+  ...doc,
+  activity: [...(doc.activity ?? []), { at: nowIso(), type, note, by }],
+});
+
+// Pengiriman terakhir (null bila belum pernah dikirim atau data lama tanpa riwayat).
+export const lastSend = (sale) => sale.sends?.[sale.sends.length - 1] ?? null;
+
+// Salinan faktur sebagai draf baru: nomor, tanggal, pembayaran, tautan, dan riwayat
+// kirim direset. Jatuh tempo dihitung ulang dari termin yang sama.
+export function duplicateOf(sale, termDays) {
+  const now = nowIso();
+  return {
+    ...sale,
+    id: `s${Date.now()}`,
+    number: nextInvoiceNumber(),
+    date: TODAY,
+    dueDate: termDays == null ? TODAY : addDays(TODAY, termDays),
+    draft: true,
+    payments: [],
+    sends: [],
+    invoiceLink: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}

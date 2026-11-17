@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { ActionIcon, Box, Button, Center, Group, Menu, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core';
 import { Copy, DownloadSimple, EnvelopeSimple, Eye, FileText, Link, ShareNetwork } from '@/components/Icon.jsx';
 import { FormModal } from './components.jsx';
-import { downloadFile, extOf, fmtMB, loadFile } from './fileStore.js';
+import { downloadFile, extOf, fmtMB, loadFile } from '@/lib/fileStore.js';
 import { toast } from './usePb.js';
 
 function Preview({ name, file, onClose }) {

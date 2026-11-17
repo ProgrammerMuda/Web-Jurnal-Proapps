@@ -972,6 +972,21 @@ export const accounts = [
     parent: '2-30000',
   },
   {
+    // R3: satu saldo kredit pelanggan untuk kredit retur, kelebihan bayar, dan nanti
+    // uang muka. Sumber tiap kredit disimpan di dokumennya masing-masing.
+    code: '2-30008',
+    name: 'Kredit Pelanggan',
+    category: 'Kewajiban Lancar Lainnya',
+    normal: 'kredit',
+    locked: false,
+    allUsers: true,
+    bankCash: false,
+    contra: false,
+    tax: null,
+    balance: 0,
+    parent: '2-30000',
+  },
+  {
     code: '2-30005',
     name: 'Deposit Lebih bayar VA',
     category: 'Kewajiban Lancar Lainnya',
@@ -2534,6 +2549,21 @@ export const accounts = [
   {
     code: '8-20003',
     name: 'Beban Pajak Tangguhan',
+    category: 'Beban Lainnya',
+    normal: 'debit',
+    locked: false,
+    allUsers: true,
+    bankCash: false,
+    contra: false,
+    tax: null,
+    balance: 0,
+    parent: '8-10000',
+  },
+  {
+    // PPh final yang dipotong pelanggan (mis. PPh 4 ayat 2 atas sewa). Tidak bisa
+    // dikreditkan, jadi dicatat sebagai beban — bukan pajak dibayar di muka.
+    code: '8-20004',
+    name: 'Beban Pajak Final - PPh 4 (2)',
     category: 'Beban Lainnya',
     normal: 'debit',
     locked: false,

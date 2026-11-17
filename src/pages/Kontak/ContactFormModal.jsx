@@ -733,7 +733,7 @@ function ContactForm({ contact, onCancel, onSave }) {
           size="sm"
           iconSize={32}
           color="secondary.7"
-          className="contact-stepper"
+          className="app-stepper"
           styles={{
             stepLabel: { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 700 },
             stepDescription: { fontSize: 11 },

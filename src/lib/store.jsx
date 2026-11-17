@@ -3,6 +3,9 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { seedContacts, seedGroups } from '@/pages/Kontak/data.js';
 import { seedSales } from '@/pages/Penjualan/data.js';
+import { seedOrders } from '@/pages/Penjualan/orders.js';
+import { seedQuotes } from '@/pages/Penjualan/quotes.js';
+import { seedReturns } from '@/pages/Penjualan/returns.js';
 import {
   fpbjSeed,
   invoicesSeed,
@@ -54,6 +57,9 @@ export function DataProvider({ children }) {
   const [contacts, setContacts] = useState(seedContacts);
   const [groups, setGroups] = useState(seedGroups);
   const [sales, setSales] = useState(seedSales);
+  const [orders, setOrders] = useState(seedOrders);
+  const [quotes, setQuotes] = useState(seedQuotes);
+  const [salesReturns, setSalesReturns] = useState(seedReturns);
   // Modul Pembelian: semua dokumen dalam satu state agar tahap-tahapnya saling terhubung.
   const [pb, setPb] = useState(loadPb);
   const [pbRole, setPbRole] = useState('accounting');
@@ -77,13 +83,19 @@ export function DataProvider({ children }) {
       setGroups,
       sales,
       setSales,
+      orders,
+      setOrders,
+      quotes,
+      setQuotes,
+      salesReturns,
+      setSalesReturns,
       pb,
       setPb,
       pbRole,
       setPbRole,
       resetPb,
     };
-  }, [contacts, groups, sales, pb, pbRole]);
+  }, [contacts, groups, sales, orders, quotes, salesReturns, pb, pbRole]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }
