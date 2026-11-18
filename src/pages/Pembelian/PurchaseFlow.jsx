@@ -34,15 +34,15 @@ export function FlowStep({ index, current, last, title, children, mark, state })
 const Empty = ({ children }) => <Text fz="xs" c="slate.6">{children}</Text>;
 
 // Telusuri rantai dokumen mulai dari dokumen yang sedang dibuka.
-// current = { kind: 'fpbj' | 'po' | 'receipt' | 'invoice' | 'pr' | 'voucher', id }
+// current = { kind: 'fppbj' | 'po' | 'receipt' | 'invoice' | 'pr' | 'voucher', id }
 export function resolveChain(current, pb) {
   const { kind, id } = current;
-  let fpbj = null;
+  let fppbj = null;
   let pos = [];
 
-  if (kind === 'fpbj') {
-    fpbj = pb.fpbjById[id];
-    pos = pb.pos.filter((p) => p.fpbjId === id);
+  if (kind === 'fppbj') {
+    fppbj = pb.fppbjById[id];
+    pos = pb.pos.filter((p) => p.fppbjId === id);
   } else {
     // Dokumen hilir selalu bisa ditarik balik ke satu PO.
     let poId = null;
@@ -55,7 +55,7 @@ export function resolveChain(current, pb) {
     }
     const po = poId ? pb.posById[poId] : null;
     pos = po ? [po] : [];
-    fpbj = po?.fpbjId ? pb.fpbjById[po.fpbjId] : null;
+    fppbj = po?.fppbjId ? pb.fppbjById[po.fppbjId] : null;
   }
 
   const poIds = pos.map((p) => p.id);
@@ -67,12 +67,12 @@ export function resolveChain(current, pb) {
   const dps = prs.filter((p) => p.kind === 'dp');
   const pays = prs.filter((p) => p.kind !== 'dp');
   const vouchers = pb.vouchers.filter((v) => (v.prIds ?? []).some((x) => prs.some((p) => p.id === x)));
-  return { fpbj, pos, receipts, invoices, dps, pays, vouchers };
+  return { fppbj, pos, receipts, invoices, dps, pays, vouchers };
 }
 
 export default function PurchaseFlow({ pb, go, current, description = 'Dokumen yang saling terkait' }) {
-  const { fpbj, pos, receipts, invoices, dps, pays, vouchers } = resolveChain(current, pb);
-  const proc = fpbj?.procurement;
+  const { fppbj, pos, receipts, invoices, dps, pays, vouchers } = resolveChain(current, pb);
+  const proc = fppbj?.procurement;
 
   const here = (kind, id) => current.kind === kind && current.id === id;
   const mine = (kind, id) =>
@@ -92,9 +92,9 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
   );
 
   const state = {
-    fpbj: !fpbj ? 'pending' : pos.length || fpbj.status === 'selesai' ? 'done' : 'active',
+    fppbj: !fppbj ? 'pending' : pos.length || fppbj.status === 'selesai' ? 'done' : 'active',
     // PO langsung tidak lewat permintaan/pengadaan: dua langkah pertama dibiarkan abu.
-    proc: !fpbj ? 'pending' : proc?.status === 'disetujui' || pos.length ? 'done' : fpbj.route ? 'active' : 'pending',
+    proc: !fppbj ? 'pending' : proc?.status === 'disetujui' || pos.length ? 'done' : fppbj.route ? 'active' : 'pending',
     po: !pos.length ? 'pending' : pos.every((p) => p.sent) ? 'done' : 'active',
     dp: dps.some((p) => p.status === 'dibayar') ? 'done' : dps.length ? 'active' : 'pending',
     receipt: receipts.length ? 'done' : pos.some((p) => p.sent) ? 'active' : 'pending',
@@ -106,18 +106,18 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
   return (
     <Section divided icon={TreeStructure} title="Alur pembelian" description={description}>
       <Stack gap={0}>
-        <FlowStep index={0} mark={fpbj ? undefined : '—'} state={state.fpbj} title="Permintaan Pembelian">
-          {fpbj
-            ? docRow(fpbj.id, 'fpbj', fpbj.id, fpbj.number)
+        <FlowStep index={0} mark={fppbj ? undefined : '—'} state={state.fppbj} title="Permintaan Pembelian">
+          {fppbj
+            ? docRow(fppbj.id, 'fppbj', fppbj.id, fppbj.number)
             : <Empty>Tanpa permintaan (PO langsung)</Empty>}
         </FlowStep>
 
-        <FlowStep index={1} mark={fpbj ? undefined : '—'} state={state.proc} title="Pengadaan">
-          {fpbj?.route ? (
+        <FlowStep index={1} mark={fppbj ? undefined : '—'} state={state.proc} title="Pengadaan">
+          {fppbj?.route ? (
             <Text fz="xs" c="slate.6">
-              {routeLabel(fpbj)}{proc?.status ? ` · ${PROC_STATUS[proc.status]?.label ?? proc.status}` : ''}
+              {routeLabel(fppbj)}{proc?.status ? ` · ${PROC_STATUS[proc.status]?.label ?? proc.status}` : ''}
             </Text>
-          ) : <Empty>{fpbj ? 'Belum dimulai' : 'Dilewati'}</Empty>}
+          ) : <Empty>{fppbj ? 'Belum dimulai' : 'Dilewati'}</Empty>}
         </FlowStep>
 
         <FlowStep index={2} state={state.po} title="Pesanan (PO / SPK)">

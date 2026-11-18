@@ -1,5 +1,5 @@
 // Data & aturan modul Pembelian — mengikuti artifact "Skenario Pembelian Proapps" (flow baru).
-// Alur: permintaan + IOM → (bidding | pesan ulang) → approval → PO → DP → penerimaan (FPB/BAST) → faktur → pelunasan.
+// Alur: permintaan → verifikasi → pengadaan (bidding | vendor tunggal) → approval → PO → DP → penerimaan (FPB/BAST) → faktur → pelunasan.
 import { TODAY } from '@/pages/Penjualan/data.js';
 
 export { TODAY };
@@ -65,88 +65,10 @@ export const productCatalog = [
 
 export const units = ['pcs', 'unit', 'rim', 'box', 'set', 'paket', 'bulan', 'lot'];
 export const departments = ['Engineering', 'Housekeeping', 'Security', 'Management', 'Keuangan'];
-export const fitOptions = [
-  { value: 'sesuai', label: 'Sesuai' },
-  { value: 'alternatif', label: 'Alternatif' },
-  { value: 'tidak', label: 'Tidak sesuai' },
-];
 // Termin bayar barang (PO): patokannya pengiriman.
-export const dpOptions = [
-  { value: 'cad', label: 'CAD (bayar setelah diterima)' },
-  { value: 'dp', label: 'DP (uang muka %)' },
-  { value: 'cbd', label: 'CBD (bayar sebelum kirim)' },
-];
+// Katalog syarat pembayaran sudah pindah ke paymentTerms.js dan kini tersimpan di store,
+// supaya bisa diubah lewat Pengaturan → Syarat Pembayaran.
 
-// Termin bayar jasa (SPK): patokannya penyelesaian pekerjaan, bukan pengiriman barang.
-// `fields` menentukan isian tambahan yang muncul di form penawaran:
-//   dp = uang muka %, due = jatuh tempo faktur (hari), terms = jumlah termin/milestone,
-//   retention = retensi % + masa pemeliharaan, period = satuan + jumlah periode.
-export const serviceTerms = [
-  {
-    value: 'prepaid',
-    label: 'Bayar penuh di muka',
-    hint: '100% sebelum pekerjaan dimulai',
-    example: 'Pelatihan, sewa tempat event, tiket, vendor kecil',
-    fields: [],
-  },
-  {
-    value: 'postpaid',
-    label: 'Bayar penuh di akhir',
-    hint: '100% setelah BAST akhir, dengan jatuh tempo',
-    example: 'Servis AC, perbaikan kecil, konsultasi singkat',
-    fields: ['due'],
-  },
-  {
-    value: 'dp_final',
-    label: 'DP + pelunasan',
-    hint: 'Uang muka di awal, sisanya setelah BAST akhir',
-    example: 'Desain interior, pembuatan video',
-    fields: ['dp', 'due'],
-  },
-  {
-    value: 'progress',
-    label: 'Termin progres',
-    hint: 'Ditagih per milestone sesuai % pekerjaan',
-    example: 'Renovasi, instalasi jaringan, pengembangan aplikasi',
-    fields: ['terms', 'due'],
-  },
-  {
-    value: 'dp_progress',
-    label: 'DP + termin progres',
-    hint: 'Uang muka di awal, lalu ditagih per milestone',
-    example: 'Konstruksi, renovasi besar',
-    fields: ['dp', 'terms', 'due'],
-  },
-  {
-    value: 'retention',
-    label: 'Termin progres + retensi',
-    hint: 'Per milestone, sebagian ditahan sampai masa pemeliharaan selesai',
-    example: 'Konstruksi, instalasi mesin, MEP',
-    fields: ['terms', 'retention', 'due'],
-  },
-  {
-    value: 'recurring',
-    label: 'Berkala (per periode)',
-    hint: 'Ditagih rutin tiap periode sesuai BAST periode',
-    example: 'Cleaning service, security, maintenance, outsourcing',
-    fields: ['period', 'due'],
-  },
-  {
-    value: 'recurring_prepaid',
-    label: 'Berkala di muka',
-    hint: 'Dibayar di depan untuk satu periode panjang, lalu diamortisasi',
-    example: 'Sewa gedung tahunan, langganan software, asuransi',
-    fields: ['period'],
-  },
-  {
-    value: 'usage',
-    label: 'Berdasarkan pemakaian',
-    hint: 'Ditagih sesuai realisasi per periode; nilai SPK jadi batas atas',
-    example: 'Konsultan per jam, jasa angkut per trip, tenaga harian',
-    fields: ['period', 'due'],
-  },
-];
-export const serviceTermOf = (v) => serviceTerms.find((t) => t.value === v);
 
 export const periodOptions = [
   { value: 'bulan', label: 'Bulanan' },
@@ -218,35 +140,48 @@ export const vendorsSeed = [
   },
 ];
 
-const item = (id, desc, qty, unit, estPrice, extra = {}) => ({
+// Item permintaan: tanpa harga. Harga baru muncul di penawaran vendor.
+const item = (id, desc, qty, unit, extra = {}) => ({
   id,
   desc,
   spec: '',
   qty,
   unit,
-  estPrice,
   kind: 'barang',
   ...extra,
 });
+// Item PO / SPK: item permintaan ditambah harga yang disepakati.
+const poItem = (id, desc, qty, unit, price, extra = {}) => ({ ...item(id, desc, qty, unit, extra), price });
+
+// Termin pada dokumen membawa salinan mekanismenya sendiri (lihat snapshotTerm di
+// paymentTerms.js), supaya artinya tidak bergantung pada katalog yang bisa berubah.
+// Dokumen contoh di bawah memakai pembantu ini agar bentuknya sama dengan dokumen asli.
+const term = (label, mech, params = {}) => ({ type: label.toLowerCase().replace(/[^a-z]+/g, '-'), label, mech: { ...mech, label }, ...params });
+const TERM = {
+  cad: () => term('CAD (bayar setelah diterima)', { advance: 'none', split: 'none', due: false, dueFrom: 'receipt' }, { dpPct: 0 }),
+  dp: (pct) => term('DP (uang muka %)', { advance: 'partial', split: 'none', due: false, dueFrom: 'receipt' }, { dpPct: pct }),
+  cbd: () => term('CBD (bayar sebelum kirim)', { advance: 'full', split: 'none', due: false, dueFrom: 'receipt' }, { dpPct: 100 }),
+  postpaid: (days) => term('Bayar penuh di akhir', { advance: 'none', split: 'none', due: true, dueFrom: 'receipt' }, { dueDays: days }),
+};
 
 // --- Dokumen contoh -------------------------------------------------------------------------
 
-// PO lama (Selesai) → bahan "Pesan ulang" Kasus 2 & 3.
+// PO lama (Selesai) sebagai riwayat pembelian.
 const poOld = {
   id: 'po-0031',
   number: 'PO/2026/09/0031',
   date: '2026-09-14',
-  fpbjId: null,
+  fppbjId: null,
   vendorId: 'v-alfa',
   kind: 'barang',
   sent: true,
-  term: { type: 'cad', dpPct: 0 },
+  term: TERM.cad(),
   expectedAt: '2026-09-21',
   warehouse: 'Gudang Utama',
   items: [
-    item('i1', 'Kertas A4 80 gsm', 50, 'rim', 52000),
-    item('i2', 'Map plastik', 200, 'pcs', 3500),
-  ].map((i) => ({ ...i, price: i.estPrice })),
+    poItem('i1', 'Kertas A4 80 gsm', 50, 'rim', 52000),
+    poItem('i2', 'Map plastik', 200, 'pcs', 3500),
+  ],
   note: '',
 };
 
@@ -254,34 +189,31 @@ const poChair = {
   id: 'po-0040',
   number: 'PO/2026/10/0040',
   date: '2026-10-28',
-  fpbjId: 'fpbj-0005',
+  fppbjId: 'fppbj-0005',
   vendorId: 'v-bintang',
   kind: 'barang',
   sent: true,
-  term: { type: 'dp', dpPct: 30 },
+  term: TERM.dp(30),
   expectedAt: '2026-11-12',
   warehouse: 'Gudang Utama',
   items: [
-    {
-      ...item('c1', 'Kursi ergonomis meeting', 10, 'pcs', 1300000, {
-        spec: 'Sandaran jaring, roda, adjustable',
-      }),
-      price: 1250000,
-    },
+    poItem('c1', 'Kursi ergonomis meeting', 10, 'pcs', 1250000, {
+      spec: 'Sandaran jaring, roda, adjustable',
+    }),
   ],
   note: '',
 };
 
-export const fpbjSeed = [
+export const fppbjSeed = [
   {
-    id: 'fpbj-0001',
-    number: 'FPBJ/2026/11/0001',
+    id: 'fppbj-0001',
+    number: 'FPPBJ/2026/11/0001',
     date: '2026-11-03',
     neededBy: '2026-11-20',
     dept: 'Housekeeping',
     purpose: 'Meja lipat untuk ruang pameran',
     iom: { no: 'IOM/OPS/11/021', date: '2026-11-02', file: 'iom-meja-lipat.pdf' },
-    items: [item('a1', 'Meja lipat 120x60', 8, 'pcs', 650000, { isNew: true })],
+    items: [item('a1', 'Meja lipat 120x60', 8, 'pcs')],
     status: 'diajukan',
     note: '',
     returnNote: '',
@@ -292,16 +224,16 @@ export const fpbjSeed = [
     requester: 'Andi Wijaya · Staff Housekeeping',
   },
   {
-    id: 'fpbj-0002',
-    number: 'FPBJ/2026/11/0002',
+    id: 'fppbj-0002',
+    number: 'FPPBJ/2026/11/0002',
     date: '2026-11-02',
     neededBy: '2026-11-18',
     dept: 'Keuangan',
     purpose: 'Kertas A4 dan printer laser untuk lantai 3',
     iom: { no: 'IOM/KEU/11/008', date: '2026-11-01', file: 'iom-atk-lt3.pdf' },
     items: [
-      item('b1', 'Kertas A4 80 gsm', 50, 'rim', 56000, { refItemId: 'i1', refPoId: 'po-0031' }),
-      item('b2', 'Printer laser A4', 2, 'unit', 4200000, { isNew: true }),
+      item('b1', 'Kertas A4 80 gsm', 50, 'rim'),
+      item('b2', 'Printer laser A4', 2, 'unit'),
     ],
     status: 'diverifikasi',
     note: '',
@@ -313,14 +245,14 @@ export const fpbjSeed = [
     requester: 'Maya Sari · Staff Keuangan',
   },
   {
-    id: 'fpbj-0003',
-    number: 'FPBJ/2026/10/0006',
+    id: 'fppbj-0003',
+    number: 'FPPBJ/2026/10/0006',
     date: '2026-10-26',
     neededBy: '2026-11-15',
     dept: 'Engineering',
     purpose: 'Lemari arsip besi untuk ruang dokumen',
     iom: { no: 'IOM/PRP/10/044', date: '2026-10-25', file: 'iom-lemari.pdf' },
-    items: [item('d1', 'Lemari arsip besi 4 laci', 6, 'unit', 2500000, { isNew: true })],
+    items: [item('d1', 'Lemari arsip besi 4 laci', 6, 'unit')],
     status: 'dalam_pengadaan',
     note: '',
     returnNote: '',
@@ -333,10 +265,10 @@ export const fpbjSeed = [
         validUntil: '2026-11-30',
         desc: 'Lemari arsip besi 4 laci, cat powder coating, kunci terpusat.',
         file: 'qt-bintang.pdf',
-        term: { type: 'dp', dpPct: 30 },
+        term: TERM.dp(30),
         lead: 14,
         warranty: '12 bulan',
-        lines: [{ itemId: 'd1', price: 2450000, spec: 'Besi 0,7 mm, 4 laci', fit: 'sesuai' }],
+        lines: [{ itemId: 'd1', price: 2450000, spec: 'Besi 0,7 mm, 4 laci' }],
       },
       {
         id: 'q2',
@@ -345,10 +277,10 @@ export const fpbjSeed = [
         validUntil: '2026-11-25',
         desc: 'Lemari arsip besi 4 laci, finishing cat oven.',
         file: 'qt-prima.pdf',
-        term: { type: 'cad', dpPct: 0 },
+        term: TERM.cad(),
         lead: 10,
         warranty: '6 bulan',
-        lines: [{ itemId: 'd1', price: 2380000, spec: 'Besi 0,6 mm, 4 laci', fit: 'alternatif' }],
+        lines: [{ itemId: 'd1', price: 2380000, spec: 'Besi 0,6 mm, 4 laci' }],
       },
       {
         id: 'q3',
@@ -357,10 +289,10 @@ export const fpbjSeed = [
         validUntil: '2026-11-20',
         desc: 'Lemari arsip 4 laci stok toko.',
         file: 'qt-karya.pdf',
-        term: { type: 'cbd', dpPct: 100 },
+        term: TERM.cbd(),
         lead: 3,
         warranty: '3 bulan',
-        lines: [{ itemId: 'd1', price: 2600000, spec: 'Besi 0,5 mm, 4 laci', fit: 'sesuai' }],
+        lines: [{ itemId: 'd1', price: 2600000, spec: 'Besi 0,5 mm, 4 laci' }],
       },
     ],
     single: { on: false, reason: '' },
@@ -378,61 +310,60 @@ export const fpbjSeed = [
     requester: 'Tiara Putri · Staff Engineering',
   },
   {
-    id: 'fpbj-0004',
-    number: 'FPBJ/2026/11/0003',
+    id: 'fppbj-0004',
+    number: 'FPPBJ/2026/11/0003',
     date: '2026-11-01',
     neededBy: '2026-11-14',
     dept: 'Keuangan',
-    purpose: 'Pesan ulang kertas A4 dan map plastik',
+    purpose: 'Kertas A4 dan map plastik untuk lantai 2',
     iom: { no: 'IOM/KEU/11/006', date: '2026-10-31', file: 'iom-atk.pdf' },
     items: [
-      item('e1', 'Kertas A4 80 gsm', 40, 'rim', 55000, { refItemId: 'i1', refPoId: 'po-0031' }),
-      item('e2', 'Map plastik', 100, 'pcs', 3500, { refItemId: 'i2', refPoId: 'po-0031' }),
+      item('e1', 'Kertas A4 80 gsm', 40, 'rim'),
+      item('e2', 'Map plastik', 100, 'pcs'),
     ],
     status: 'dalam_pengadaan',
     note: '',
     returnNote: '',
-    route: 'repeat',
-    refPoId: 'po-0031',
+    route: 'bidding',
     quotes: [
       {
         id: 'q4',
         vendorId: 'v-alfa',
         no: 'QT-ALF-2210',
         validUntil: '2026-11-30',
-        desc: 'Penawaran pesan ulang ATK.',
+        desc: 'Penawaran ATK dari vendor langganan.',
         file: 'qt-alfa-nov.pdf',
-        term: { type: 'cad', dpPct: 0 },
+        term: TERM.cad(),
         lead: 5,
         warranty: '-',
         lines: [
-          { itemId: 'e1', price: 54000, spec: '', fit: 'sesuai' },
-          { itemId: 'e2', price: 3500, spec: '', fit: 'sesuai' },
+          { itemId: 'e1', price: 54000, spec: '' },
+          { itemId: 'e2', price: 3500, spec: '' },
         ],
       },
     ],
-    single: { on: false, reason: '' },
+    single: { on: true, reason: 'Hanya PT Alfa Sejahtera yang menyuplai map plastik ukuran ini di wilayah kami.' },
     procurement: {
-      kind: 'repeat',
+      kind: 'bidding',
       status: 'disetujui',
       note: '',
       reason: '',
-      evidence: {},
-      comparators: {},
+      negotiation: '',
+      winners: {},
+      finals: { e1: 54000, e2: 3500 },
     },
     requester: 'Maya Sari · Staff Keuangan',
   },
   {
-    id: 'fpbj-0005',
-    number: 'FPBJ/2026/10/0005',
+    id: 'fppbj-0005',
+    number: 'FPPBJ/2026/10/0005',
     date: '2026-10-20',
     neededBy: '2026-11-12',
     dept: 'Housekeeping',
     purpose: '10 kursi ergonomis untuk ruang meeting baru',
     iom: { no: 'IOM/OPS/10/038', date: '2026-10-19', file: 'iom-kursi.pdf' },
     items: [
-      item('c1', 'Kursi ergonomis meeting', 10, 'pcs', 1300000, {
-        isNew: true,
+      item('c1', 'Kursi ergonomis meeting', 10, 'pcs', {
         spec: 'Sandaran jaring, roda, adjustable',
       }),
     ],
@@ -448,10 +379,10 @@ export const fpbjSeed = [
         validUntil: '2026-11-15',
         desc: 'Kursi ergonomis sandaran jaring.',
         file: 'qt-bf-kursi.pdf',
-        term: { type: 'dp', dpPct: 30 },
+        term: TERM.dp(30),
         lead: 14,
         warranty: '12 bulan',
-        lines: [{ itemId: 'c1', price: 1300000, spec: '', fit: 'sesuai' }],
+        lines: [{ itemId: 'c1', price: 1300000, spec: '' }],
       },
       {
         id: 'q6',
@@ -460,10 +391,10 @@ export const fpbjSeed = [
         validUntil: '2026-11-15',
         desc: 'Kursi ergonomis.',
         file: 'qt-prima-kursi.pdf',
-        term: { type: 'cad', dpPct: 0 },
+        term: TERM.cad(),
         lead: 12,
         warranty: '6 bulan',
-        lines: [{ itemId: 'c1', price: 1350000, spec: '', fit: 'sesuai' }],
+        lines: [{ itemId: 'c1', price: 1350000, spec: '' }],
       },
       {
         id: 'q7',
@@ -472,10 +403,10 @@ export const fpbjSeed = [
         validUntil: '2026-11-10',
         desc: 'Kursi kantor.',
         file: 'qt-karya-kursi.pdf',
-        term: { type: 'cbd', dpPct: 100 },
+        term: TERM.cbd(),
         lead: 5,
         warranty: '3 bulan',
-        lines: [{ itemId: 'c1', price: 1180000, spec: '', fit: 'alternatif' }],
+        lines: [{ itemId: 'c1', price: 1180000, spec: '' }],
       },
     ],
     single: { on: false, reason: '' },
@@ -500,47 +431,47 @@ const spkLift = {
   id: 'po-0036',
   number: 'SPK/2026/10/0036',
   date: '2026-10-01',
-  fpbjId: null,
+  fppbjId: null,
   vendorId: 'v-mitra',
   sent: true,
-  term: { type: 'postpaid', dueDays: 30 },
+  term: TERM.postpaid(30),
   expectedAt: '2026-10-15',
   warehouse: '-',
-  items: [{ ...item('s1', 'Servis berkala lift gedung A', 1, 'paket', 8500000, { kind: 'jasa' }), price: 8500000 }],
+  items: [poItem('s1', 'Servis berkala lift gedung A', 1, 'paket', 8500000, { kind: 'jasa' })],
   note: '',
 };
 
 
-// Riwayat PO selesai lainnya (diterima penuh, difaktur, lunas) sebagai acuan "Pesan ulang".
-const histPo = (id, number, date, vendorId, items, term = { type: 'cad', dpPct: 0 }) => ({
+// Riwayat PO selesai lainnya (diterima penuh, difaktur, lunas).
+const histPo = (id, number, date, vendorId, items, term = TERM.cad()) => ({
   id,
   number,
   date,
-  fpbjId: null,
+  fppbjId: null,
   vendorId,
   sent: true,
   term,
   expectedAt: date,
   warehouse: 'Gudang Utama',
-  items: items.map((i) => ({ ...i, price: i.estPrice })),
+  items,
   note: '',
 });
 const poAlfa1 = histPo('po-0022', 'PO/2026/07/0022', '2026-07-08', 'v-alfa', [
-  item('a1', 'Kertas A4 80 gsm', 40, 'rim', 50000),
-  item('a2', 'Tinta printer', 12, 'box', 175000),
+  poItem('a1', 'Kertas A4 80 gsm', 40, 'rim', 50000),
+  poItem('a2', 'Tinta printer', 12, 'box', 175000),
 ]);
 const poAlfa2 = histPo('po-0027', 'PO/2026/08/0027', '2026-08-05', 'v-alfa', [
-  item('b1', 'Map plastik', 300, 'pcs', 3300),
-  item('b2', 'Kertas A4 80 gsm', 30, 'rim', 51000),
+  poItem('b1', 'Map plastik', 300, 'pcs', 3300),
+  poItem('b2', 'Kertas A4 80 gsm', 30, 'rim', 51000),
 ]);
 const poBintang1 = histPo('po-0018', 'PO/2026/06/0018', '2026-06-12', 'v-bintang', [
-  item('d1', 'Meja lipat 120x60', 6, 'pcs', 620000),
-  item('d2', 'Lemari arsip besi 4 laci', 2, 'unit', 2400000),
+  poItem('d1', 'Meja lipat 120x60', 6, 'pcs', 620000),
+  poItem('d2', 'Lemari arsip besi 4 laci', 2, 'unit', 2400000),
 ]);
 // Jasa semua → SPK, dengan termin jasa "bayar penuh di akhir".
 const poMitra1 = histPo('po-0025', 'SPK/2026/08/0025', '2026-08-18', 'v-mitra', [
-  item('m1', 'Jasa servis AC', 20, 'unit', 330000, { kind: 'jasa' }),
-], { type: 'postpaid', dueDays: 30 });
+  poItem('m1', 'Jasa servis AC', 20, 'unit', 330000, { kind: 'jasa' }),
+], TERM.postpaid(30));
 const histDocs = [
   { po: poAlfa1, rc: ['fpb-0005', 'FPB/2026/07/0005', '2026-07-12', 'SJ-ALF-6120'], inv: ['fkt-0014', 'FKT/2026/07/0014', 'INV-ALF-70231', '2026-07-14', '2026-08-13'], pr: ['pr-0010', 'PR/2026/08/0010', '2026-08-10'] },
   { po: poAlfa2, rc: ['fpb-0006', 'FPB/2026/08/0006', '2026-08-09', 'SJ-ALF-6544'], inv: ['fkt-0017', 'FKT/2026/08/0017', 'INV-ALF-80377', '2026-08-11', '2026-09-10'], pr: ['pr-0013', 'PR/2026/09/0013', '2026-09-08'] },

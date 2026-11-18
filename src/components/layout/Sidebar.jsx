@@ -96,7 +96,7 @@ const groups = [
         icon: ShoppingCart,
         children: [
           { key: 'pembelian:overview', label: 'Ringkasan Pembelian', icon: SquaresFour },
-          { key: 'pembelian:fpbj', label: 'Permintaan', icon: FileText },
+          { key: 'pembelian:fppbj', label: 'Permintaan', icon: FileText },
           { key: 'pembelian:orders', label: 'Pesanan', icon: Package },
           { key: 'pembelian:receipts', label: 'Penerimaan Barang', icon: Truck },
           { key: 'pembelian:bills', label: 'Tagihan Vendor', icon: Receipt },
@@ -148,7 +148,7 @@ const groups = [
         label: 'Transaksi & Dokumen',
         icon: ArrowsLeftRight,
         children: [
-          { label: 'Syarat Pembayaran', icon: ClockCountdown },
+          { key: 'syarat-pembayaran', label: 'Syarat Pembayaran', icon: ClockCountdown },
           { label: 'Metode Pembayaran', icon: CreditCard },
           { label: 'Penomoran Dokumen', icon: Hash },
           { label: 'Tag Transaksi', icon: Tag },

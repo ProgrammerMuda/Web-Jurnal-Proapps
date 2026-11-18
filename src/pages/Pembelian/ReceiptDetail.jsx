@@ -61,7 +61,7 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go, openDialog }
               <Button radius="md" leftSection={<Check size={16} />} onClick={approveBast}>Setujui BAST</Button>
             ) : <Group gap={6}><Text fz="xs" c="slate.7">Menunggu</Text><RoleChip role="bm" /></Group>)}
             {confirmed && open && (canCreate(pb.role, 'invoice') ? (
-              <Button radius="md" onClick={() => openDialog({ type: 'invoice', receiptIds: [r.id] })}>Buat faktur</Button>
+              <Button radius="md" onClick={() => openDialog({ type: 'invoice', receiptIds: [r.id] })}>Catat faktur</Button>
             ) : <Group gap={6}><Text fz="xs" c="slate.7">Faktur oleh</Text><RoleChip role="accounting" /></Group>)}
           </Group>
         </Group>

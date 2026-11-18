@@ -24,8 +24,7 @@ import {
   routeLabel,
   poAllJasa,
   poDocLabel,
-  FPBJ_STATUS,
-  fpbjTotal,
+  FPPBJ_STATUS,
   INV_STATUS,
   invStatus,
   invTotals,
@@ -80,21 +79,21 @@ export default function ListTab({ tab, pb, go, openDialog }) {
     <Select size="sm" radius="md" w={220} clearable placeholder="Semua status" data={statusOptions(map)} value={status} onChange={reset(setStatus)} />
   );
 
-  if (tab === 'fpbj') {
-    const rows = pb.fpbj.filter((f) => match(q, f.number, f.purpose, f.dept, requesterOf(f)) && (!status || f.status === status));
+  if (tab === 'fppbj') {
+    const rows = pb.fppbj.filter((f) => match(q, f.number, f.purpose, f.dept, requesterOf(f)) && (!status || f.status === status));
     return (
       <ListShell
         {...shell}
         noun="permintaan"
         placeholder="Cari nomor, keperluan, departemen, atau peminta..."
-        filters={statusFilter(FPBJ_STATUS)}
-        head={[{ label: 'Permintaan & Tanggal' }, { label: 'Keperluan' }, { label: 'Departemen' }, { label: 'Jalur' }, { label: 'Status' }, { label: 'Estimasi', align: 'right' }, { label: 'Aksi', align: 'right', w: 70 }]}
-        minWidth={1000}
-        empty={pb.fpbj.length === 0 ? <EmptyState icon={ClipboardText} title="Belum ada permintaan" text="Pembelian dimulai dari permintaan dan IOM yang disetujui atasan." actions={canCreate(role, 'fpbj') ? [<Button key="n" size="xs" radius="md" onClick={() => go({ name: 'fpbj-new' })}>Buat permintaan</Button>] : null} /> : undefined}
+        filters={statusFilter(FPPBJ_STATUS)}
+        head={[{ label: 'Permintaan & Tanggal' }, { label: 'Keperluan' }, { label: 'Departemen' }, { label: 'Jalur' }, { label: 'Status' }, { label: 'Aksi', align: 'right', w: 70 }]}
+        minWidth={900}
+        empty={pb.fppbj.length === 0 ? <EmptyState icon={ClipboardText} title="Belum ada permintaan" text="Pembelian dimulai dari permintaan dan IOM yang disetujui atasan." actions={canCreate(role, 'fppbj') ? [<Button key="n" size="xs" radius="md" onClick={() => go({ name: 'fppbj-new' })}>Buat permintaan</Button>] : null} /> : undefined}
         rows={rows.map((f) => (
           <Table.Tr key={f.id}>
             <Table.Td>
-              <DocNumber onClick={() => go({ name: 'fpbj', id: f.id })}>{f.number}</DocNumber>
+              <DocNumber onClick={() => go({ name: 'fppbj', id: f.id })}>{f.number}</DocNumber>
               <Sub>{formatDate(f.date)} · {requesterOf(f)}</Sub>
             </Table.Td>
             <Table.Td maw={320}>
@@ -103,12 +102,11 @@ export default function ListTab({ tab, pb, go, openDialog }) {
             </Table.Td>
             <Table.Td fz="sm">{f.dept}</Table.Td>
             <Table.Td>{f.route ? <RouteBadge f={f} /> : <Text fz="xs" c="slate.6">Belum dipilih</Text>}</Table.Td>
-            <Table.Td><StatusPill map={FPBJ_STATUS} status={f.status} size="xs" /></Table.Td>
-            <Table.Td><Money>{rupiah(fpbjTotal(f))}</Money></Table.Td>
+            <Table.Td><StatusPill map={FPPBJ_STATUS} status={f.status} size="xs" /></Table.Td>
             <Table.Td ta="right">
               <RowMenu label={f.number} items={[
-                { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'fpbj', id: f.id }) },
-                ['draft', 'dikembalikan'].includes(f.status) && canCreate(role, 'fpbj') && { label: 'Ubah permintaan', icon: PencilSimple, onClick: () => go({ name: 'fpbj-edit', id: f.id }) },
+                { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'fppbj', id: f.id }) },
+                ['draft', 'dikembalikan'].includes(f.status) && canCreate(role, 'fppbj') && { label: 'Ubah permintaan', icon: PencilSimple, onClick: () => go({ name: 'fppbj-edit', id: f.id }) },
               ]} />
             </Table.Td>
           </Table.Tr>

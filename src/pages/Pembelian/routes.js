@@ -1,8 +1,8 @@
-// Rute modul Pembelian (disimpan di hash): #pembelian[/tab/<tab> | /fpbj/new | /fpbj/<id>[/edit] | /po/<id> | /receipt/<id> | /invoice/<id> | /pr/<id>].
+// Rute modul Pembelian (disimpan di hash): #pembelian[/tab/<tab> | /fppbj/new | /fppbj/<id>[/edit] | /po/<id> | /receipt/<id> | /invoice/<id> | /pr/<id>].
 // Tiap tab = satu menu di sidebar (submenu Pembelian), seperti di produksi.
 export const pembelianTabs = [
   { value: 'overview', label: 'Ringkasan Pembelian', title: 'Ringkasan Pembelian' },
-  { value: 'fpbj', label: 'Permintaan', title: 'Permintaan' },
+  { value: 'fppbj', label: 'Permintaan', title: 'Permintaan' },
   { value: 'orders', label: 'Pesanan', title: 'Pesanan' },
   { value: 'receipts', label: 'Penerimaan Barang', title: 'Penerimaan Barang' },
   { value: 'bills', label: 'Tagihan Vendor', title: 'Tagihan Vendor' },
@@ -13,11 +13,10 @@ export const pembelianTabs = [
 const tabKeys = pembelianTabs.map((t) => t.value);
 
 export function parseHash(h) {
-  const [path, query = ''] = h.replace(/^#/, '').split('?');
+  const [path] = h.replace(/^#/, '').split('?');
   const [, a, b, c] = path.split('/');
-  const po = new URLSearchParams(query).get('po');
-  if (a === 'fpbj' && b === 'new') return { tab: 'fpbj', view: { name: 'fpbj-new', prefill: po ? { poId: po } : undefined } };
-  if (a === 'fpbj' && b) return { tab: 'fpbj', view: { name: c === 'edit' ? 'fpbj-edit' : 'fpbj', id: b } };
+  if (a === 'fppbj' && b === 'new') return { tab: 'fppbj', view: { name: 'fppbj-new' } };
+  if (a === 'fppbj' && b) return { tab: 'fppbj', view: { name: c === 'edit' ? 'fppbj-edit' : 'fppbj', id: b } };
   if (a === 'po' && b) return { tab: 'orders', view: { name: 'po', id: b } };
   if (a === 'receipt' && b) return { tab: 'receipts', view: { name: 'receipt', id: b } };
   if (a === 'invoice' && b) return { tab: 'bills', view: { name: 'invoice', id: b } };
@@ -30,9 +29,9 @@ export function parseHash(h) {
 export function formatHash(v) {
   switch (v.name) {
     case 'tab': return v.tab === 'overview' ? '#pembelian' : `#pembelian/tab/${v.tab}`;
-    case 'fpbj-new': return `#pembelian/fpbj/new${v.prefill?.poId ? `?po=${v.prefill.poId}` : ''}`;
-    case 'fpbj': return `#pembelian/fpbj/${v.id}`;
-    case 'fpbj-edit': return `#pembelian/fpbj/${v.id}/edit`;
+    case 'fppbj-new': return '#pembelian/fppbj/new';
+    case 'fppbj': return `#pembelian/fppbj/${v.id}`;
+    case 'fppbj-edit': return `#pembelian/fppbj/${v.id}/edit`;
     case 'po': return `#pembelian/po/${v.id}`;
     case 'receipt': return `#pembelian/receipt/${v.id}`;
     case 'invoice': return `#pembelian/invoice/${v.id}`;

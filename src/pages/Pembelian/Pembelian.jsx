@@ -1,4 +1,4 @@
-// Modul Pembelian sesuai flow baru: permintaan → bidding / pesan ulang → PO → penerimaan → faktur → pembayaran.
+// Modul Pembelian: permintaan → verifikasi → pengadaan (bidding / vendor tunggal) → PO → penerimaan → faktur → pembayaran.
 import { ActionIcon, Badge, Button, Card, Group, Menu, Select, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import {
@@ -16,8 +16,8 @@ import {
 } from '@/components/Icon.jsx';
 import { PageIntro, ReferencePicker } from './components.jsx';
 import { CreditModal, DetailModal, InvoiceModal, PayModal, PrModal, ReasonModal, ReturnModal, ReceiptModal } from './Dialogs.jsx';
-import FpbjDetail from './FpbjDetail.jsx';
-import FpbjForm from './FpbjForm.jsx';
+import FppbjDetail from './FppbjDetail.jsx';
+import FppbjForm from './FppbjForm.jsx';
 import LaporanHutang from './LaporanHutang.jsx';
 import ListTab from './Lists.jsx';
 import Overview from './Overview.jsx';
@@ -37,7 +37,7 @@ import { usePb } from './usePb.js';
 // Dokumen yang bisa dibuat: peran yang boleh membuat + label tombol.
 const actions = {
   // Dokumen apa saja yang boleh dibuat tiap peran: lihat permissions.js (spesifikasi 2.2).
-  fpbj: { label: 'Buat Permintaan', doc: 'fpbj' },
+  fppbj: { label: 'Buat Permintaan', doc: 'fppbj' },
   po: { label: 'Buat Pesanan', doc: 'po', count: 'po' },
   receipt: { label: 'Buat Penerimaan', doc: 'receipt', count: 'receipt' },
   invoice: { label: 'Buat Tagihan Vendor', doc: 'invoice', count: 'invoice' },
@@ -45,13 +45,13 @@ const actions = {
   return: { label: 'Buat Retur Pembelian', doc: 'return', count: 'returns' },
 };
 // Satu tombol per tab: dokumen yang dibuat di tab itu. Ringkasan memakai dropdown "Buat baru".
-const tabAction = { fpbj: 'fpbj', orders: 'po', receipts: 'receipt', bills: 'invoice', payments: 'pr', returns: 'return' };
-const buatBaruOrder = ['fpbj', 'po', 'receipt', 'invoice', 'pr', 'return'];
+const tabAction = { fppbj: 'fppbj', orders: 'po', receipts: 'receipt', bills: 'invoice', payments: 'pr', returns: 'return' };
+const buatBaruOrder = ['fppbj', 'po', 'receipt', 'invoice', 'pr', 'return'];
 
 // Judul & deskripsi halaman per menu sidebar.
 const pageIntros = {
   overview: { icon: ShoppingCart, title: 'Pembelian', description: 'Kelola pembelian dari permintaan, pengadaan, PO, penerimaan barang, tagihan vendor hingga pembayaran.' },
-  fpbj: { icon: FileText, title: 'Permintaan Pembelian', description: 'Ajukan kebutuhan barang atau jasa dengan IOM. Setelah diverifikasi Accounting, pilih jalur bidding atau pesan ulang.' },
+  fppbj: { icon: FileText, title: 'Permintaan Pembelian', description: 'Ajukan kebutuhan barang atau jasa; IOM opsional. Setelah diverifikasi, jalur bidding atau vendor tunggal dipilih di tahap pengadaan.' },
   orders: { icon: Package, title: 'Pesanan Pembelian', description: 'Pesanan ke vendor yang dibuat dari pengadaan yang sudah disetujui.' },
   receipts: { icon: Truck, title: 'Penerimaan Barang', description: 'Catat barang (FPB) atau jasa (BAST) dari vendor yang sudah sampai. Penerimaan bisa sebagian.' },
   bills: { icon: Invoice, title: 'Tagihan Vendor', description: 'Faktur dari vendor, dibuat dari penerimaan dan dicocokkan 3 arah dengan PO sebelum dibayar.' },
@@ -106,31 +106,22 @@ export default function Pembelian() {
   // Konfigurasi dialog "Pilih referensi" per jenis dokumen.
   const vendorName = (id) => pb.vendorsById[id]?.name ?? '—';
   const refs = {
-    repeat: {
-      title: 'Pesan ulang · pilih PO lama',
-      icon: Package,
-      rows: rd.repeat.map((p) => ({ id: p.id, number: p.number, vendor: vendorName(p.vendorId), value: rupiah(poTotal(p)), hint: p.items.map((i) => i.desc).join(', ') })),
-      emptyTitle: 'Belum ada PO yang selesai',
-      emptyText: 'Pesan ulang memakai PO berstatus Selesai sebagai acuan harga. Untuk barang atau vendor baru, mulai dari permintaan.',
-      emptyActions: [<Button key="b" size="xs" radius="md" onClick={() => { close(); go({ name: 'fpbj-new' }); }}>Buat permintaan</Button>],
-      pick: ([id]) => { close(); go({ name: 'fpbj-new', prefill: { poId: id } }); },
-    },
     quotes: {
       title: 'Penawaran vendor · pilih permintaan',
       icon: FileText,
       rows: rd.quotes.map((f) => ({ id: f.id, number: f.number, vendor: f.purpose, value: `${f.quotes.length} penawaran`, hint: f.status === 'diverifikasi' ? 'Diverifikasi · pilih jalur dulu' : 'Dalam pengadaan' })),
       emptyTitle: 'Belum ada permintaan yang siap menerima penawaran',
       emptyText: 'Penawaran dicatat dari permintaan yang sudah diverifikasi atau sedang dalam pengadaan.',
-      emptyActions: [<Button key="b" size="xs" radius="md" onClick={() => { close(); go({ name: 'fpbj-new' }); }}>Buat permintaan</Button>],
-      pick: ([id]) => { close(); go({ name: 'fpbj', id }); },
+      emptyActions: [<Button key="b" size="xs" radius="md" onClick={() => { close(); go({ name: 'fppbj-new' }); }}>Buat permintaan</Button>],
+      pick: ([id]) => { close(); go({ name: 'fppbj', id }); },
     },
     po: {
       title: 'PO · pilih pengadaan yang disetujui',
       icon: ShoppingCart,
       rows: rd.po.map((f) => ({ id: f.id, number: f.number, vendor: f.purpose, value: routeLabel(f), hint: 'Disetujui · belum dibuat PO' })),
       emptyTitle: 'Belum ada pengadaan yang disetujui',
-      emptyText: 'PO dibuat dari bidding atau pesan ulang yang sudah disetujui approver.',
-      pick: ([id]) => { close(); go({ name: 'fpbj', id }); },
+      emptyText: 'PO dibuat dari pengadaan yang sudah disetujui approver.',
+      pick: ([id]) => { close(); go({ name: 'fppbj', id }); },
     },
     receipt: {
       title: 'Penerimaan · pilih PO',
@@ -138,7 +129,7 @@ export default function Pembelian() {
       rows: rd.receipt.map((p) => ({ id: p.id, number: p.number, vendor: vendorName(p.vendorId), value: rupiah(poTotal(p)), remain: `Sisa ${p.items.reduce((n, i) => n + remainingQty(p, i.id, pb.receipts), 0)} belum diterima` })),
       emptyTitle: 'Belum ada PO yang bisa diterima',
       emptyText: 'Penerimaan dicatat dari PO yang sudah dikirim ke vendor dan belum diterima penuh.',
-      emptyActions: [<Button key="b" size="xs" radius="md" variant="default" onClick={() => { close(); go({ name: 'tab', tab: 'orders' }); }}>Lihat PO</Button>, <Button key="c" size="xs" radius="md" onClick={() => { close(); go({ name: 'fpbj-new' }); }}>Buat permintaan</Button>],
+      emptyActions: [<Button key="b" size="xs" radius="md" variant="default" onClick={() => { close(); go({ name: 'tab', tab: 'orders' }); }}>Lihat PO</Button>, <Button key="c" size="xs" radius="md" onClick={() => { close(); go({ name: 'fppbj-new' }); }}>Buat permintaan</Button>],
       pick: ([id]) => setDialog({ type: 'receipt', poId: id }),
     },
     invoice: {
@@ -177,7 +168,7 @@ export default function Pembelian() {
   };
 
   const onBuat = (key) => {
-    if (key === 'fpbj') return go({ name: 'fpbj-new' });
+    if (key === 'fppbj') return go({ name: 'fppbj-new' });
     setDialog({ type: 'ref', kind: key });
   };
 
@@ -261,16 +252,16 @@ export default function Pembelian() {
 
   // --- tampilan ---
   const roleBar = <RoleBar role={pb.role} setRole={pb.setRole} />;
-  if (view.name === 'fpbj-new') {
-    return <><FpbjForm key={view.prefill?.poId ?? 'new'} pb={pb} prefill={view.prefill} onBack={home} onSaved={(id) => go({ name: 'fpbj', id })} />{roleBar}</>;
+  if (view.name === 'fppbj-new') {
+    return <><FppbjForm pb={pb} onBack={home} onSaved={(id) => go({ name: 'fppbj', id })} />{roleBar}</>;
   }
-  if (view.name === 'fpbj-edit' && pb.fpbjById[view.id]) {
-    return <><FpbjForm key={view.id} pb={pb} editing={pb.fpbjById[view.id]} onBack={() => go({ name: 'fpbj', id: view.id })} onSaved={(id) => go({ name: 'fpbj', id })} />{roleBar}</>;
+  if (view.name === 'fppbj-edit' && pb.fppbjById[view.id]) {
+    return <><FppbjForm key={view.id} pb={pb} editing={pb.fppbjById[view.id]} onBack={() => go({ name: 'fppbj', id: view.id })} onSaved={(id) => go({ name: 'fppbj', id })} />{roleBar}</>;
   }
-  if (view.name === 'fpbj' && pb.fpbjById[view.id]) {
+  if (view.name === 'fppbj' && pb.fppbjById[view.id]) {
     return (
       <>
-        <FpbjDetail fpbj={pb.fpbjById[view.id]} pb={pb} onBack={() => go({ name: 'tab', tab: 'fpbj' })} go={go} />
+        <FppbjDetail fppbj={pb.fppbjById[view.id]} pb={pb} onBack={() => go({ name: 'tab', tab: 'fppbj' })} go={go} />
         {dialogs}
         {roleBar}
       </>

@@ -1,7 +1,7 @@
 // Susun PO / SPK menjadi PDF satu halaman yang bisa diunduh dan dikirim ke vendor.
 import { TODAY } from './data.js';
 import { buildPdf, line, PAGE, rect, saveBlob, text, wrap } from '@/lib/pdf.js';
-import { bankLine, formatDate, poAllJasa, poDpAmount, poDocLabel, poPpn, poSubtotal, poTotal, ppnLabel, rupiah, termText } from './utils.js';
+import { advancePct, bankLine, formatDate, poAllJasa, poDpAmount, poDocLabel, poPpn, poSubtotal, poTotal, ppnLabel, rupiah, termText } from './utils.js';
 
 const M = 48; // margin kiri/kanan
 const RIGHT = PAGE.w - M;
@@ -17,7 +17,7 @@ const C = {
 };
 const BAND = 92; // tinggi band kepala dokumen
 
-export function poPdfBlob(po, { vendor, fpbj } = {}) {
+export function poPdfBlob(po, { vendor, fppbj } = {}) {
   const label = poDocLabel(po);
   const pph = Math.round(po.items.reduce((n, i) => n + i.qty * i.price * (i.pphRate ?? 0), 0));
   let c = '';
@@ -49,7 +49,7 @@ export function poPdfBlob(po, { vendor, fpbj } = {}) {
     [isJasa ? 'Target selesai' : 'Perkiraan tiba', formatDate(po.expectedAt)],
     ...(isJasa ? [] : [['Gudang tujuan', po.warehouse ?? '-']]),
     ['Termin bayar', termText(po.term)],
-    ...(fpbj ? [['Dari permintaan', fpbj.number]] : []),
+    ...(fppbj ? [['Dari permintaan', fppbj.number]] : []),
   ];
   docRows.forEach(([k, v], i) => {
     const ry = y - i * 14;
@@ -92,7 +92,9 @@ export function poPdfBlob(po, { vendor, fpbj } = {}) {
     ['DPP', rupiah(poSubtotal(po))],
     [ppnLabel(po.items), rupiah(poPpn(po))],
     ...(pph > 0 ? [['Potongan PPh (saat bayar)', `-${rupiah(pph)}`]] : []),
-    ...(po.term?.type !== 'cad' && po.term?.dpPct > 0 ? [['Uang muka', rupiah(poDpAmount(po))]] : []),
+    ...(advancePct(po.term) > 0
+      ? [[advancePct(po.term) >= 100 ? 'Dibayar di muka' : `Uang muka ${advancePct(po.term)}%`, rupiah(poDpAmount(po))]]
+      : []),
   ];
   totals.forEach(([k, v], i) => {
     const ry = y - i * 14;

@@ -14,7 +14,7 @@ export function usePb() {
       role: pbRole,
       setRole: setPbRole,
       vendorsById,
-      fpbjById: byId('fpbj'),
+      fppbjById: byId('fppbj'),
       posById: byId('pos'),
       receiptsById: byId('receipts'),
       invoicesById: byId('invoices'),

@@ -6,8 +6,9 @@ import { seedSales } from '@/pages/Penjualan/data.js';
 import { seedOrders } from '@/pages/Penjualan/orders.js';
 import { seedQuotes } from '@/pages/Penjualan/quotes.js';
 import { seedReturns } from '@/pages/Penjualan/returns.js';
+import { paymentTermsSeed } from '@/pages/Pembelian/paymentTerms.js';
 import {
-  fpbjSeed,
+  fppbjSeed,
   invoicesSeed,
   posSeed,
   prsSeed,
@@ -20,10 +21,11 @@ import {
 const DataContext = createContext(null);
 
 // Data Pembelian disimpan di localStorage agar tidak hilang saat halaman dimuat ulang.
-const PB_KEY = 'proapps.pembelian.v1';
+const PB_KEY = 'proapps.pembelian.v3';
 const pbSeed = {
   vendors: vendorsSeed,
-  fpbj: fpbjSeed,
+  paymentTerms: paymentTermsSeed,
+  fppbj: fppbjSeed,
   pos: posSeed,
   receipts: receiptsSeed,
   invoices: invoicesSeed,
@@ -46,7 +48,8 @@ function loadPb() {
   try {
     const raw = JSON.parse(localStorage.getItem(PB_KEY));
     // Gabung dengan seed supaya data lama yang belum punya koleksi baru tetap bisa dibuka.
-    if (raw?.fpbj && raw?.pos) return { ...pbSeed, ...raw, vendors: mergeVendors(raw.vendors) };
+    if (raw?.fppbj && raw?.pos)
+      return { ...pbSeed, ...raw, vendors: mergeVendors(raw.vendors), paymentTerms: raw.paymentTerms ?? paymentTermsSeed };
   } catch {
     /* abaikan: pakai data contoh */
   }

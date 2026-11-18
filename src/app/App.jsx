@@ -17,6 +17,7 @@ import {
   penjualanTitle,
 } from '@/pages/Penjualan/routes.js';
 import Kontak from '@/pages/Kontak/Kontak.jsx';
+import SyaratPembayaran from '@/pages/Pengaturan/SyaratPembayaran.jsx';
 import PublicInvoice from '@/pages/Penjualan/PublicInvoice.jsx';
 
 // Registry halaman prototype (belum memakai router; navigasi lewat state).
@@ -27,6 +28,7 @@ const pages = {
   pembelian: { section: 'Transaksi', title: 'Pembelian', Component: Pembelian },
   'daftar-akun': { section: 'Master Data', title: 'Daftar Akun', Component: DaftarAkun },
   kontak: { section: 'Master Data', title: 'Kontak', Component: Kontak },
+  'syarat-pembayaran': { section: 'Pengaturan', title: 'Syarat Pembayaran', Component: SyaratPembayaran },
 };
 
 export default function App() {

@@ -1,5 +1,6 @@
 // Perhitungan & aturan modul Pembelian (murni fungsi; state ada di store.jsx).
-import { dpOptions, periodOptions, personLabel, RULES, serviceTerms, TODAY } from './data.js';
+import { periodOptions, personLabel, RULES, TODAY } from './data.js';
+import { dueFromLabel, termFields, termMechanics } from './paymentTerms.js';
 
 export { rupiah, rupiahShort, formatDate, addDays } from '@/pages/Penjualan/utils.js';
 
@@ -48,7 +49,21 @@ export const ppnLabel = (list) => {
 export const poSubtotal = (po) => sum(po.items, (i) => i.qty * i.price);
 export const poPpn = (po) => Math.round(sum(po.items, (i) => i.qty * i.price * lineRate(i)));
 export const poTotal = (po) => poSubtotal(po) + poPpn(po);
-export const poDpAmount = (po) => Math.round((poTotal(po) * (po.term?.dpPct ?? 0)) / 100);
+// Uang muka dalam rupiah.
+//
+// Dua hal yang gampang salah di sini:
+//  1. Persentasenya diambil dari advancePct(), bukan term.dpPct. Termin jasa "bayar penuh di
+//     muka" dan "berkala di muka" tidak pernah mengisi dpPct, padahal keduanya 100% di muka.
+//  2. Pada termin yang baris jadwalnya memang sudah dikurangi uang muka (dp_progress), total
+//     PO hanya mewakili sisa yang ditagih per termin. Nilai kontrak penuhnya dipulihkan dulu,
+//     kalau tidak uang mukanya terpotong dua kali dan vendor kurang dibayar.
+export const poDpAmount = (po) => {
+  const pct = advancePct(po?.term) / 100;
+  if (pct <= 0) return 0;
+  const total = poTotal(po);
+  if (scheduleExcludesDp(po?.term) && pct < 1) return Math.round((total * pct) / (1 - pct));
+  return Math.round(total * pct);
+};
 // Pesanan yang isinya jasa semua dikirim sebagai SPK, bukan PO. Campuran barang + jasa tetap PO.
 export const poDocLabel = (po) => (po && poAllJasa(po) ? 'SPK' : 'PO');
 // Jenis item (barang / jasa) ditentukan per baris, bukan per PO.
@@ -205,12 +220,12 @@ export function poStatus(po, { receipts, invoices, prs, pos, returns }) {
 }
 
 // Langkah stepper permintaan (indeks aktif).
-export const fpbjSteps = ['Permintaan', 'Pengadaan', 'PO', 'Penerimaan', 'Faktur', 'Pelunasan'];
-export function fpbjStep(f, ctx) {
+export const fppbjSteps = ['Permintaan', 'Pengadaan', 'PO', 'Penerimaan', 'Faktur', 'Pelunasan'];
+export function fppbjStep(f, ctx) {
   if (f.status === 'dibatalkan') return -1;
   if (['draft', 'dikembalikan', 'diajukan'].includes(f.status)) return 0;
   if (f.status === 'diverifikasi') return 1;
-  const pos = ctx.pos.filter((p) => p.fpbjId === f.id);
+  const pos = ctx.pos.filter((p) => p.fppbjId === f.id);
   if (!pos.length) return f.procurement?.status === 'disetujui' ? 2 : 1;
   const st = pos.map((p) => poStatus(p, ctx));
   if (st.every((s) => s === 'selesai')) return 6;
@@ -229,9 +244,8 @@ export const iomFiles = (iom) => iom?.files ?? (iom?.file ? [iom.file] : []);
 export const requesterOf = (f) => (!f.requester || f.requester === 'Anda' ? personLabel('peminta') : f.requester);
 
 // Nama jalur pengadaan untuk tampilan.
-export const routeLabel = (f) => (f.single?.on ? 'Vendor tunggal' : f.route === 'bidding' ? 'Bidding' : f.route === 'repeat' ? 'Pesan ulang' : '');
+export const routeLabel = (f) => (f.single?.on ? 'Vendor tunggal' : f.route === 'bidding' ? 'Bidding' : '');
 
-export const fpbjTotal = (f) => sum(f.items, (i) => i.qty * i.estPrice);
 
 // --- Penawaran & bidding ----------------------------------------------------------------------
 export const quoteLine = (q, itemId) => q.lines.find((l) => l.itemId === itemId);
@@ -248,7 +262,7 @@ export function parseWarranty(text) {
 }
 // Penilaian vendor (opsional): kriteria, bobot (%), dan patokan nilai 5 vs 1.
 export const CRITERIA = [
-  { key: 'harga', label: 'Harga', weight: 45, guide: '5 = termurah / di bawah estimasi · 1 = jauh di atas estimasi' },
+  { key: 'harga', label: 'Harga', weight: 45, guide: '5 = termurah · 1 = paling mahal di antara penawaran' },
   { key: 'spek', label: 'Spesifikasi', weight: 30, guide: '5 = sesuai penuh dan ada kelebihan · 1 = tidak sesuai' },
   { key: 'waktu', label: 'Waktu penyerahan', weight: 15, guide: '5 = jauh sebelum tanggal dibutuhkan · 1 = lewat tanggal dibutuhkan' },
   { key: 'termin', label: 'Termin', weight: 10, guide: '5 = tempo panjang tanpa DP · 1 = harus lunas di muka' },
@@ -272,8 +286,9 @@ export const vendorScore = (f, vendorId) => {
 // Persen yang ditagih di muka, sebelum barang/jasa diterima. Jadi dasar Payment Request DP.
 export const advancePct = (t) => {
   if (!t) return 0;
-  if (t.type === 'cbd' || t.type === 'prepaid' || t.type === 'recurring_prepaid') return 100;
-  if (t.type === 'dp' || t.type === 'dp_final' || t.type === 'dp_progress') return t.dpPct ?? 0;
+  const { advance } = termMechanics(t);
+  if (advance === 'full') return 100;
+  if (advance === 'partial') return t.dpPct ?? 0;
   return 0;
 };
 export const termDp = (t) => advancePct(t);
@@ -286,12 +301,13 @@ export const advanceLabel = (t) => (advancePct(t) >= 100 ? 'bayar di muka' : 'DP
 // memakai mesin yang sama dengan barang — tidak perlu entitas jadwal terpisah.
 export const scheduleCount = (t) => {
   if (!t) return 1;
-  if (['progress', 'dp_progress', 'retention'].includes(t.type)) return Math.max(t.terms ?? 1, 1);
-  if (['recurring', 'recurring_prepaid'].includes(t.type)) return Math.max(t.periods ?? 1, 1);
+  const { split } = termMechanics(t);
+  if (split === 'terms') return Math.max(t.terms ?? 1, 1);
+  if (split === 'periods') return Math.max(t.periods ?? 1, 1);
   return 1;
 };
 const slotLabel = (t, i, n) => {
-  if (['recurring', 'recurring_prepaid'].includes(t.type)) {
+  if (termMechanics(t).split === 'periods') {
     const unit = t.period ? t.period[0].toUpperCase() + t.period.slice(1) : 'Periode';
     return `${unit} ke-${i} dari ${n}`;
   }
@@ -299,7 +315,7 @@ const slotLabel = (t, i, n) => {
 };
 // Jadwal yang uang mukanya sudah dikeluarkan dari nilai termin: tiap termin dihitung dari
 // sisa setelah DP, jadi faktur termin tidak boleh dipotong DP lagi (lihat invDpDeduct).
-export const scheduleExcludesDp = (t) => t?.type === 'dp_progress';
+export const scheduleExcludesDp = (t) => termMechanics(t).dpOutOfSchedule;
 
 // Bobot tiap termin dalam persen. Kalau belum diatur di penawaran, dibagi rata.
 export function termPcts(t) {
@@ -312,16 +328,16 @@ export function termPcts(t) {
 
 // Nilai yang dibagi ke termin: nilai pekerjaan dikurangi uang muka dan retensi.
 export const scheduleBase = (gross, term) => {
-  const retPct = term?.type === 'retention' ? term.retentionPct ?? 0 : 0;
+  const retPct = termMechanics(term).retention ? term.retentionPct ?? 0 : 0;
   const dpPct = scheduleExcludesDp(term) ? advancePct(term) : 0;
   return gross - Math.round((gross * retPct) / 100) - Math.round((gross * dpPct) / 100);
 };
 
 export function expandSchedule(items, term) {
   const n = scheduleCount(term);
-  const retPct = term?.type === 'retention' ? term.retentionPct ?? 0 : 0;
+  const retPct = termMechanics(term).retention ? term.retentionPct ?? 0 : 0;
   if (n <= 1 && retPct === 0) return items;
-  const periodic = ['recurring', 'recurring_prepaid'].includes(term.type);
+  const periodic = termMechanics(term).split === 'periods';
   const pcts = termPcts(term);
   return items.flatMap((it) => {
     const gross = it.qty * it.price;
@@ -357,24 +373,42 @@ export function expandSchedule(items, term) {
 
 // Termin dipecah jadi nama pendek + rincian parameter, supaya tabel bisa menaruhnya di dua
 // baris dan teks panjang tidak memaksa kolom sempit membungkus jadi banyak baris.
+// Lama tempo faktur dalam hari.
+//
+//   0  = jatuh tempo pada tanggal acuan itu sendiri (bayar saat barang/pekerjaan diterima)
+//   30 = hanya dipakai kalau pesanannya sama sekali tidak punya termin (data lama)
+//
+// Dulu dihitung `dueDays > 0 ? dueDays : 30`, sehingga termin tanpa tempo (CAD, CBD) dan
+// termin yang sengaja diisi 0 hari sama-sama jatuh ke 30 hari — vendor mendapat tempo yang
+// tidak pernah disepakati.
+export const dueDaysOf = (t) => {
+  if (!t) return 30;
+  return termMechanics(t).due ? Math.max(t.dueDays ?? 0, 0) : 0;
+};
+
 export function termParts(t) {
   if (!t) return { label: '—', detail: '' };
-  const svc = serviceTerms.find((o) => o.value === t.type);
-  if (!svc) {
-    // Termin barang: CAD / DP x% / CBD.
-    const base = dpOptions.find((o) => o.value === t.type)?.label.split(' (')[0] ?? t.type;
-    return { label: t.type === 'dp' && t.dpPct > 0 ? `${base} ${t.dpPct}%` : base, detail: '' };
-  }
+  const mech = termMechanics(t);
+  const fields = termFields(mech);
+  // Nama termin diambil dari salinan yang ikut tersimpan, jadi dokumen lama tetap terbaca
+  // dengan nama saat dokumen itu dibuat walau katalognya sudah diubah.
+  const name = (mech.label ?? t.type).split(' (')[0];
   const parts = [];
-  if (svc.fields.includes('dp')) parts.push(`DP ${t.dpPct ?? 0}%`);
-  if (svc.fields.includes('terms')) parts.push(`${t.terms ?? 0} termin`);
-  if (svc.fields.includes('retention')) parts.push(`retensi ${t.retentionPct ?? 0}% · pemeliharaan ${t.retentionMonths ?? 0} bln`);
-  if (svc.fields.includes('period')) {
+  if (fields.includes('terms')) parts.push(`${t.terms ?? 0} termin`);
+  if (fields.includes('retention')) parts.push(`retensi ${t.retentionPct ?? 0}% · pemeliharaan ${t.retentionMonths ?? 0} bln`);
+  if (fields.includes('period')) {
     const unit = periodOptions.find((o) => o.value === t.period)?.label ?? t.period ?? '';
     parts.push(t.periods > 1 ? `${unit} × ${t.periods}` : unit);
   }
-  if (svc.fields.includes('due') && t.dueDays > 0) parts.push(`tempo ${t.dueDays} hari`);
-  return { label: svc.label, detail: parts.join(' · ') };
+  // Kapan harus dibayar selalu disebut, termasuk saat tidak ada tenggat — "bayar saat diterima"
+  // itu kesepakatan, bukan ketiadaan informasi. Dikecualikan hanya termin yang dibayar penuh
+  // di muka: uangnya sudah keluar sebelum barang datang, jadi tidak ada tempo untuk disebut.
+  const days = dueDaysOf(t);
+  if (days > 0) parts.push(`tempo ${days} hari sejak ${dueFromLabel(mech.dueFrom)}`);
+  else if (mech.advance !== 'full') parts.push('jatuh tempo saat ' + dueFromLabel(mech.dueFrom));
+  // Persentase uang muka menyatu dengan nama ("DP 30%"), bukan jadi rincian terpisah.
+  const label = fields.includes('dp') ? `${name} ${t.dpPct ?? 0}%` : name;
+  return { label, detail: parts.join(' · ') };
 }
 
 // Teks termin satu baris, untuk PDF dan kolom informasi yang lebar.
@@ -382,8 +416,10 @@ export function termText(t) {
   const { label, detail } = termParts(t);
   return detail ? `${label} · ${detail}` : label;
 }
-// Minimal peserta bidding: total estimasi sampai Rp10 juta cukup 2 penawaran, di atasnya 3.
-export const minQuotesFor = (f) => (fpbjTotal(f) <= 10_000_000 ? 2 : 3);
+// Minimal peserta bidding: nilai sampai Rp10 juta cukup 2 penawaran, di atasnya 3.
+// Permintaan tidak memuat harga, jadi nilainya baru terbaca setelah penawaran masuk; selama
+// belum ada penawaran yang lengkap dipakai batas terendah (2) agar bidding tidak terkunci.
+export const minQuotesFor = (f) => (procurementValue(f) > 10_000_000 ? 3 : 2);
 // Approver menurut nilai pengadaan.
 export const approverFor = (total) => (total < 50_000_000 ? 'Manager' : total <= 500_000_000 ? 'General Manager' : 'Direktur');
 
@@ -394,7 +430,7 @@ const termOnly = ({ lead, warrantyValue, warrantyUnit, ...t }) => { void lead; v
 export const finalTermOf = (f, vendorId) => {
   const q = f.quotes.find((x) => x.vendorId === vendorId);
   // Seluruh isi term ikut, termasuk parameter jasa (termin, retensi, periode).
-  const base = { type: 'cad', dpPct: 0, ...(q?.term ?? {}), lead: q?.lead ?? 0, ...parseWarranty(q?.warranty) };
+  const base = { ...(q?.term ?? {}), lead: q?.lead ?? 0, ...parseWarranty(q?.warranty) };
   return { ...base, ...(f.procurement?.finalTerms?.[vendorId] ?? {}) };
 };
 // Syarat berubah bila termin, waktu penyerahan, atau garansi berbeda dari penawaran.
@@ -452,8 +488,45 @@ export function vendorTotals(f, vendorId) {
   const disc = Math.min(p.discounts?.[vendorId] ?? 0, base);
   const r = base > 0 ? 1 - disc / base : 1;
   const ship = p.shipping?.[vendorId] ?? 0;
-  return { base, disc, ppn: Math.round(ppn * r), ship, total: Math.round((dpp + ppn) * r) + ship };
+  return { base, dpp: Math.round(dpp * r), disc, ppn: Math.round(ppn * r), ship, total: Math.round((dpp + ppn) * r) + ship };
 }
+// Nilai pengadaan menurut penawaran: total vendor pemenang, atau penawaran terendah bila
+// pemenang belum dipilih. Dipakai untuk aturan jumlah penawaran dan penentuan approver.
+// Bernilai 0 selama belum ada vendor yang menawar seluruh item.
+export function procurementValue(f) {
+  const full = f.quotes.filter((q) => quotesAllItems(f, q.vendorId));
+  if (full.length === 0) return 0;
+  const w = biddingWinner(f);
+  if (w && full.some((q) => q.vendorId === w)) return vendorTotals(f, w).total;
+  return Math.min(...full.map((q) => vendorTotals(f, q.vendorId).total));
+}
+
+// Akibat yang timbul kalau jalur pengadaan ditukar. Daftar kosong berarti pergantiannya
+// tidak mengubah apa pun, jadi tidak perlu dikonfirmasi. Dipakai bersama oleh panel pengadaan
+// (untuk memutuskan perlu modal atau tidak) dan oleh modal konfirmasinya (sebagai isi).
+// Tidak ada penawaran yang dihapus pada pergantian jalur mana pun.
+export function routeSwitchEffects(f, mode, vendorName = (id) => id) {
+  const toSingle = mode === 'single';
+  const n = f.quotes.length;
+  const out = [];
+  if (toSingle && n > 0) {
+    const w = biddingWinner(f);
+    const used = w && f.quotes.some((q) => q.vendorId === w) ? w : f.quotes[0]?.vendorId;
+    out.push(`Penawaran ${vendorName(used)} yang dipakai sebagai satu-satunya penawaran.`);
+    if (n > 1) out.push(`${n - 1} penawaran lain disembunyikan dari layar, tapi tidak dihapus — kembali ke bidding dan semuanya muncul lagi.`);
+    if (w) out.push('Penetapan pemenang dilepas, karena jalur vendor tunggal tidak memilih pemenang.');
+  }
+  if (!toSingle && n > 0) {
+    const need = minQuotesFor(f);
+    if (n < need) out.push(`Bidding butuh minimal ${need} penawaran, sekarang baru ada ${n}.`);
+    out.push('Pemenang perlu dipilih kembali sebelum pengadaan bisa diajukan.');
+  }
+  if (f.procurement?.status === 'diajukan') {
+    out.push('Pengajuan ke approver ditarik kembali ke draf dan perlu diajukan ulang.');
+  }
+  return out;
+}
+
 // Pemenang bukan vendor dengan total penawaran terendah (hanya vendor yang menawar semua item yang dibandingkan).
 export const notCheapest = (f) => {
   const w = biddingWinner(f);
@@ -471,52 +544,10 @@ export const needsBiddingNote = (f) => {
     const q = f.quotes.find((x) => x.vendorId === wv);
     const l = q && quoteLine(q, it.id);
     if (!l) return false;
-    return offerPrice(f, wv, it.id) > l.price || l.fit === 'tidak';
+    return offerPrice(f, wv, it.id) > l.price;
   });
 };
 
-// --- Pesan ulang: cek harga per item ------------------------------------------------------------
-// Mengembalikan baris pembanding + cabang paket (ok | warn | bidding).
-export function repeatCheck(f, pos) {
-  const quote = f.quotes[0];
-  const refPo = pos.find((p) => p.id === f.refPoId);
-  const rows = f.items.map((it) => {
-    const ql = quote && quoteLine(quote, it.id);
-    const price = ql?.price ?? null;
-    const refItem = refPo?.items.find((x) => x.id === it.refItemId);
-    if (!refItem || it.isNew) {
-      return { item: it, kind: 'baru', price, total: price == null ? 0 : price * it.qty };
-    }
-    const pct = price == null ? null : ((price - refItem.price) / refItem.price) * 100;
-    const months = monthsBetween(refPo.date, TODAY);
-    let level = 'ok';
-    if (pct != null && pct > RULES.priceBiddingPct) level = 'bidding';
-    else if ((pct != null && pct > RULES.priceWarnPct) || months > RULES.staleMonths) level = 'warn';
-    return { item: it, kind: 'lama', price, last: refItem.price, pct, months, lastDate: refPo.date, level };
-  });
-  const newRows = rows.filter((r) => r.kind === 'baru');
-  const newTotal = sum(newRows, (r) => r.total);
-  const forceBidding = rows.some((r) => r.level === 'bidding') || newTotal > RULES.newItemLimit;
-  const needReason = rows.some((r) => r.level === 'warn');
-  const needComparator = newRows.length > 0 && newTotal <= RULES.newItemLimit;
-  const mixed = rows.some((r) => r.kind === 'lama') && newRows.length > 0;
-  return { rows, newTotal, forceBidding, needReason, needComparator, mixed, hasQuote: !!quote };
-}
-
-export function repeatReady(f, pos) {
-  const c = repeatCheck(f, pos);
-  const p = f.procurement ?? {};
-  if (!c.hasQuote || c.forceBidding || c.mixed || c.rows.some((r) => r.price == null)) return false;
-  if (c.needReason && !(p.reason ?? '').trim()) return false;
-  if (c.needComparator) {
-    const comps = p.comparators ?? {};
-    const ok = c.rows
-      .filter((r) => r.kind === 'baru')
-      .every((r) => comps[r.item.id]?.price > 0 && (comps[r.item.id]?.source ?? '').trim());
-    if (!ok || !(p.reason ?? '').trim()) return false;
-  }
-  return true;
-}
 
 // Satu catatan pengadaan: alasan pemilihan + catatan negosiasi digabung (data lama menyimpannya terpisah).
 export const biddingNote = (f) =>
@@ -538,7 +569,7 @@ export function biddingReady(f) {
 export function buildPOs(f, pos, vendors) {
   const p = f.procurement;
   const groups = {};
-  const note = f.route === 'repeat' ? `Pesan ulang dari ${pos.find((x) => x.id === f.refPoId)?.number ?? ''}` : '';
+  const note = '';
   // Diskon vendor (hasil negosiasi) dibagi rata ke semua harga itemnya agar total PO sama dengan form bidding.
   const ratio = {};
   if (f.route === 'bidding') {
@@ -579,10 +610,10 @@ export function buildPOs(f, pos, vendors) {
   return Object.values(groups).map((g) => ({
     vendorId: g.vendorId,
     // Termin dibawa utuh supaya parameter jasa (termin, retensi, periode) ikut ke SPK.
-    term: f.route === 'bidding' ? termOnly(finalTermOf(f, g.vendorId)) : g.q?.term ?? { type: 'cad', dpPct: 0 },
+    term: termOnly(finalTermOf(f, g.vendorId) ?? g.q?.term ?? {}),
     items: g.items,
     note,
-    lead: (f.route === 'bidding' ? finalTermOf(f, g.vendorId).lead : g.q?.lead) ?? 7,
+    lead: (finalTermOf(f, g.vendorId)?.lead ?? g.q?.lead) ?? 7,
   }));
 }
 
@@ -618,12 +649,12 @@ export const bankLine = (vendor) => {
 //   merah        = ditolak atau dikembalikan
 //   slate        = dihentikan (dibatalkan, ditutup)
 // Oranye sengaja dibatasi supaya "ada yang perlu saya kerjakan" tetap menonjol di daftar.
-export const FPBJ_STATUS = {
+export const FPPBJ_STATUS = {
   draft: { label: 'Draf', color: 'gray' },
-  diajukan: { label: 'Diajukan', color: 'orange' }, // menunggu verifikasi Accounting
+  diajukan: { label: 'Diajukan', color: 'orange' }, // menunggu verifikasi (lihat VERIFY di permissions.js)
   dikembalikan: { label: 'Dikembalikan', color: 'red' },
   dibatalkan: { label: 'Dibatalkan', color: 'slate' },
-  diverifikasi: { label: 'Diverifikasi', color: 'blue' },
+  diverifikasi: { label: 'Diverifikasi', color: 'blue' }, // lolos verifikasi, jalur pengadaan belum dipilih
   dalam_pengadaan: { label: 'Dalam pengadaan', color: 'blue' },
   selesai: { label: 'Selesai', color: 'green' },
 };
@@ -670,7 +701,7 @@ export function createPOs(f, pb) {
       // Nomor ikut jenis dokumen: SPK punya deret sendiri, terpisah dari PO.
       number: nextNumber(poAllJasa({ items: b.items }) ? 'SPK' : 'PO', list),
       date: TODAY,
-      fpbjId: f.id,
+      fppbjId: f.id,
       vendorId: b.vendorId,
       sent: false,
       term: b.term,

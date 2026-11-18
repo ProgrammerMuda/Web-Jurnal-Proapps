@@ -74,7 +74,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const pphCut = Math.round(po.items.reduce((n, i) => n + i.qty * i.price * (i.pphRate ?? 0), 0));
   const vendor = pb.vendorsById[po.vendorId];
   const status = poStatus(po, pb.calc);
-  const fpbj = pb.fpbjById[po.fpbjId];
+  const fppbj = pb.fppbjById[po.fppbjId];
   const receipts = receiptsOf(po, pb.receipts);
   const invoices = pb.invoices.filter((i) => i.poId === po.id || i.lines.some((l) => l.poId === po.id));
   const prs = pb.prs.filter((p) => p.poId === po.id);
@@ -125,7 +125,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                 <CopyIcon value={po.number} size={16} />
                 <StatusPill map={PO_STATUS} status={status} />
               </Group>
-              <Text fz="sm" c="slate.6">{vendor?.name}{fpbj && <> · dari <DocNumber onClick={() => go({ name: 'fpbj', id: fpbj.id })}>{fpbj.number}</DocNumber></>}</Text>
+              <Text fz="sm" c="slate.6">{vendor?.name}{fppbj && <> · dari <DocNumber onClick={() => go({ name: 'fppbj', id: fppbj.id })}>{fppbj.number}</DocNumber></>}</Text>
               {po.note && <Text fz={11} c="teal.8" fw={600}>{po.note}</Text>}
             </Box>
           </Group>
@@ -135,7 +135,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               radius="md"
               variant="default"
               leftSection={<DownloadSimple size={16} />}
-              onClick={() => { downloadPo(po, { vendor, fpbj }); toast(`${label} diunduh sebagai PDF.`); }}
+              onClick={() => { downloadPo(po, { vendor, fppbj }); toast(`${label} diunduh sebagai PDF.`); }}
             >
               Unduh PDF
             </Button>
@@ -149,10 +149,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               <Button radius="md" onClick={() => openDialog({ type: 'receipt', poId: po.id })}>{poAllJasa(po) ? 'Catat BAST' : 'Catat penerimaan'}</Button>
             )}
             {openLines.length > 0 && canCreate(role, 'invoice') && (
-              <Button radius="md" onClick={() => openDialog({ type: 'invoice', receiptIds: receipts.filter((r) => uninvoicedLines(r, pb.invoices).length).map((r) => r.id) })}>Buat faktur</Button>
-            )}
-            {status === 'selesai' && canCreate(role, 'fpbj') && (
-              <Button radius="md" variant="light" onClick={() => go({ name: 'fpbj-new', prefill: { poId: po.id } })}>Pesan ulang</Button>
+              <Button radius="md" onClick={() => openDialog({ type: 'invoice', receiptIds: receipts.filter((r) => uninvoicedLines(r, pb.invoices).length).map((r) => r.id) })}>Catat faktur</Button>
             )}
             {canClose && (
               <>
@@ -214,7 +211,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                   // SPK tidak mengirim barang ke gudang: istilahnya target selesai, bukan perkiraan tiba.
                   [isJasa ? 'Target selesai' : 'Perkiraan tiba', formatDate(po.expectedAt)],
                   ...(isJasa ? [] : [['Gudang tujuan', po.warehouse]]),
-                  ['Dari permintaan', fpbj ? <DocNumber onClick={() => go({ name: 'fpbj', id: fpbj.id })}>{fpbj.number}</DocNumber> : '—'],
+                  ['Dari permintaan', fppbj ? <DocNumber onClick={() => go({ name: 'fppbj', id: fppbj.id })}>{fppbj.number}</DocNumber> : '—'],
                   ['Termin bayar', termText(po.term)],
                   // Jejak pengiriman hanya muncul setelah dokumen benar-benar dikirim.
                   ...(po.sent
@@ -292,7 +289,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                         <Table.Td ta="right" fz="sm">{r.lines.reduce((n, l) => n + l.qty, 0)}</Table.Td>
                         <Table.Td fz="xs" c={open ? 'orange.8' : 'green.8'} fw={600}>{open ? 'Belum difaktur' : 'Sudah difaktur'}</Table.Td>
                         <Table.Td ta="right">
-                          {open && canCreate(role, 'invoice') && <Button size="compact-xs" radius="md" variant="light" onClick={() => openDialog({ type: 'invoice', receiptIds: [r.id] })}>Buat faktur</Button>}
+                          {open && canCreate(role, 'invoice') && <Button size="compact-xs" radius="md" variant="light" onClick={() => openDialog({ type: 'invoice', receiptIds: [r.id] })}>Catat faktur</Button>}
                         </Table.Td>
                       </Table.Tr>
                     );

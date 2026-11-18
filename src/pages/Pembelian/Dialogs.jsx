@@ -23,16 +23,20 @@ import {
   Invoice,
   ArrowCounterClockwise,
   PaperPlaneTilt,
+  Storefront,
   Truck,
   Wallet,
   Warning,
 } from '@/components/Icon.jsx';
 import DateField from '@/components/DateField.jsx';
 import NumberField from '@/components/NumberField.jsx';
+import AttachmentList from './Attachments.jsx';
 import { Callout, CopyIcon, Field, FormModal } from './components.jsx';
-import { dpOptions, fitOptions, periodOptions, personLabel, serviceTerms, serviceTermOf, TODAY } from './data.js';
+import { periodOptions, personLabel, TODAY } from './data.js';
+import { dueFromLabel, snapshotTerm, termFields, termMechanics } from './paymentTerms.js';
 import {
   addDays,
+  dueDaysOf,
   advanceLabel,
   advancePct,
   bankOf,
@@ -56,7 +60,10 @@ import {
   scheduleBase,
   scheduleExcludesDp,
   scheduleCount,
+  minQuotesFor,
   returnedQty,
+  taxSummary,
+  routeSwitchEffects,
   rupiah,
   uid,
   termText,
@@ -100,58 +107,68 @@ function evenPcts(n) {
   return Array.from({ length: n }, (_, i) => (i === n - 1 ? Math.round((100 - base * (n - 1)) * 10) / 10 : base));
 }
 
-// Rangkai objek termin dari isian form: hanya parameter yang dipakai jenis termin itu yang disimpan.
+// Rangkai objek termin dari isian form: hanya parameter yang dipakai jenis termin itu yang
+// disimpan, plus salinan saklar mekanisnya (snapshotTerm) supaya arti dokumen tidak ikut
+// berubah kalau katalog syarat pembayaran diubah belakangan.
 function buildTerm(f, spec) {
-  if (!spec) {
-    // Termin barang.
-    return { type: f.termType, dpPct: f.termType === 'cad' ? 0 : f.termType === 'cbd' ? 100 : f.dpPct };
-  }
-  const t = { type: f.termType };
-  if (spec.fields.includes('dp')) t.dpPct = f.dpPct;
-  if (spec.fields.includes('terms')) {
+  if (!spec) return { type: f.termType };
+  const fields = termFields(spec);
+  const t = { type: spec.id, ...snapshotTerm(spec) };
+  if (spec.advance === 'full') t.dpPct = 100;
+  if (fields.includes('dp')) t.dpPct = f.dpPct;
+  if (fields.includes('terms')) {
     t.terms = f.terms;
     t.termPcts = f.termPcts;
   }
-  if (spec.fields.includes('retention')) {
+  if (fields.includes('retention')) {
     t.retentionPct = f.retentionPct;
     t.retentionMonths = f.retentionMonths;
   }
-  if (spec.fields.includes('period')) {
+  if (fields.includes('period')) {
     t.period = f.period;
     t.periods = f.periods;
   }
-  if (spec.fields.includes('due')) t.dueDays = f.dueDays;
+  if (fields.includes('due')) t.dueDays = f.dueDays;
   return t;
 }
 
 // --- Penawaran vendor ------------------------------------------------------------------------
-export function QuoteModal({ opened, onClose, fpbj, pb, repeatVendorId, editing, single }) {
+export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
   // Permintaan yang isinya jasa semua jadi SPK, jadi termin bayarnya pakai katalog jasa.
-  const isJasa = poAllJasa(fpbj);
+  const isJasa = poAllJasa(fppbj);
+  // Katalog syarat pembayaran datang dari Pengaturan, bukan daftar tetap di kode.
+  // Hanya termin aktif yang berlaku untuk jenis permintaan ini yang ditawarkan.
+  const termCatalog = (pb.paymentTerms ?? []).filter(
+    (t) => t.active !== false && (t.scope === 'both' || t.scope === (isJasa ? 'jasa' : 'barang')),
+  );
+  const defaultTerm = termCatalog.find((t) => t.id === editing?.term?.type) ?? termCatalog[0] ?? null;
+  const d0 = defaultTerm?.defaults ?? {};
+
   // Mode ubah: formulir terisi dari penawaran yang sudah ada.
-  const [vendorId, setVendorId] = useState(editing?.vendorId ?? repeatVendorId ?? null);
+  const [vendorId, setVendorId] = useState(editing?.vendorId ?? null);
   const [f, setF] = useState(() => ({
     no: editing?.no ?? '',
     validUntil: editing?.validUntil ?? addDays(TODAY, 14),
     desc: editing?.desc ?? '',
     file: editing?.file ?? '',
-    termType: editing?.term?.type ?? (isJasa ? 'postpaid' : 'cad'),
-    dpPct: editing?.term?.dpPct > 0 && editing?.term?.dpPct < 100 ? editing.term.dpPct : 30,
-    dueDays: editing?.term?.dueDays ?? 30,
-    terms: editing?.term?.terms ?? 3,
-    termPcts: editing?.term?.termPcts ?? evenPcts(editing?.term?.terms ?? 3),
-    retentionPct: editing?.term?.retentionPct ?? 5,
-    retentionMonths: editing?.term?.retentionMonths ?? 3,
-    period: editing?.term?.period ?? 'bulan',
-    periods: editing?.term?.periods ?? 12,
+    // Nilai awal tiap parameter diambil dari definisi termin di Pengaturan.
+    termType: editing?.term?.type ?? defaultTerm?.id ?? '',
+    dpPct: editing?.term?.dpPct > 0 && editing?.term?.dpPct < 100 ? editing.term.dpPct : d0.dpPct ?? 30,
+    dueDays: editing?.term?.dueDays ?? d0.dueDays ?? 30,
+    terms: editing?.term?.terms ?? d0.terms ?? 3,
+    termPcts: editing?.term?.termPcts ?? evenPcts(editing?.term?.terms ?? d0.terms ?? 3),
+    retentionPct: editing?.term?.retentionPct ?? d0.retentionPct ?? 5,
+    retentionMonths: editing?.term?.retentionMonths ?? d0.retentionMonths ?? 3,
+    period: editing?.term?.period ?? d0.period ?? 'bulan',
+    periods: editing?.term?.periods ?? d0.periods ?? 12,
     lead: editing?.lead ?? '',
     ...parseWarranty(editing?.warranty),
   }));
   const [lines, setLines] = useState(() =>
     Object.fromEntries(
-      fpbj.items.map((i) => {
+      fppbj.items.map((i) => {
         const l = editing?.lines.find((x) => x.itemId === i.id);
-        return [i.id, { price: l?.price ?? 0, spec: l?.spec ?? '', fit: l?.fit ?? 'sesuai', taxes: lineTaxes(editing, l) }];
+        return [i.id, { price: l?.price ?? 0, spec: l?.spec ?? '', taxes: lineTaxes(editing, l) }];
       }),
     ),
   );
@@ -162,16 +179,31 @@ export function QuoteModal({ opened, onClose, fpbj, pb, repeatVendorId, editing,
   const setLine = (id, p) => setLines((l) => ({ ...l, [id]: { ...l[id], ...p } }));
 
   // Spesifikasi termin yang sedang dipilih; `fields` menentukan isian tambahan yang wajib.
-  const spec = isJasa ? serviceTermOf(f.termType) : null;
-  const needs = (key) => !!spec?.fields.includes(key);
+  const spec = termCatalog.find((t) => t.id === f.termType) ?? defaultTerm;
+  const needs = (key) => termFields(spec).includes(key);
+  // Ganti termin = pakai nilai awal termin yang baru, supaya definisi di Pengaturan terasa.
+  const pickTerm = (id) => {
+    const def = termCatalog.find((t) => t.id === id);
+    const dd = def?.defaults ?? {};
+    set({
+      termType: id,
+      ...(dd.dpPct != null && { dpPct: dd.dpPct }),
+      ...(dd.dueDays != null && { dueDays: dd.dueDays }),
+      ...(dd.terms != null && { terms: dd.terms, termPcts: evenPcts(dd.terms) }),
+      ...(dd.retentionPct != null && { retentionPct: dd.retentionPct }),
+      ...(dd.retentionMonths != null && { retentionMonths: dd.retentionMonths }),
+      ...(dd.period != null && { period: dd.period }),
+      ...(dd.periods != null && { periods: dd.periods }),
+    });
+  };
   const pcts = f.termPcts.slice(0, f.terms);
   const pctSum = Math.round(pcts.reduce((n, p) => n + (Number(p) || 0), 0) * 10) / 10;
   // Nilai yang dibagi ke termin: total penawaran dikurangi uang muka dan retensi.
-  const quoteGross = fpbj.items.reduce((n, i) => n + i.qty * (lines[i.id]?.price || 0), 0);
+  const quoteGross = fppbj.items.reduce((n, i) => n + i.qty * (lines[i.id]?.price || 0), 0);
   const base = scheduleBase(quoteGross, buildTerm(f, spec));
   const setPct = (k, v) => setF((x) => ({ ...x, termPcts: x.termPcts.map((p, i) => (i === k ? Number(v) || 0 : p)) }));
 
-  const usedVendors = fpbj.quotes.filter((q) => q.id !== editing?.id).map((q) => q.vendorId);
+  const usedVendors = fppbj.quotes.filter((q) => q.id !== editing?.id).map((q) => q.vendorId);
   const vendorData = pb.vendors
     .filter((v) => !usedVendors.includes(v.id) || v.id === vendorId)
     .map((v) => ({ value: v.id, label: v.name }));
@@ -185,9 +217,10 @@ export function QuoteModal({ opened, onClose, fpbj, pb, repeatVendorId, editing,
     terms: needs('terms') && !(f.terms >= 2) && 'Termin progres minimal 2',
     pcts: needs('terms') && f.terms >= 2 && Math.abs(pctSum - 100) > 0.05 && `Total bobot termin harus 100% (sekarang ${pctSum}%)`,
     retention: needs('retention') && !(f.retentionPct > 0 && f.retentionMonths > 0) && 'Retensi dan masa pemeliharaan wajib diisi',
+    termType: termCatalog.length === 0 && 'Belum ada syarat pembayaran yang bisa dipilih',
     periods: needs('period') && !(f.periods >= 1) && 'Jumlah periode minimal 1',
-    prices: fpbj.items.some((i) => !(lines[i.id].price > 0)) && 'Isi harga untuk semua item',
-    specs: fpbj.items.some((i) => !lines[i.id].spec.trim()) && 'Isi spesifikasi yang ditawarkan untuk semua item',
+    prices: fppbj.items.some((i) => !(lines[i.id].price > 0)) && 'Isi harga untuk semua item',
+    specs: fppbj.items.some((i) => !lines[i.id].spec.trim()) && 'Isi spesifikasi yang ditawarkan untuk semua item',
   };
   const submit = () => {
     setSub(true);
@@ -202,19 +235,29 @@ export function QuoteModal({ opened, onClose, fpbj, pb, repeatVendorId, editing,
       term: buildTerm(f, spec),
       lead: Number(f.lead),
       warranty: f.warrantyValue > 0 ? `${f.warrantyValue} ${f.warrantyUnit}` : '',
-      lines: fpbj.items.map((i) => ({
+      lines: fppbj.items.map((i) => ({
         itemId: i.id,
         ...lines[i.id],
         taxes: lines[i.id].taxes.map((t) => (t === 'ppn' || t === 'ppn_incl' ? (ppnIncl ? 'ppn_incl' : 'ppn') : t)),
       })),
     };
-    pb.update('fpbj', fpbj.id, (d) =>
+    pb.update('fppbj', fppbj.id, (d) =>
       editing
         ? {
             ...d,
             quotes: d.quotes.map((q) => (q.id === editing.id ? quote : q)),
-            // Harga final diisi ulang dari penawaran yang baru.
-            procurement: { ...d.procurement, winners: {}, finals: {} },
+            // Harga final diisi ulang dari penawaran yang baru. Harga hasil negosiasi untuk
+            // vendor ini juga dilepas — kalau tidak, offerPrice() tetap memakai angka lama
+            // dan perubahan harga penawaran tidak terlihat sama sekali.
+            procurement: {
+              ...d.procurement,
+              winners: {},
+              finals: {},
+              offerFinals: Object.fromEntries(
+                Object.entries(d.procurement?.offerFinals ?? {}).filter(([v]) => v !== quote.vendorId),
+              ),
+              status: d.procurement?.status === 'diajukan' ? 'draf' : d.procurement?.status,
+            },
           }
         : { ...d, quotes: [...d.quotes, quote] },
     );
@@ -230,7 +273,7 @@ export function QuoteModal({ opened, onClose, fpbj, pb, repeatVendorId, editing,
         size={860}
         icon={FileText}
         title={editing ? 'Ubah penawaran vendor' : 'Tambah penawaran vendor'}
-        subtitle={fpbj.number}
+        subtitle={fppbj.number}
         footer={
           <>
             <Cancel onClick={onClose} />
@@ -250,7 +293,6 @@ export function QuoteModal({ opened, onClose, fpbj, pb, repeatVendorId, editing,
               searchable
               data={vendorData}
               value={vendorId}
-              disabled={!!repeatVendorId}
               error={sub && errors.vendor}
               onChange={setVendorId}
               placeholder="Pilih vendor"
@@ -268,10 +310,10 @@ export function QuoteModal({ opened, onClose, fpbj, pb, repeatVendorId, editing,
           <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }}>Harga per item</Text>
           <Switch size="sm" label="Harga sudah termasuk PPN" checked={ppnIncl} onChange={(e) => setPpnIncl(e.currentTarget.checked)} />
         </Group>
-        {/* Item lebar di kiri; harga, pajak, dan kesesuaian ringkas di kanan; spesifikasi satu baris penuh di bawahnya. */}
+        {/* Item lebar di kiri; harga dan pajak ringkas di kanan; spesifikasi satu baris penuh di bawahnya. */}
         <Box style={tableFrame}>
           {(() => {
-            const cols = `minmax(0, 1fr) 150px 140px${single ? '' : ' 140px'}`;
+            const cols = 'minmax(0, 1fr) 150px 140px';
             const headCell = { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 600, color: 'var(--mantine-color-slate-7)', whiteSpace: 'nowrap' };
             return (
               <Box miw={single ? 600 : 740}>
@@ -279,14 +321,13 @@ export function QuoteModal({ opened, onClose, fpbj, pb, repeatVendorId, editing,
                   <Text style={headCell}>Item</Text>
                   <Text style={headCell}>Harga satuan <span style={{ color: 'var(--mantine-color-red-6)' }}>*</span></Text>
                   <Text style={headCell}>Pajak</Text>
-                  {!single && <Text style={headCell}>Kesesuaian</Text>}
                 </Box>
-                {fpbj.items.map((i, idx) => (
+                {fppbj.items.map((i, idx) => (
                   <Box key={i.id} px="sm" py="sm" style={{ borderTop: idx ? '1px solid var(--mantine-color-gray-2)' : undefined }}>
                     <Box style={{ display: 'grid', gridTemplateColumns: cols, columnGap: 'var(--mantine-spacing-sm)', alignItems: 'center' }}>
                       <Box style={{ minWidth: 0 }}>
                         <Text fz="sm" fw={600}>{i.desc}</Text>
-                        <Text fz={11} c="slate.6">{i.qty} {i.unit} · estimasi {rupiah(i.estPrice)}</Text>
+                        <Text fz={11} c="slate.6">{i.qty} {i.unit}{i.spec ? ` · ${i.spec}` : ''}</Text>
                       </Box>
                       <NumberField size="xs" radius="md" money prefix="Rp " aria-label={`Harga satuan ${i.desc}`} value={lines[i.id].price} onChange={(v) => setLine(i.id, { price: Number(v) || 0 })} />
                       <Select
@@ -298,7 +339,6 @@ export function QuoteModal({ opened, onClose, fpbj, pb, repeatVendorId, editing,
                         value={lines[i.id].taxes[0] === 'ppn_incl' ? 'ppn' : lines[i.id].taxes[0] ?? 'none'}
                         onChange={(v) => setLine(i.id, { taxes: v === 'none' ? [] : [v] })}
                       />
-                      {!single && <Select size="xs" radius="md" allowDeselect={false} aria-label={`Kesesuaian ${i.desc}`} data={fitOptions} value={lines[i.id].fit} onChange={(v) => setLine(i.id, { fit: v })} />}
                     </Box>
                     <Text mt={8} mb={4} fz={11} fw={600} c="slate.7">Spesifikasi ditawarkan <span style={{ color: 'var(--mantine-color-red-6)' }}>*</span></Text>
                     <TextInput size="xs" radius="md" aria-label={`Spesifikasi ${i.desc}`} placeholder="Contoh: Putih, 500 lembar per rim" value={lines[i.id].spec} error={sub && !lines[i.id].spec.trim()} onChange={(e) => setLine(i.id, { spec: e.currentTarget.value })} />
@@ -311,21 +351,29 @@ export function QuoteModal({ opened, onClose, fpbj, pb, repeatVendorId, editing,
         {sub && (errors.prices || errors.specs) && <Text fz="xs" c="red.7">{errors.prices || errors.specs}</Text>}
 
         <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mt="xs">Ketentuan</Text>
-        {isJasa ? (
-          <>
-            {/* Permintaan jasa → SPK: terminnya mengikuti penyelesaian pekerjaan, bukan pengiriman. */}
+        <>
+            {/* Pilihan termin berasal dari Pengaturan → Syarat Pembayaran, disaring per jenis permintaan. */}
+            {termCatalog.length === 0 && (
+              <Callout tone="warn" title="Belum ada syarat pembayaran">
+                Penawaran tidak bisa disimpan tanpa termin bayar. Buat dulu di <strong>Pengaturan → Transaksi &amp;
+                Dokumen → Syarat Pembayaran</strong>, minimal satu yang berlaku untuk {isJasa ? 'jasa' : 'barang'}.
+              </Callout>
+            )}
             <Select
               label="Termin bayar"
               withAsterisk
               size="sm"
               radius="md"
               allowDeselect={false}
-              data={serviceTerms.map((t) => ({ value: t.value, label: t.label }))}
-              description={spec ? `${spec.hint} · contoh: ${spec.example}` : undefined}
+              data={termCatalog.map((t) => ({ value: t.id, label: t.label }))}
+              disabled={termCatalog.length === 0}
+              placeholder={termCatalog.length === 0 ? 'Belum ada pilihan' : undefined}
+              error={sub && errors.termType}
+              description={spec ? [spec.hint, spec.example && `contoh: ${spec.example}`].filter(Boolean).join(' · ') : undefined}
               value={f.termType}
-              onChange={(v) => set({ termType: v })}
+              onChange={pickTerm}
             />
-            {spec?.fields.length > 0 && (
+            {termFields(spec).length > 0 && (
               <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }}>
                 {needs('dp') && (
                   <NumberField label="Uang muka (%)" withAsterisk size="sm" radius="md" min={1} max={99} clampBehavior="strict" error={sub && errors.dp} value={f.dpPct} onChange={(v) => set({ dpPct: Number(v) || 0 })} />
@@ -347,20 +395,24 @@ export function QuoteModal({ opened, onClose, fpbj, pb, repeatVendorId, editing,
                     }}
                   />
                 )}
-                {needs('retention') && (
-                  <>
-                    <NumberField label="Retensi (%)" withAsterisk size="sm" radius="md" min={1} max={20} clampBehavior="strict" error={sub && errors.retention} value={f.retentionPct} onChange={(v) => set({ retentionPct: Number(v) || 0 })} />
-                    <NumberField label="Masa pemeliharaan (bulan)" withAsterisk size="sm" radius="md" min={1} max={36} clampBehavior="strict" value={f.retentionMonths} onChange={(v) => set({ retentionMonths: Number(v) || 0 })} />
-                  </>
-                )}
-                {needs('period') && (
-                  <>
-                    <Select label="Periode" size="sm" radius="md" allowDeselect={false} data={periodOptions} value={f.period} onChange={(v) => set({ period: v })} />
-                    <NumberField label="Jumlah periode" withAsterisk size="sm" radius="md" min={1} max={60} clampBehavior="strict" error={sub && errors.periods} value={f.periods} onChange={(v) => set({ periods: Number(v) || 0 })} />
-                  </>
-                )}
                 {needs('due') && (
                   <NumberField label="Jatuh tempo faktur (hari)" size="sm" radius="md" min={0} max={180} clampBehavior="strict" value={f.dueDays} onChange={(v) => set({ dueDays: Number(v) || 0 })} />
+                )}
+                {needs('retention') && (
+                  <Box style={{ gridColumn: 'span 2' }}>
+                    <SimpleGrid cols={{ base: 1, xs: 2 }} spacing="sm">
+                      <NumberField label="Retensi (%)" withAsterisk size="sm" radius="md" min={1} max={20} clampBehavior="strict" error={sub && errors.retention} value={f.retentionPct} onChange={(v) => set({ retentionPct: Number(v) || 0 })} />
+                      <NumberField label="Masa pemeliharaan (bulan)" withAsterisk size="sm" radius="md" min={1} max={36} clampBehavior="strict" value={f.retentionMonths} onChange={(v) => set({ retentionMonths: Number(v) || 0 })} />
+                    </SimpleGrid>
+                  </Box>
+                )}
+                {needs('period') && (
+                  <Box style={{ gridColumn: 'span 2' }}>
+                    <SimpleGrid cols={{ base: 1, xs: 2 }} spacing="sm">
+                      <Select label="Periode" size="sm" radius="md" allowDeselect={false} data={periodOptions} value={f.period} onChange={(v) => set({ period: v })} />
+                      <NumberField label="Jumlah periode" withAsterisk size="sm" radius="md" min={1} max={60} clampBehavior="strict" error={sub && errors.periods} value={f.periods} onChange={(v) => set({ periods: Number(v) || 0 })} />
+                    </SimpleGrid>
+                  </Box>
                 )}
               </SimpleGrid>
             )}
@@ -410,21 +462,7 @@ export function QuoteModal({ opened, onClose, fpbj, pb, repeatVendorId, editing,
                 <Select size="sm" radius="md" w={120} allowDeselect={false} aria-label="Satuan garansi" data={[{ value: 'hari', label: 'Hari' }, { value: 'bulan', label: 'Bulan' }, { value: 'tahun', label: 'Tahun' }]} value={f.warrantyUnit} onChange={(v) => set({ warrantyUnit: v })} />
               </Group>
             </Input.Wrapper>
-          </>
-        ) : (
-        <SimpleGrid cols={{ base: 1, sm: f.termType === 'dp' ? 3 : 2 }}>
-          <Select label="Termin bayar" withAsterisk size="sm" radius="md" allowDeselect={false} data={dpOptions} value={f.termType} onChange={(v) => set({ termType: v })} />
-          {f.termType === 'dp' && (
-            <NumberField label="DP (%)" withAsterisk size="sm" radius="md" min={1} max={99} error={sub && errors.dp} value={f.dpPct} onChange={(v) => set({ dpPct: Number(v) || 0 })} />
-          )}
-          <Input.Wrapper label="Garansi" size="sm">
-            <Group gap="xs" wrap="nowrap">
-              <NumberField size="sm" radius="md" min={0} placeholder="Contoh: 12" flex={1} value={f.warrantyValue} onChange={(v) => set({ warrantyValue: Number(v) || 0 })} />
-              <Select size="sm" radius="md" w={120} allowDeselect={false} aria-label="Satuan garansi" data={[{ value: 'hari', label: 'Hari' }, { value: 'bulan', label: 'Bulan' }, { value: 'tahun', label: 'Tahun' }]} value={f.warrantyUnit} onChange={(v) => set({ warrantyUnit: v })} />
-            </Group>
-          </Input.Wrapper>
-        </SimpleGrid>
-        )}
+        </>
         {sub && (errors.dp || errors.terms || errors.pcts || errors.retention || errors.periods) && (
           <Text fz="xs" c="red.7">{errors.dp || errors.terms || errors.pcts || errors.retention || errors.periods}</Text>
         )}
@@ -561,9 +599,21 @@ export function InvoiceModal({ opened, onClose, receiptIds, pb }) {
   const vendor = pb.vendorsById[receipts[0]?.vendorId];
   const [vendorNo, setVendorNo] = useState('');
   const [date, setDate] = useState(TODAY);
-  // Jatuh tempo mengikuti termin pesanan kalau diatur di penawaran (jasa), kalau tidak pakai 30 hari.
-  const termDue = pb.posById[receipts[0]?.poId]?.term?.dueDays;
-  const [dueDate, setDueDate] = useState(addDays(TODAY, termDue > 0 ? termDue : 30));
+  // Jatuh tempo mengikuti termin pesanan. Titik hitungnya ditentukan di Pengaturan:
+  // sejak penerimaan (FPB/BAST) atau sejak tanggal faktur vendor. Dulu selalu dihitung dari
+  // hari faktur diketik, sehingga "30 hari sejak barang diterima" meleset kalau fakturnya
+  // dicatat terlambat.
+  const poTerm = pb.posById[receipts[0]?.poId]?.term;
+  const termDue = dueDaysOf(poTerm);
+  const dueFrom = termMechanics(poTerm).dueFrom;
+  // Beberapa penerimaan sekaligus: dipakai yang paling akhir, karena kewajiban baru genap
+  // setelah kiriman terakhir diterima.
+  const receiptDate = receipts.map((r) => r.date).filter(Boolean).sort().at(-1) ?? TODAY;
+  const dueAnchor = (invDate) => (dueFrom === 'invoice' ? invDate : receiptDate);
+  const countDue = (invDate) => addDays(dueAnchor(invDate), termDue);
+  const [dueDate, setDueDate] = useState(() => countDue(TODAY));
+  // Jatuh tempo yang belum disentuh pengguna ikut bergerak saat tanggal faktur diubah.
+  const [dueTouched, setDueTouched] = useState(false);
   const [pphInput, setPphInput] = useState(null);
   const [inv, setInv] = useState('');
   const [tax, setTax] = useState('');
@@ -626,7 +676,7 @@ export function InvoiceModal({ opened, onClose, receiptIds, pb }) {
       onClose={onClose}
       size={860}
       icon={Invoice}
-      title="Buat faktur pembelian"
+      title="Catat faktur pembelian"
       subtitle={`${vendor?.name} · dari ${receipts.map((r) => r.number).join(', ')}`}
       footer={
         <>
@@ -643,10 +693,32 @@ export function InvoiceModal({ opened, onClose, receiptIds, pb }) {
           <TextInput label="No. invoice vendor" placeholder="Contoh: INV-2026-0123" withAsterisk size="sm" radius="md" value={vendorNo} error={sub && err.no} onChange={(e) => setVendorNo(e.currentTarget.value)} />
         </Grid.Col>
         <Grid.Col span={{ base: 6, sm: 3 }}>
-          <DateField label="Tanggal faktur" size="sm" radius="md" value={date} onChange={(e) => setDate(e.currentTarget.value)} />
+          <DateField
+            label="Tanggal faktur"
+            size="sm"
+            radius="md"
+            value={date}
+            onChange={(e) => {
+              const v = e.currentTarget.value;
+              setDate(v);
+              if (!dueTouched && v) setDueDate(countDue(v));
+            }}
+          />
         </Grid.Col>
         <Grid.Col span={{ base: 6, sm: 3 }}>
-          <DateField label="Jatuh tempo" size="sm" radius="md" min={date} value={dueDate} onChange={(e) => setDueDate(e.currentTarget.value)} />
+          <DateField
+            label="Jatuh tempo"
+            size="sm"
+            radius="md"
+            min={date}
+            value={dueDate}
+            description={
+              termDue > 0
+                ? `${termDue} hari sejak ${dueFromLabel(dueFrom)}${dueFrom === 'receipt' ? ` ${formatDate(receiptDate)}` : ''}`
+                : `Tanpa tempo · jatuh tempo pada tanggal ${dueFromLabel(dueFrom)}`
+            }
+            onChange={(e) => { setDueTouched(true); setDueDate(e.currentTarget.value); }}
+          />
         </Grid.Col>
         <Grid.Col span={{ base: 12, sm: 2 }}>
           <NumberField label="Potongan PPh" suffix=" %" size="sm" radius="md" min={0} max={100} decimalScale={2} value={pph} onChange={(v) => setPphInput(Number(v) || 0)} />
@@ -1204,6 +1276,182 @@ export function SendPoModal({ opened, onClose, po, pb, onConfirm }) {
 }
 
 // --- Alasan (tolak / kembalikan) -------------------------------------------------------------------
+// --- Detail penawaran vendor ----------------------------------------------------------------------
+// Menggantikan accordion di tabel penawaran: rincian per item plus keterangan yang tidak muat
+// di tabel (masa berlaku, deskripsi, berkas) dikumpulkan di satu tempat.
+export function QuoteDetailModal({ opened, onClose, quote: q, fppbj, pb }) {
+  if (!q || !fppbj) return null;
+  const name = pb.vendorsById[q.vendorId]?.name ?? q.vendorId;
+  const nPo = pb.pos.filter((p) => p.vendorId === q.vendorId).length;
+  const total = fppbj.items.reduce((n, it) => n + (q.lines.find((l) => l.itemId === it.id)?.price ?? 0) * it.qty, 0);
+  const isJasa = poAllJasa(fppbj);
+  return (
+    <FormModal
+      opened={opened}
+      onClose={onClose}
+      size={760}
+      icon={Storefront}
+      title="Detail penawaran"
+      subtitle={`${name} · ${q.no}`}
+      footer={<Button radius="md" variant="default" onClick={onClose}>Tutup</Button>}
+    >
+      <Stack gap="md">
+        <SimpleGrid cols={{ base: 2, sm: 4 }}>
+          <Field label="Vendor">{name}</Field>
+          <Field label="Riwayat">{nPo > 0 ? `Vendor lama · ${nPo} PO` : 'Vendor baru'}</Field>
+          <Field label="No. penawaran">{q.no}</Field>
+          <Field label="Berlaku sampai">{q.validUntil ? formatDate(q.validUntil) : '—'}</Field>
+          <Field label="Termin bayar">{termText(q.term)}</Field>
+          <Field label={isJasa ? 'Waktu pengerjaan' : 'Waktu kirim'}>{q.lead} hari</Field>
+          <Field label="Garansi">{q.warranty || '—'}</Field>
+          <Field label="Total penawaran">{rupiah(total)}</Field>
+        </SimpleGrid>
+
+        {q.desc?.trim() && (
+          <Box>
+            <Text fz={11} fw={600} c="slate.6" mb={4}>Keterangan vendor</Text>
+            <Text fz="sm" c="slate.8" style={{ whiteSpace: 'pre-wrap' }}>{q.desc}</Text>
+          </Box>
+        )}
+
+        <Box>
+          <Text fz={11} fw={600} c="slate.6" mb={6}>Harga per item</Text>
+          <Box style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 'var(--mantine-radius-md)', overflow: 'auto' }}>
+            <Table verticalSpacing="xs" horizontalSpacing="sm" miw={560} styles={{ th: { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 600, color: 'var(--mantine-color-slate-7)', whiteSpace: 'nowrap' } }}>
+              <Table.Thead bg="slate.0">
+                <Table.Tr>
+                  <Table.Th>Barang atau jasa</Table.Th>
+                  <Table.Th ta="right" w={90}>Jumlah</Table.Th>
+                  <Table.Th ta="right" w={150}>Harga satuan</Table.Th>
+                  <Table.Th ta="right" w={150}>Jumlah harga</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {fppbj.items.map((it) => {
+                  const l = q.lines.find((x) => x.itemId === it.id);
+                  return (
+                    <Table.Tr key={it.id}>
+                      <Table.Td>
+                        <Text fz="sm" fw={600} c="slate.9">{it.desc}</Text>
+                        {l?.spec && <Text fz={11} c="slate.6">{l.spec}</Text>}
+                      </Table.Td>
+                      <Table.Td ta="right" fz="sm" style={{ whiteSpace: 'nowrap' }}>{it.qty} {it.unit}</Table.Td>
+                      <Table.Td ta="right">
+                        {l ? (
+                          <>
+                            <Text fz="sm" fw={600}>{rupiah(l.price)}</Text>
+                            <Text fz={10} c="slate.6" fw={500}>{taxSummary(lineTaxes(q, l))}</Text>
+                          </>
+                        ) : (
+                          <Badge size="sm" radius="sm" variant="light" color="gray" fw={700} tt="none">Tidak ditawar</Badge>
+                        )}
+                      </Table.Td>
+                      <Table.Td ta="right" fz="sm" fw={700}>{l ? rupiah(l.price * it.qty) : '—'}</Table.Td>
+                    </Table.Tr>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+          </Box>
+        </Box>
+
+        <Box>
+          <Text fz={11} fw={600} c="slate.6" mb={6}>Berkas penawaran</Text>
+          {q.file ? <AttachmentList names={[q.file]} label={`Penawaran ${name}`} /> : <Text fz="xs" c="slate.6">Tidak ada berkas dilampirkan.</Text>}
+        </Box>
+      </Stack>
+    </FormModal>
+  );
+}
+
+// --- Konfirmasi hapus penawaran vendor ------------------------------------------------------------
+export function ConfirmDeleteQuoteModal({ opened, onClose, quote, fppbj, pb, onConfirm }) {
+  if (!quote || !fppbj) return null;
+  const name = pb.vendorsById[quote.vendorId]?.name ?? quote.vendorId;
+  const nilai = fppbj.items.reduce((n, it) => n + (quote.lines.find((l) => l.itemId === it.id)?.price ?? 0) * it.qty, 0);
+  const isWinner = Object.values(fppbj.procurement?.winners ?? {}).includes(quote.vendorId);
+  const sisa = fppbj.quotes.length - 1;
+  const perluLagi = Math.max(0, minQuotesFor(fppbj) - sisa);
+  return (
+    <FormModal
+      opened={opened}
+      onClose={onClose}
+      size={520}
+      icon={Warning}
+      title="Hapus penawaran ini?"
+      subtitle={`${name} · ${quote.no}`}
+      footer={
+        <>
+          <Cancel onClick={onClose} />
+          <Button radius="md" color="red" onClick={onConfirm}>Hapus penawaran</Button>
+        </>
+      }
+    >
+      <Stack gap="sm">
+        <SimpleGrid cols={2}>
+          <Field label="Vendor">{name}</Field>
+          <Field label="Nilai penawaran">{rupiah(nilai)}</Field>
+        </SimpleGrid>
+        <Text fz="sm" c="slate.7">
+          Seluruh harga per item, pajak, spesifikasi, dan ketentuan pada penawaran ini ikut terhapus.
+          {isWinner && ' Vendor ini sedang ditetapkan sebagai pemenang, jadi pemenangnya ikut dilepas.'}
+          {fppbj.procurement?.status === 'diajukan' && ' Pengajuan ke approver juga ditarik kembali ke draf.'}
+        </Text>
+        {!fppbj.single?.on && perluLagi > 0 && (
+          <Callout tone="warn">
+            Sisa {sisa} penawaran. Bidding butuh minimal {minQuotesFor(fppbj)}, jadi masih kurang {perluLagi} lagi
+            sebelum pengadaan bisa diajukan.
+          </Callout>
+        )}
+        <Callout tone="stop">Penghapusan ini tidak bisa dibatalkan — penawarannya harus diunggah ulang.</Callout>
+      </Stack>
+    </FormModal>
+  );
+}
+
+// --- Konfirmasi ganti jalur pengadaan -------------------------------------------------------------
+// Hanya muncul kalau pergantiannya benar-benar berakibat (lihat routeSwitchEffects). Isinya
+// menyebut akibatnya satu per satu, bukan peringatan umum "data akan hilang" — karena memang
+// tidak ada penawaran yang dihapus.
+export function SwitchRouteModal({ opened, onClose, mode, fppbj, pb, onConfirm }) {
+  if (!mode || !fppbj) return null;
+  const toSingle = mode === 'single';
+  const label = toSingle ? 'vendor tunggal' : 'bidding';
+  const effects = routeSwitchEffects(fppbj, mode, (id) => pb.vendorsById[id]?.name ?? id);
+  return (
+    <FormModal
+      opened={opened}
+      onClose={onClose}
+      size={520}
+      icon={Warning}
+      title={`Ganti jalur ke ${label}?`}
+      subtitle={`${fppbj.number} · ${fppbj.purpose}`}
+      footer={
+        <>
+          <Cancel onClick={onClose} />
+          <Button radius="md" onClick={onConfirm}>Ganti ke {label}</Button>
+        </>
+      }
+    >
+      <Stack gap="sm">
+        <Text fz="sm" c="slate.7">Yang berubah kalau jalur diganti:</Text>
+        <Stack gap={8}>
+          {effects.map((e) => (
+            <Group key={e} gap={8} wrap="nowrap" align="flex-start">
+              <Box mt={6} style={{ width: 5, height: 5, borderRadius: 999, background: 'var(--mantine-color-slate-5)', flexShrink: 0 }} />
+              <Text fz="sm" c="slate.8" lh={1.45}>{e}</Text>
+            </Group>
+          ))}
+        </Stack>
+        <Callout>
+          Tidak ada penawaran yang dihapus. Semua data penawaran tetap tersimpan, dan kembali ke jalur semula akan
+          memunculkannya lagi utuh.
+        </Callout>
+      </Stack>
+    </FormModal>
+  );
+}
+
 export function ReasonModal({ opened, onClose, title, label, confirmLabel, onConfirm }) {
   const [text, setText] = useState('');
   const [sub, setSub] = useState(false);

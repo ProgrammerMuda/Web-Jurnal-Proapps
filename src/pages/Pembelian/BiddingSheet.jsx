@@ -6,7 +6,7 @@ import { Check, Info, Scales, Storefront } from '@/components/Icon.jsx';
 import AttachmentList from './Attachments.jsx';
 import { Callout, Section } from './components.jsx';
 import { canCreate } from './permissions.js';
-import { fitOptions, TODAY } from './data.js';
+import { TODAY } from './data.js';
 import { DropField } from './Dialogs.jsx';
 import { ApprovalBar, frame, th } from './procurement.jsx';
 import {
@@ -15,7 +15,7 @@ import {
   biddingWinner,
   CRITERIA,
   formatDate,
-  fpbjTotal,
+  procurementValue,
   needsBiddingNote,
   notCheapest,
   offerPrice,
@@ -50,7 +50,7 @@ export default function BiddingForm({ f, role, patchProc, onSubmit, onApprove, o
   const locked = st === 'diajukan' || st === 'disetujui';
   const ro = locked || !canCreate(role, 'procurement');
   const q = f.quotes;
-  const total = fpbjTotal(f);
+  const total = procurementValue(f);
   const kinds = [...new Set(f.items.map((i) => (i.kind === 'jasa' ? 'Jasa' : 'Barang')))].join(' & ');
   const needNote = needsBiddingNote(f);
   const needReason = notCheapest(f);
@@ -87,7 +87,7 @@ export default function BiddingForm({ f, role, patchProc, onSubmit, onApprove, o
         <Grid gutter={0} style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 'var(--mantine-radius-md)', overflow: 'hidden' }}>
           <Grid.Col span={{ base: 12, sm: 8 }} p="md">
             <Text fz={10} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.6 }}>No. bidding</Text>
-            <Text fz={20} fw={700} c="slate.9" lh={1.3}>{f.number.replace(/^FPBJ/, 'BID')}</Text>
+            <Text fz={20} fw={700} c="slate.9" lh={1.3}>{f.number.replace(/^FPPBJ/, 'BID')}</Text>
             <Group gap={6} wrap="wrap" mt="sm">
               {f.items.map((it) => (
                 <Group key={it.id} gap={6} wrap="nowrap" pl="sm" pr={6} py={3} bg="slate.0" style={{ borderRadius: 999, maxWidth: '100%' }}>
@@ -242,7 +242,6 @@ export default function BiddingForm({ f, role, patchProc, onSubmit, onApprove, o
                       <Table.Th ta="right" w={90}>Jumlah</Table.Th>
                       <Table.Th ta="right" w={150}>Harga satuan</Table.Th>
                       <Table.Th ta="right" w={150}>Jumlah harga</Table.Th>
-                      <Table.Th w={160}>Kesesuaian</Table.Th>
                       <Table.Th ta="right" w={150}>Selisih dari termurah</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
@@ -258,13 +257,10 @@ export default function BiddingForm({ f, role, patchProc, onSubmit, onApprove, o
                             {l?.spec && <Text fz={11} c="slate.6">{l.spec}</Text>}
                           </Table.Td>
                           <Table.Td ta="right" fz="sm" style={{ whiteSpace: 'nowrap' }}>{it.qty} {it.unit}</Table.Td>
-                          <Table.Td ta="right" fz="sm" fw={600} c="slate.9">{l ? rupiah(fin) : '—'}</Table.Td>
-                          <Table.Td ta="right" fz="sm" fw={700}>{l ? rupiah(fin * it.qty) : '—'}</Table.Td>
-                          <Table.Td>
-                            <Badge size="sm" radius="sm" variant="light" fw={700} color={!l ? 'gray' : l.fit === 'tidak' ? 'red' : l.fit === 'alternatif' ? 'orange' : 'green'} tt="none">
-                              {l ? fitOptions.find((o) => o.value === l.fit)?.label : 'Tidak ditawar'}
-                            </Badge>
+                          <Table.Td ta="right" fz="sm" fw={600} c="slate.9">
+                            {l ? rupiah(fin) : <Badge size="sm" radius="sm" variant="light" color="gray" fw={700} tt="none">Tidak ditawar</Badge>}
                           </Table.Td>
+                          <Table.Td ta="right" fz="sm" fw={700}>{l ? rupiah(fin * it.qty) : '—'}</Table.Td>
                           <Table.Td ta="right" fz={11} fw={600} c={!l || cheapest ? 'slate.5' : 'red.7'}>
                             {!l ? '—' : cheapest ? rupiah(0) : `+${rupiah((fin - lowestFinal(it.id)) * it.qty)}`}
                           </Table.Td>
@@ -275,7 +271,7 @@ export default function BiddingForm({ f, role, patchProc, onSubmit, onApprove, o
                       <Table.Td colSpan={3} fz="sm" fw={700} c="slate.9">Total penawaran</Table.Td>
                       <Table.Td ta="right" fz="sm" fw={700} c={low ? 'green.8' : 'slate.9'}>
                         {rupiah(t.total)}
-                        <Text fz={10} c="slate.6" fw={400} style={{ whiteSpace: 'nowrap' }}>DPP {rupiah(t.base)} · PPN {rupiah(t.ppn)}</Text>
+                        <Text fz={10} c="slate.6" fw={400} style={{ whiteSpace: 'nowrap' }}>DPP {rupiah(t.dpp)} · PPN {rupiah(t.ppn)}</Text>
                       </Table.Td>
                       <Table.Td />
                       <Table.Td ta="right" fz={11} fw={700} c={!covers || low ? 'slate.5' : 'red.7'}>
@@ -349,7 +345,7 @@ export default function BiddingForm({ f, role, patchProc, onSubmit, onApprove, o
         )}
 
         {st === 'ditolak' && <Callout tone="stop" title="Ditolak approver">{proc.note}</Callout>}
-        <ApprovalBar st={st} role={role} ready={ready} onSubmit={onSubmit} onApprove={onApprove} onReject={onReject} label="bidding" fpbj={f} />
+        <ApprovalBar st={st} role={role} ready={ready} onSubmit={onSubmit} onApprove={onApprove} onReject={onReject} label="bidding" fppbj={f} />
       </Stack>
     </Section>
   );

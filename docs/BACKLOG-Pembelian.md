@@ -274,7 +274,7 @@ Belum ada sama sekali. Acuan lengkap sudah ada di
 dan contoh angka per peristiwa.
 
 Dokumen yang membentuk jurnal: PV DP, PV bayar di muka jasa berkala, amortisasi bulanan, FPB,
-BAST, faktur, tagihan non-PO, PV pelunasan/retensi, dan retur. FPBJ, penawaran, bidding,
+BAST, faktur, tagihan non-PO, PV pelunasan/retensi, dan retur. FPPBJ, penawaran, bidding,
 pesan ulang, PO/SPK, dan PR **tidak** membentuk jurnal.
 
 **Syarat dari spesifikasi:** idempoten, tanpa hapus (koreksi lewat jurnal balik), selalu
@@ -298,9 +298,9 @@ Belum disentuh sama sekali.
 | ID | Item | Catatan |
 |---|---|---|
 | PB-070 | Tagihan biaya non-PO | Listrik, sewa, langganan. Hanya akun beban. Wajib persetujuan, label `NON_PO`, bisa template berulang |
-| PB-071 | Kontrak harga / PO payung | Persetujuan sekali di muka, pesanan dari kontrak tanpa FPBJ selama harga sama dan sisa nilai cukup |
-| PB-072 | PO darurat | Label "Darurat – FPBJ menyusul", FPBJ susulan wajib lengkap ≤ 3 hari kerja, PR pelunasan terkunci sampai lengkap |
-| PB-073 | Buat PO tanpa FPBJ (form gabungan) | Satu form, sistem membuat FPBJ + pengadaan di belakang |
+| PB-071 | Kontrak harga / PO payung | Persetujuan sekali di muka, pesanan dari kontrak tanpa FPPBJ selama harga sama dan sisa nilai cukup |
+| PB-072 | PO darurat | Label "Darurat – FPPBJ menyusul", FPPBJ susulan wajib lengkap ≤ 3 hari kerja, PR pelunasan terkunci sampai lengkap |
+| PB-073 | Buat PO tanpa FPPBJ (form gabungan) | Satu form, sistem membuat FPPBJ + pengadaan di belakang |
 | PB-074 | Petty cash | Batas per transaksi, deteksi pemecahan transaksi |
 
 ---
@@ -343,6 +343,6 @@ data pengguna yang sudah ada akan kehilangan kolomnya.
 - Komentar kode dalam bahasa Indonesia, menjelaskan **kenapa**, bukan apa
 - Warna memakai token tema (`slate.0`, `primary.0`), bukan nilai hex
 - Semua nominal format akuntan: `Rp 1.234.000,00`
-- Aturan warna status terdokumentasi di komentar `utils.js` di atas `FPBJ_STATUS`
+- Aturan warna status terdokumentasi di komentar `utils.js` di atas `FPPBJ_STATUS`
 - Ikon Phosphor duotone lewat `@/components/Icon.jsx`
 - Wajib bersih di `npx eslint src` sebelum commit

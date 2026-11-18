@@ -1,7 +1,7 @@
 // Tab Ringkasan: kartu hutang, pipeline, "Perlu tindakan" per peran, umur hutang.
 import { Badge, Box, Button, Card, Grid, Group, Progress, RingProgress, SimpleGrid, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
-import { CheckCircle, ArrowRight } from '@/components/Icon.jsx';
-import { RoleChip } from './components.jsx';
+import { CheckCircle, ArrowRight, Warning } from '@/components/Icon.jsx';
+import { Callout, RoleChip } from './components.jsx';
 import { actionsFor, aging, daysLate, pipeline } from './selectors.js';
 import { roleOf } from './data.js';
 import { invTotals, rupiah, rupiahShort, sum, formatDate } from './utils.js';
@@ -29,13 +29,14 @@ export default function Overview({ pb, go }) {
   const overduePct = debt ? Math.round((overdue / debt) * 100) : 0;
   const ready = pb.prs.filter((p) => p.status === 'disetujui');
   const todo = actionsFor(role, pb);
+  // Tugas yang sudah lewat batas wajar: ini yang perlu menonjol di dashboard peran ini.
+  const telat = todo.filter((a) => a.late > 0);
   const flow = pipeline(pb);
   const buckets = aging(pb);
   const agingTotal = sum(buckets, (b) => b.value);
-  const late = pb.fpbj.filter((f) => f.neededBy < '2026-11-04' && !pb.pos.some((p) => p.fpbjId === f.id) && f.status !== 'draft' && f.status !== 'dibatalkan');
-  const bidding = pb.fpbj.filter((f) => f.route === 'bidding').length;
-  const repeat = pb.fpbj.filter((f) => f.route === 'repeat').length;
-  const single = pb.fpbj.filter((f) => f.single?.on).length;
+  const late = pb.fppbj.filter((f) => f.neededBy < '2026-11-04' && !pb.pos.some((p) => p.fppbjId === f.id) && f.status !== 'draft' && f.status !== 'dibatalkan');
+  const bidding = pb.fppbj.filter((f) => f.route === 'bidding').length;
+  const single = pb.fppbj.filter((f) => f.single?.on).length;
 
   return (
     <Stack gap="lg">
@@ -47,7 +48,12 @@ export default function Overview({ pb, go }) {
           hint={`${overduePct}% dari total hutang`}
           right={<RingProgress size={44} thickness={5} roundCaps sections={[{ value: overduePct, color: overdue ? 'red.6' : 'green.6' }]} />}
         />
-        <Stat label="Menunggu tindakan Anda" value={todo.length} hint={`Sebagai ${roleOf(role).label}`} />
+        <Stat
+          label="Menunggu tindakan Anda"
+          value={todo.length}
+          hint={telat.length > 0 ? `${telat.length} sudah lewat batas wajar` : `Sebagai ${roleOf(role).label}`}
+          right={telat.length > 0 ? <ThemeIcon variant="light" color="red" size={32} radius="md"><Warning size={18} /></ThemeIcon> : undefined}
+        />
         <Stat label="Siap dibayar" value={ready.length} hint={ready.length ? `Total ${rupiah(sum(ready, (p) => p.amount))} menunggu Kasir` : 'Payment Request yang sudah disetujui'} />
       </SimpleGrid>
 
@@ -73,10 +79,24 @@ export default function Overview({ pb, go }) {
             <Group justify="space-between" mb="xs">
               <Box>
                 <Text fw={700} fz="sm" c="slate.9">Perlu tindakan</Text>
-                <Text fz="xs" c="slate.6">Urutan: keputusan persetujuan, pembayaran, verifikasi, lalu tindak lanjut.</Text>
+                <Text fz="xs" c="slate.6">Yang sudah lewat batas wajar ditaruh paling atas.</Text>
               </Box>
-              <RoleChip role={role} />
+              <Group gap="xs" wrap="nowrap">
+                {telat.length > 0 && (
+                  <Badge size="sm" radius="sm" variant="light" color="red" fw={700} tt="none" leftSection={<Warning size={12} />}>
+                    {telat.length} terlambat
+                  </Badge>
+                )}
+                <RoleChip role={role} />
+              </Group>
             </Group>
+            {telat.length > 0 && (
+              <Box mb="sm">
+                <Callout tone="warn" title={`${telat.length} tindakan melewati batas wajar`}>
+                  Paling lama: {telat[0].title} · {telat[0].sub} — terlambat {telat[0].late} hari.
+                </Callout>
+              </Box>
+            )}
             {todo.length === 0 ? (
               <Stack align="center" gap={6} py={36}>
                 <ThemeIcon variant="light" color="green" size={48} radius="xl"><CheckCircle size={26} /></ThemeIcon>
@@ -88,10 +108,21 @@ export default function Overview({ pb, go }) {
                 {todo.slice(0, 8).map((a) => (
                   <Group key={a.id} justify="space-between" wrap="nowrap" py="sm" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
                     <Box style={{ minWidth: 0 }}>
-                      <Text fz="sm" fw={600} c="slate.9">{a.title}</Text>
+                      <Group gap={6} wrap="nowrap">
+                        {a.late > 0 && <Box w={4} h={16} bg="red.6" style={{ borderRadius: 2, flexShrink: 0 }} />}
+                        <Text fz="sm" fw={600} c="slate.9" truncate>{a.title}</Text>
+                      </Group>
                       <Text fz={11} c="slate.6" truncate>{a.sub}</Text>
+                      {/* Umur tugas: berapa lama menggantung, dan berapa hari lewat batas. */}
+                      {a.late > 0 ? (
+                        <Text fz={11} fw={600} c="red.7">
+                          Terlambat {a.late} hari{a.waiting != null ? ` · menunggu ${a.waiting} hari` : ''}
+                        </Text>
+                      ) : (
+                        a.waiting != null && a.waiting > 0 && <Text fz={11} c="slate.5">Menunggu {a.waiting} hari</Text>
+                      )}
                     </Box>
-                    <Button size="compact-xs" radius="md" variant="light" onClick={() => go(a.to)}>{a.cta}</Button>
+                    <Button size="compact-xs" radius="md" variant={a.late > 0 ? 'filled' : 'light'} color={a.late > 0 ? 'red' : undefined} onClick={() => go(a.to)}>{a.cta}</Button>
                   </Group>
                 ))}
                 {todo.length > 8 && <Text fz="xs" c="slate.6" pt="sm">+{todo.length - 8} tindakan lain</Text>}
@@ -121,7 +152,6 @@ export default function Overview({ pb, go }) {
               <Text fw={700} fz="sm" c="slate.9" mb="xs">Pengadaan</Text>
               <Stack gap={6}>
                 <Group justify="space-between"><Text fz="xs" c="slate.7">Jalur bidding</Text><Text fz="xs" fw={600}>{bidding} permintaan</Text></Group>
-                <Group justify="space-between"><Text fz="xs" c="slate.7">Jalur pesan ulang</Text><Text fz="xs" fw={600}>{repeat} permintaan</Text></Group>
                 <Group justify="space-between"><Text fz="xs" c="slate.7">Vendor tunggal</Text><Text fz="xs" fw={600}>{single} permintaan</Text></Group>
                 <Group justify="space-between"><Text fz="xs" c="slate.7">Lewat tanggal dibutuhkan</Text><Badge size="sm" radius="sm" variant="light" color={late.length ? 'red' : 'gray'} tt="none">{late.length}</Badge></Group>
               </Stack>

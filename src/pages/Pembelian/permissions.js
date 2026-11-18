@@ -6,9 +6,9 @@ import { personLabel, roleOf } from './data.js';
 
 // --- 2.2 Siapa yang MEMBUAT dokumen ---------------------------------------------------------------
 const CREATE = {
-  fpbj: ['peminta'], // Pesan ulang juga membuat FPBJ baru, pemiliknya tetap peminta
+  fppbj: ['peminta'],
   quote: ['accounting'], // penawaran vendor
-  procurement: ['accounting'], // form bidding & pesan ulang
+  procurement: ['accounting'], // pilih jalur, form bidding & vendor tunggal
   po: ['accounting'], // PO / SPK, kirim ke vendor, tutup / batalkan
   fpb: ['gudang'], // penerimaan barang
   bast: ['gudang'], // serah terima jasa — peran yang sama dengan gudang
@@ -21,11 +21,24 @@ const CREATE = {
 // Superadmin boleh membuat dan menyetujui apa pun, serta tidak terkena pemisahan tugas.
 export const isSuperadmin = (role) => role === 'superadmin';
 
+// --- Siapa yang MEMVERIFIKASI permintaan ----------------------------------------------------------
+// Verifikasi FPPBJ dipegang sisi pengadaan / hutang usaha (AP). Pembagiannya beda-beda tiap gedung:
+// ada yang di Procurement, ada yang di AP, ada yang dua-duanya. Daftarnya sengaja dibuat terbuka —
+// untuk menambah atau mengurangi peran yang boleh memverifikasi, ubah baris ini saja; seluruh layar
+// membaca lewat canVerify().
+const VERIFY = {
+  fppbj: ['accounting', 'finance'],
+};
+export const canVerify = (role, doc = 'fppbj') => isSuperadmin(role) || (VERIFY[doc] ?? []).includes(role);
+// Peran yang ditunggu untuk verifikasi; dipakai pada chip "Menunggu <peran>".
+export const verifierRole = (doc = 'fppbj') => (VERIFY[doc] ?? [])[0];
+export const verifierRoles = (doc = 'fppbj') => VERIFY[doc] ?? [];
+
 // --- Siapa yang MENYETUJUI ------------------------------------------------------------------------
 // Building Manager memegang semua keputusan: hasil pengadaan, serah terima pekerjaan,
 // dan permintaan pembayaran. Finance hanya mengeksekusi pembayarannya.
 const APPROVE = {
-  procurement: ['bm'], // form bidding & pesan ulang
+  procurement: ['bm'], // hasil bidding & vendor tunggal
   bast: ['bm'],
   pr: ['bm'], // PR DP, pelunasan, retensi
 };
@@ -47,8 +60,8 @@ export const hidesPrices = (role) => role === 'gudang';
 // dipegang satu orang, jadi pelanggaran baru mungkin terjadi kalau satu user memegang dua peran.
 export const samePerson = (role, personText) =>
   !isSuperadmin(role) && !!personText && personText === personLabel(role);
-// Approval pengadaan: pembuat FPBJ tidak boleh menyetujui pengadaannya sendiri.
-export const blockedBySoD = (role, fpbj) => samePerson(role, fpbj?.requester);
+// Approval pengadaan: pembuat FPPBJ tidak boleh menyetujui pengadaannya sendiri.
+export const blockedBySoD = (role, fppbj) => samePerson(role, fppbj?.requester);
 // Approval PR: pembuat PR tidak boleh menyetujui PR-nya sendiri.
 export const prBlockedBySoD = (role, pr) => samePerson(role, pr?.createdBy);
 
