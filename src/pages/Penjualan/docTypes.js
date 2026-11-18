@@ -23,6 +23,7 @@ export const DOC = {
     steps: { items: 'Yang ditagihkan', extras: 'Diskon, potongan, catatan' },
     fields: {
       billing: 'Alamat Penagihan (Billing)',
+      unit: 'Unit / Tower',
       terms: null,
       linesTitle: 'Baris tagihan',
       sourceLabel: 'Ambil dari Pesanan / Penawaran',
@@ -53,6 +54,9 @@ export const DOC = {
     fields: {
       // Penawaran belum menagih: tidak ada alamat penagihan.
       billing: null,
+      // Unitnya sudah ikut kontak pelanggan yang dipilih, dan penawaran sering
+      // dibuat sebelum unitnya pasti. Jadi tidak ada isian unit/tower di sini.
+      unit: null,
       terms: 'Syarat & Ketentuan',
       linesTitle: 'Baris penawaran',
       termDrivesDue: false,
@@ -81,6 +85,9 @@ export const DOC = {
     fields: {
       // Pesanan dikirim, belum ditagih: yang relevan alamat pengiriman.
       billing: 'Alamat / Catatan Pengiriman',
+      // Sama seperti penawaran: unitnya sudah ikut kontak pelanggan. Isian
+      // unit/tower baru muncul di faktur, dokumen yang benar-benar menagih.
+      unit: null,
       // S13: syarat dari penawaran ikut terbawa ke pesanan.
       terms: 'Syarat & Ketentuan',
       linesTitle: 'Baris pesanan',

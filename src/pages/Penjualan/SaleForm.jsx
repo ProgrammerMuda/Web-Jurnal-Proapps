@@ -178,13 +178,15 @@ function GeneralStep({ form, set, errors, doc, sources, onPickSource }) {
           value={form.term}
           onChange={pickTerm}
         />
-        <TextInput
-          label="Unit / Tower"
-          placeholder="Misal: Tower A / Unit 12-03"
-          radius="md"
-          value={form.unit}
-          onChange={(e) => set({ unit: e.currentTarget.value })}
-        />
+        {doc.fields.unit && (
+          <TextInput
+            label={doc.fields.unit}
+            placeholder="Misal: Tower A / Unit 12-03"
+            radius="md"
+            value={form.unit}
+            onChange={(e) => set({ unit: e.currentTarget.value })}
+          />
+        )}
         <TextInput
           label="Nomor Referensi Pelanggan (PO / Ref)"
           placeholder="Misal: PO-2026/05"
