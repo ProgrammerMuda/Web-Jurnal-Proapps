@@ -17,7 +17,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useState } from 'react';
-import { ArrowCounterClockwise, Briefcase, Info, Paperclip, Buildings, DotsThreeVertical, CalendarBlank, Check, ClipboardText, ListBullets, Package, ShoppingCart, X } from '@/components/Icon.jsx';
+import { ArrowCounterClockwise, Briefcase, Info, Paperclip, Buildings, DotsThreeVertical, CalendarBlank, Check, ClipboardText, ListBullets, Package, Scales, ShoppingCart, User, X } from '@/components/Icon.jsx';
 import { BackLink, CardHead, Callout, StatCell, CopyIcon, DataTable, DocNumber, Section, StatusPill } from './components.jsx';
 import { Hint } from './procurement.jsx';
 import ProcurementPanel from './ProcurementPanel.jsx';
@@ -103,9 +103,8 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
                 <Title order={2} fz={{ base: 20, md: 24 }} c="slate.9">{f.number}</Title>
                 <CopyIcon value={f.number} size={16} />
                 <StatusPill map={FPPBJ_STATUS} status={statusKey} />
-                {f.route && <Badge size="sm" radius="sm" variant="light" color="gray" c="slate.6" tt="none">{routeLabel(f)}</Badge>}
               </Group>
-              <Text fz="sm" c="slate.6">Diajukan oleh {requesterOf(f)}</Text>
+              <Text fz="sm" c="slate.6">{formatDate(f.date)}</Text>
             </Box>
           </Group>
           <Group gap="xs">
@@ -152,10 +151,15 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
           bg="slate.0"
           style={{ borderTop: '1px solid var(--mantine-color-gray-3)', borderRadius: '0 0 var(--mantine-radius-lg) var(--mantine-radius-lg)' }}
         >
-          <StatCell icon={CalendarBlank} label="Tanggal permintaan">{formatDate(f.date)}</StatCell>
           <StatCell icon={CalendarBlank} label="Dibutuhkan pada">{formatDate(f.neededBy)}</StatCell>
           <StatCell icon={Buildings} label="Departemen">{f.dept}</StatCell>
-          <StatCell icon={ListBullets} label="Jumlah item">{f.items.length} item</StatCell>
+          <StatCell icon={User} label="Diajukan oleh">
+            {requesterOf(f).split(' · ')[0]}
+            {requesterOf(f).split(' · ')[1] && (
+              <Text fz={11} fw={500} c="slate.6" component="span" display="block">{requesterOf(f).split(' · ')[1]}</Text>
+            )}
+          </StatCell>
+          <StatCell icon={Scales} label="Jalur pengadaan">{f.route ? routeLabel(f) : 'Belum dipilih'}</StatCell>
         </SimpleGrid>
       </Card>
 

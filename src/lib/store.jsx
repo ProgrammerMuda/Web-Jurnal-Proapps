@@ -21,7 +21,7 @@ import {
 const DataContext = createContext(null);
 
 // Data Pembelian disimpan di localStorage agar tidak hilang saat halaman dimuat ulang.
-const PB_KEY = 'proapps.pembelian.v3';
+const PB_KEY = 'proapps.pembelian.v19';
 const pbSeed = {
   vendors: vendorsSeed,
   paymentTerms: paymentTermsSeed,

@@ -1,9 +1,11 @@
-// Detail penerimaan: FPB (barang) atau BAST (jasa) yang dicatat dari sebuah PO.
+// Detail penerimaan: FPB (barang) atau BAPP (jasa) yang dicatat dari sebuah PO.
 import { Badge, Box, Button, Card, Grid, Group, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core';
-import { Check, Info, Package, Receipt, Truck } from '@/components/Icon.jsx';
+import { Check, DownloadSimple, Info, Package, Paperclip, Receipt, Truck } from '@/components/Icon.jsx';
 import { BackLink, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section } from './components.jsx';
-import { canApprove, canCreate } from './permissions.js';
+import { approvalState, canCreate, isApproverTurn, signApproval } from './permissions.js';
 import PurchaseFlow from './PurchaseFlow.jsx';
+import AttachmentList from './Attachments.jsx';
+import { downloadReceipt } from './receiptPdf.js';
 import { personLabel } from './data.js';
 import { toast } from './usePb.js';
 import { formatDate, INV_STATUS, invStatus, invTotals, invoicedQty, RECEIPT_STATUS, receiptConfirmed, rupiah, uninvoicedLines } from './utils.js';
@@ -11,29 +13,36 @@ import { StatusPill } from './components.jsx';
 
 const th = { th: { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 600, color: 'var(--mantine-color-slate-7)', whiteSpace: 'nowrap' } };
 
-export default function ReceiptDetail({ receipt: r, pb, onBack, go, openDialog }) {
+export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
   const po = pb.posById[r.poId];
   const vendor = pb.vendorsById[r.vendorId];
   const isJasa = r.kind === 'jasa';
-  const docName = isJasa ? 'BAST' : 'FPB';
+  const docName = isJasa ? 'BAPP' : 'FPB';
   const itemOf = (id) => po?.items.find((i) => i.id === id);
   const confirmed = receiptConfirmed(r);
   const open = uninvoicedLines(r, pb.invoices).length > 0;
-  // BAST jasa disetujui Atasan dulu (spesifikasi 2.2) sebelum Accounting bisa memfakturkan.
+  // BAPP jasa disetujui Atasan dulu (spesifikasi 2.2) sebelum Accounting bisa memfakturkan.
+  // Approval BAPP berjenjang dua: Chief Finance lalu Building Manager.
+  const ap = approvalState(r, 'bapp', { settled: confirmed });
   const approveBast = () => {
-    pb.update('receipts', r.id, (d) => ({ ...d, status: 'dikonfirmasi', approvedBy: personLabel(pb.role) }));
-    toast('BAST disetujui. Sudah bisa difaktur.');
+    pb.update('receipts', r.id, (d) => {
+      const { doc, complete } = signApproval(d, 'bapp', pb.role);
+      return complete ? { ...doc, status: 'dikonfirmasi', approvedBy: personLabel(pb.role) } : doc;
+    });
+    toast(ap.done.length + 1 >= ap.total ? 'BAPP disetujui penuh. Sudah bisa difaktur.' : `Approval ${ap.done.length + 1} dari ${ap.total} dicatat.`);
   };
   const invoices = pb.invoices.filter((i) => i.lines.some((l) => l.receiptId === r.id));
   const totalQty = r.lines.reduce((n, l) => n + l.qty, 0);
   const totalRejected = r.lines.reduce((n, l) => n + (l.rejected || 0), 0);
+  // Qty yang dipesan pada PO untuk baris-baris di dokumen ini — pembanding "diterima".
+  const totalOrdered = r.lines.reduce((n, l) => n + (itemOf(l.itemId)?.qty ?? 0), 0);
   const count = (n, unit) => <Badge size="sm" radius="sm" variant="light" color="slate" tt="none">{n} {unit}</Badge>;
 
   const cells = [
     ['Vendor', vendor?.name],
-    ['Tanggal diterima', formatDate(r.date)],
-    ['PO', po ? <DocNumber onClick={() => go({ name: 'po', id: po.id })}>{po.number}</DocNumber> : '—'],
-    [isJasa ? 'No. BAST vendor' : 'Surat jalan', r.doNumber || '—'],
+    ['Dicatat oleh', r.createdBy || '—'],
+    ['Dari pesanan', po ? <DocNumber onClick={() => go({ name: 'po', id: po.id })}>{po.number}</DocNumber> : '—'],
+    [isJasa ? 'No. BAPP vendor' : 'No. surat jalan', r.doNumber || '—'],
   ];
 
   return (
@@ -51,17 +60,25 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go, openDialog }
                 {!confirmed
                   ? <StatusPill map={RECEIPT_STATUS} status={r.status} />
                   : <Badge size="sm" radius="sm" variant="light" color={open ? 'orange' : 'green'} fw={700} tt="none">{open ? 'Belum difaktur' : 'Sudah difaktur'}</Badge>}
-                <Badge size="sm" radius="sm" variant="outline" color="slate" tt="none">{docName}</Badge>
               </Group>
-              <Text fz="sm" c="slate.6">{vendor?.name}{po && <> · dari <DocNumber onClick={() => go({ name: 'po', id: po.id })}>{po.number}</DocNumber></>}</Text>
+              <Text fz="sm" c="slate.6">{formatDate(r.date)}</Text>
             </Box>
           </Group>
           <Group gap="xs">
-            {!confirmed && (canApprove(pb.role, 'bast') ? (
-              <Button radius="md" leftSection={<Check size={16} />} onClick={approveBast}>Setujui BAST</Button>
-            ) : <Group gap={6}><Text fz="xs" c="slate.7">Menunggu</Text><RoleChip role="bm" /></Group>)}
+            {/* Dokumen yang sudah tercatat selalu bisa diunduh, oleh peran mana pun. */}
+            <Button
+              radius="md"
+              variant="default"
+              leftSection={<DownloadSimple size={16} />}
+              onClick={() => { downloadReceipt(r, { vendor, po }); toast(`${docName} diunduh sebagai PDF.`); }}
+            >
+              Unduh PDF
+            </Button>
+            {!confirmed && (isApproverTurn(pb.role, r, 'bapp') ? (
+              <Button radius="md" leftSection={<Check size={16} />} onClick={approveBast}>Setujui BAPP ({ap.done.length + 1}/{ap.total})</Button>
+            ) : <Group gap={6}><Text fz="xs" c="slate.7">Menunggu</Text><RoleChip role={ap.next ?? 'cfo'} /></Group>)}
             {confirmed && open && (canCreate(pb.role, 'invoice') ? (
-              <Button radius="md" onClick={() => openDialog({ type: 'invoice', receiptIds: [r.id] })}>Catat faktur</Button>
+              <Button radius="md" onClick={() => go({ name: 'invoice-new', receiptIds: [r.id] })}>Catat faktur</Button>
             ) : <Group gap={6}><Text fz="xs" c="slate.7">Faktur oleh</Text><RoleChip role="accounting" /></Group>)}
           </Group>
         </Group>
@@ -72,7 +89,7 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go, openDialog }
           <Stack gap="lg">
             <Card withBorder radius="lg" padding={0} bg="white">
               <Box px="lg" py="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
-                <CardHead icon={Info} desc={`Vendor, PO, dan ${isJasa ? 'berita acara' : 'surat jalan'} penerimaan`}>Informasi {docName}</CardHead>
+                <CardHead icon={Info} desc={`Vendor, pencatat, pesanan asal, dan nomor ${isJasa ? 'berita acara' : 'surat jalan'}`}>Informasi {docName}</CardHead>
               </Box>
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={0}>
                 {cells.map(([k, v], i) => (
@@ -97,6 +114,24 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go, openDialog }
                   <Text fz="sm" c="slate.8" style={{ whiteSpace: 'pre-wrap' }}>{r.note}</Text>
                 </Box>
               )}
+            </Card>
+
+            <Card withBorder radius="lg" padding={0} bg="white">
+              <Group justify="space-between" px="lg" py="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
+                <CardHead icon={Paperclip} desc={isJasa ? 'Berita acara bertanda tangan dari vendor' : 'Surat jalan atau bukti kirim dari vendor'}>
+                  Berkas {docName}
+                </CardHead>
+                {r.file && <Badge size="sm" radius="sm" variant="light" color="slate" tt="none">1 berkas</Badge>}
+              </Group>
+              <Box px="lg" py="md">
+                {r.file ? (
+                  <AttachmentList names={[r.file]} label={`${docName} ${r.number}`} />
+                ) : (
+                  <Text fz="xs" c="slate.6">
+                    {isJasa ? 'Belum ada berkas BAPP bertanda tangan.' : 'Tidak ada berkas dilampirkan. Pada FPB, unggahan memang opsional.'}
+                  </Text>
+                )}
+              </Box>
             </Card>
 
             <Section divided flush icon={Package} title={isJasa ? 'Jasa diterima' : 'Barang diterima'} description="Jumlah pada penerimaan ini dibanding pesanan" right={count(r.lines.length, 'item')}>
@@ -157,11 +192,35 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go, openDialog }
               <Box px="lg" py="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
                 <CardHead icon={Truck} desc="Total yang tercatat pada dokumen ini">Ringkasan</CardHead>
               </Box>
-              <Stack gap={6} p="lg">
-                <Group justify="space-between"><Text fz="xs" c="slate.7">Jumlah item</Text><Text fz="xs" fw={600}>{r.lines.length}</Text></Group>
-                <Group justify="space-between"><Text fz="xs" c="slate.7">Total diterima</Text><Text fz="xs" fw={600}>{totalQty}</Text></Group>
-                <Group justify="space-between"><Text fz="xs" c="slate.7">Ditolak</Text><Text fz="xs" fw={600} c={totalRejected ? 'red.7' : undefined}>{totalRejected}</Text></Group>
-              </Stack>
+              {/* Empat angka dokumen ini. Kartunya sempit (kolom 3.5/12), jadi disusun 2x2
+                  — empat kolom membuat labelnya terpotong. "item" berarti baris, sama seperti
+                  chip "{n} item" di kepala seksi. */}
+              <SimpleGrid cols={2} spacing={0}>
+                {[
+                  ['Total item', r.lines.length, 'slate.9'],
+                  ['Total dipesan', totalOrdered, 'slate.9'],
+                  ['Total diterima', totalQty, 'slate.9'],
+                  ['Total ditolak', totalRejected, totalRejected ? 'red.7' : 'slate.9'],
+                ].map(([label, value, color], i) => (
+                  <Box
+                    key={label}
+                    px="lg"
+                    py="md"
+                    style={{
+                      borderLeft: i % 2 ? '1px solid var(--mantine-color-gray-2)' : undefined,
+                      borderTop: i > 1 ? '1px solid var(--mantine-color-gray-2)' : undefined,
+                    }}
+                  >
+                    <Text fz={11} fw={600} c="slate.6">{label}</Text>
+                    <Text fz={22} fw={700} c={color} lh={1.3}>{value}</Text>
+                  </Box>
+                ))}
+              </SimpleGrid>
+              {totalRejected > 0 && (
+                <Text fz={11} c="slate.6" px="lg" pb="lg">
+                  Qty ditolak tidak dihitung sebagai diterima, jadi sisa pesanannya tetap terbuka.
+                </Text>
+              )}
             </Card>
             <PurchaseFlow pb={pb} go={go} current={{ kind: 'receipt', id: r.id }} />
           </Stack>

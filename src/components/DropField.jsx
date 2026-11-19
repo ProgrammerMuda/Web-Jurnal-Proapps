@@ -1,7 +1,7 @@
 // Unggah berkas dengan drag & drop (atau klik untuk memilih), dipakai modul Pembelian
 // dan Penjualan. Prototype menyimpan nama berkas di data, isinya di IndexedDB.
 import { useRef, useState } from 'react';
-import { ActionIcon, Box, Center, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Box, Center, Group, Input, Stack, Text, Tooltip } from '@mantine/core';
 import { CheckCircle, FileText, Trash, UploadSimple, Warning, X } from '@/components/Icon.jsx';
 import { fmtMB, registerFiles } from '@/lib/fileStore.js';
 
@@ -9,7 +9,9 @@ export const MAX_UPLOAD_MB = 5;
 // Finder/Explorer menampilkan ukuran dalam MB desimal (1 MB = 1.000.000 byte); batas mengikuti angka yang dilihat pengguna.
 const MAX_BYTES = MAX_UPLOAD_MB * 1_000_000;
 
-export function DropField({ label, value = [], onChange, error, withAsterisk, multiple = false, accept = '.pdf,.doc,.docx,.xls,.xlsx,image/*', hint = 'PDF, Word, Excel, atau gambar' }) {
+// size mengikuti ukuran kolom isian di sekitarnya, supaya labelnya sama dengan label
+// TextInput / Select di baris yang sama.
+export function DropField({ label, value = [], onChange, error, withAsterisk, multiple = false, accept = '.pdf,.doc,.docx,.xls,.xlsx,image/*', hint = 'PDF, Word, Excel, atau gambar', size = 'sm' }) {
   const input = useRef(null);
   const [over, setOver] = useState(false);
   const [rejected, setRejected] = useState([]);
@@ -26,12 +28,13 @@ export function DropField({ label, value = [], onChange, error, withAsterisk, mu
     if (fresh.length) onChange([...value, ...fresh]);
   };
   const has = value.length > 0;
+  // Labelnya diserahkan ke Input.Wrapper milik Mantine, bukan ditiru dengan <Text> +
+  // nama kelasnya: tiruan itu tidak ikut mendapat --input-label-size maupun jarak bawah
+  // yang sama, jadi ukuran dan tebalnya meleset dari label TextInput / Select di sebelahnya.
+  // `error` tidak diteruskan ke wrapper karena pesannya sudah ditampilkan sendiri di bawah,
+  // setelah petak unggahnya — bukan menempel di bawah label.
   return (
-    <Box>
-      <Text className="mantine-InputWrapper-label" mb={4}>
-        {label}
-        {withAsterisk && <span style={{ color: 'var(--mantine-color-red-6)' }}> *</span>}
-      </Text>
+    <Input.Wrapper label={label} withAsterisk={withAsterisk} size={size}>
       <input ref={input} type="file" multiple={multiple} accept={accept} hidden onChange={(e) => { take(e.target.files); e.target.value = ''; }} />
       <Stack gap="xs">
         {value.map((name) => (
@@ -120,7 +123,7 @@ export function DropField({ label, value = [], onChange, error, withAsterisk, mu
         )}
       </Stack>
       {error && <Text fz="xs" c="red.6" mt={4}>{error}</Text>}
-    </Box>
+    </Input.Wrapper>
   );
 }
 

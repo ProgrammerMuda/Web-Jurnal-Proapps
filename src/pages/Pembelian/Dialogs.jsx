@@ -2,8 +2,8 @@
 import {
   Badge,
   Box,
+  Checkbox,
   Button,
-  Grid,
   Group,
   Input,
   SimpleGrid,
@@ -20,12 +20,10 @@ import {
   ClipboardText,
   CurrencyCircleDollar,
   FileText,
-  Invoice,
   ArrowCounterClockwise,
   PaperPlaneTilt,
   Storefront,
   Truck,
-  Wallet,
   Warning,
 } from '@/components/Icon.jsx';
 import DateField from '@/components/DateField.jsx';
@@ -33,16 +31,13 @@ import NumberField from '@/components/NumberField.jsx';
 import AttachmentList from './Attachments.jsx';
 import { Callout, CopyIcon, Field, FormModal } from './components.jsx';
 import { periodOptions, personLabel, TODAY } from './data.js';
-import { dueFromLabel, snapshotTerm, termFields, termMechanics } from './paymentTerms.js';
+import { snapshotTerm, termFields } from './paymentTerms.js';
 import {
   addDays,
-  dueDaysOf,
-  advanceLabel,
-  advancePct,
+  bappJournalDate,
+  bappProgress,
   bankOf,
   formatDate,
-  invDpp,
-  invPpn,
   invTotals,
   nextNumber,
   parseWarranty,
@@ -50,24 +45,24 @@ import {
   poAllBarang,
   poAllJasa,
   poDocLabel,
+  proofFiles,
   lineRate,
   lineTaxes,
-  ppnLabel,
   TAX_OPTIONS,
-  poDpAmount,
   poTotal,
   remainingQty,
   scheduleBase,
   scheduleExcludesDp,
   scheduleCount,
   minQuotesFor,
+  rangeLabel,
   returnedQty,
+  scheduleRows,
   taxSummary,
   routeSwitchEffects,
   rupiah,
   uid,
   termText,
-  uninvoicedLines,
   vendorCredit,
   vendorEmail,
 } from './utils.js';
@@ -162,6 +157,9 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
     period: editing?.term?.period ?? d0.period ?? 'bulan',
     periods: editing?.term?.periods ?? d0.periods ?? 12,
     lead: editing?.lead ?? '',
+    // Apakah barang/jasanya melewati serah terima. Bawaannya ya — itu keadaan normal,
+    // dan penawaran lama yang belum punya kolom ini memang berarti begitu.
+    withReceipt: editing?.withReceipt ?? true,
     ...parseWarranty(editing?.warranty),
   }));
   const [lines, setLines] = useState(() =>
@@ -175,8 +173,8 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
   // Saklar harga: berlaku untuk semua item ber-PPN; disimpan per item sebagai 'ppn' atau 'ppn_incl'.
   const [ppnIncl, setPpnIncl] = useState(() => Object.values(lines).some((l) => l.taxes.includes('ppn_incl')));
   const [sub, setSub] = useState(false);
-  const set = (p) => setF((x) => ({ ...x, ...p }));
-  const setLine = (id, p) => setLines((l) => ({ ...l, [id]: { ...l[id], ...p } }));
+  const set = (p) => { setSub(true); setF((x) => ({ ...x, ...p })); };
+  const setLine = (id, p) => { setSub(true); setLines((l) => ({ ...l, [id]: { ...l[id], ...p } })); };
 
   // Spesifikasi termin yang sedang dipilih; `fields` menentukan isian tambahan yang wajib.
   const spec = termCatalog.find((t) => t.id === f.termType) ?? defaultTerm;
@@ -222,9 +220,10 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
     prices: fppbj.items.some((i) => !(lines[i.id].price > 0)) && 'Isi harga untuk semua item',
     specs: fppbj.items.some((i) => !lines[i.id].spec.trim()) && 'Isi spesifikasi yang ditawarkan untuk semua item',
   };
+  const invalid = Object.values(errors).some(Boolean);
   const submit = () => {
     setSub(true);
-    if (Object.values(errors).some(Boolean)) return;
+    if (invalid) return;
     const quote = {
       id: editing?.id ?? uid('q'),
       vendorId,
@@ -235,6 +234,7 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
       term: buildTerm(f, spec),
       lead: Number(f.lead),
       warranty: f.warrantyValue > 0 ? `${f.warrantyValue} ${f.warrantyUnit}` : '',
+      withReceipt: f.withReceipt,
       lines: fppbj.items.map((i) => ({
         itemId: i.id,
         ...lines[i.id],
@@ -277,7 +277,7 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
         footer={
           <>
             <Cancel onClick={onClose} />
-            <Button radius="md" onClick={submit}>
+            <Button radius="md" disabled={invalid} onClick={submit}>
               {editing ? 'Simpan perubahan' : 'Simpan penawaran'}
             </Button>
           </>
@@ -456,6 +456,27 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
               </Box>
             )}
 
+            {/* Menentukan rantai dokumen sesudah PO/SPK, jadi ditanyakan di sini — bukan
+                ditebak belakangan dari ada atau tidaknya FPB/BAPP yang tercatat. Diberi label
+                sendiri supaya tidak terbaca sebagai bagian dari termin bayar di atasnya. */}
+            <Input.Wrapper label={`Serah terima ${isJasa ? 'jasa' : 'barang'}`} withAsterisk size="sm">
+              <Box style={tableFrame} p="sm">
+                <Switch
+                  size="sm"
+                  labelPosition="left"
+                  justify="space-between"
+                  w="100%"
+                  label={`Ada penerimaan ${isJasa ? 'jasa (BAPP)' : 'barang (FPB)'}`}
+                  description={f.withReceipt
+                    ? `${isJasa ? 'Pekerjaan diperiksa dan dituangkan dalam berita acara' : 'Barang diterima gudang dan dicatat'} dulu; faktur dibuat dari ${isJasa ? 'BAPP' : 'FPB'} itu.`
+                    : `Tidak ada serah terima. Setelah ${isJasa ? 'SPK' : 'PO'} terbit, fakturnya langsung dibuat dari ${isJasa ? 'SPK' : 'PO'} itu.`}
+                  checked={f.withReceipt}
+                  onChange={(e) => set({ withReceipt: e.currentTarget.checked })}
+                  styles={{ body: { alignItems: 'center' }, labelWrapper: { flex: 1 } }}
+                />
+              </Box>
+            </Input.Wrapper>
+
             <Input.Wrapper label="Garansi / masa layanan" size="sm">
               <Group gap="xs" wrap="nowrap">
                 <NumberField size="sm" radius="md" min={0} placeholder="Contoh: 12" flex={1} value={f.warrantyValue} onChange={(v) => set({ warrantyValue: Number(v) || 0 })} />
@@ -472,32 +493,76 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
   );
 }
 
-// --- Penerimaan (FPB barang / BAST jasa) ---------------------------------------------------------
+// --- Penerimaan (FPB barang / BAPP jasa) ---------------------------------------------------------
 export function ReceiptModal({ opened, onClose, po, pb }) {
   const [date, setDate] = useState(TODAY);
   const [doNo, setDoNo] = useState('');
   const [note, setNote] = useState('');
-  // SPK bertermin diserahterimakan per termin, jadi barisnya mulai kosong — PIC mengisi yang selesai saja.
-  // Pesanan biasa tetap terisi penuh karena umumnya diterima sekaligus.
   const scheduled = scheduleCount(po.term) > 1 || po.items.some((i) => i.unit === 'retensi');
+  // Semua qty mulai dari 0 — yang dicatat harus apa yang betul-betul diterima, bukan angka
+  // pesanan yang tinggal disetujui. Mengisi penuh otomatis memancing pencatatan asal setuju.
   const [rows, setRows] = useState(() =>
-    Object.fromEntries(po.items.map((i) => [i.id, { qty: scheduled ? 0 : remainingQty(po, i.id, pb.receipts), rejected: 0 }])),
+    Object.fromEntries(po.items.map((i) => [i.id, { qty: 0, rejected: 0 }])),
   );
   const [sub, setSub] = useState(false);
+  const [file, setFile] = useState('');
+  // Error dibuka begitu form disentuh — tombol simpan nonaktif selama belum sah, jadi
+  // submit() tidak pernah menyalakan `sub` sendiri.
+  const touch = (fn) => (v) => { setSub(true); fn(v); };
   const isJasa = poAllJasa(po);
   const mixed = !isJasa && !poAllBarang(po);
-  const total = po.items.reduce((n, i) => n + (rows[i.id].qty || 0), 0);
+  // SPK bertermin dicatat per termin dengan centang, bukan isian qty: tiap baris jadwal
+  // adalah satu pekerjaan yang selesai atau belum, tidak ada "separuh termin".
+  const bappMode = isJasa && scheduled;
+  // SPK jasa tanpa jadwal termin: pekerjaannya juga tidak dihitung per qty — satu lingkup
+  // kerja itu diterima atau ditolak. Mengetik "12 dari 20" di sini meniru FPB barang dan
+  // memaksa angka pada sesuatu yang penilaiannya bukan angka.
+  const bappPlain = isJasa && !scheduled;
+  // Satu centang per lingkup kerja: dicentang berarti diterima. Yang tidak dicentang tidak
+  // ikut BAPP ini dan tetap terbuka — sama seperti termin yang belum selesai pada SPK
+  // bertermin. Tidak ada kolom "ditolak": menolak berarti belum menerima, dan sisa SPK-nya
+  // memang tetap terbuka sampai pekerjaannya diterima.
+  const [pickedWork, setPickedWork] = useState([]);
+  const accepted = po.items.filter((i) => pickedWork.includes(i.id));
+  const acceptedValue = accepted.reduce((n, i) => n + i.qty * i.price, 0);
+  const [picked, setPicked] = useState([]);
+  const sched = bappMode ? scheduleRows(po, pb.receipts, TODAY, picked) : [];
+  const pickedValue = po.items.filter((i) => picked.includes(i.id)).reduce((n, i) => n + i.qty * i.price, 0);
+  const progress = bappMode ? bappProgress(po, pb.receipts, picked) : null;
+  const journalDate = bappMode ? bappJournalDate(po, picked, date) : date;
+  const total = bappMode ? picked.length : bappPlain ? accepted.length : po.items.reduce((n, i) => n + (rows[i.id].qty || 0), 0);
+  const totalRejected = bappMode || bappPlain ? 0 : po.items.reduce((n, i) => n + (rows[i.id].rejected || 0), 0);
+  // Berapa baris yang betul-betul diisi, dan berapa yang belum — penerimaan sebagian itu wajar,
+  // tapi harus terlihat supaya tidak ada baris yang terlewat tanpa sadar.
+  const rowsFilled = bappMode || bappPlain ? 0 : po.items.filter((i) => (rows[i.id].qty || 0) + (rows[i.id].rejected || 0) > 0).length;
+  const sisaSetelah = bappMode || bappPlain
+    ? 0
+    : po.items.reduce((n, i) => n + Math.max(remainingQty(po, i.id, pb.receipts) - (rows[i.id].qty || 0) - (rows[i.id].rejected || 0), 0), 0);
   const err = {
-    doNo: !doNo.trim() && (isJasa ? 'No. BAST wajib diisi' : mixed ? 'No. surat jalan / BAST wajib diisi' : 'Surat jalan wajib diisi'),
-    qty: total <= 0 && 'Isi minimal satu qty diterima',
+    doNo: !doNo.trim() && (isJasa ? 'No. BAPP wajib diisi' : mixed ? 'No. surat jalan / BAPP wajib diisi' : 'No. surat jalan wajib diisi'),
+    date: (!date && `Tanggal ${isJasa ? 'BAPP' : 'terima'} wajib diisi`)
+      || (date > TODAY && 'Tidak boleh setelah hari ini'),
+    qty: total <= 0
+      && (bappMode
+        ? 'Centang minimal satu termin yang sudah selesai'
+        : bappPlain
+          ? 'Centang minimal satu pekerjaan yang sudah diterima'
+          : 'Isi minimal satu qty diterima'),
+    file: isJasa && !file && 'BAPP bertanda tangan wajib diunggah',
   };
+  const invalid = Object.values(err).some(Boolean);
   const submit = () => {
     setSub(true);
-    if (err.doNo || err.qty) return;
-    const lines = po.items
-      .map((i) => ({ itemId: i.id, qty: rows[i.id].qty || 0, rejected: rows[i.id].rejected || 0 }))
-      .filter((l) => l.qty > 0 || l.rejected > 0);
-    const prefix = lines.every((l) => itemKind(po, l.itemId) === 'jasa') ? 'BAST' : 'FPB';
+    if (invalid) return;
+    const lines = bappMode
+      ? po.items.filter((i) => picked.includes(i.id)).map((i) => ({ itemId: i.id, qty: i.qty, rejected: 0 }))
+      : bappPlain
+      // Dicentang = seluruh lingkupnya diterima.
+      ? accepted.map((i) => ({ itemId: i.id, qty: i.qty, rejected: 0 }))
+      : po.items
+          .map((i) => ({ itemId: i.id, qty: rows[i.id].qty || 0, rejected: rows[i.id].rejected || 0 }))
+          .filter((l) => l.qty > 0 || l.rejected > 0);
+    const prefix = lines.every((l) => itemKind(po, l.itemId) === 'jasa') ? 'BAPP' : 'FPB';
     pb.add('receipts', {
       id: uid('fpb'),
       number: nextNumber(prefix, pb.receipts),
@@ -505,17 +570,21 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
       vendorId: po.vendorId,
       date,
       doNumber: doNo,
-      kind: prefix === 'BAST' ? 'jasa' : 'barang',
-      // BAST jasa perlu persetujuan Atasan sebelum bisa difaktur (spesifikasi 2.2 & 3.8).
+      kind: prefix === 'BAPP' ? 'jasa' : 'barang',
+      // BAPP jasa perlu persetujuan Atasan sebelum bisa difaktur (spesifikasi 2.2 & 3.8).
       // FPB barang langsung terkonfirmasi: approval Kepala Gudang opsional dan nonaktif default.
-      status: prefix === 'BAST' ? 'draf' : 'dikonfirmasi',
+      status: prefix === 'BAPP' ? 'draf' : 'dikonfirmasi',
       createdBy: personLabel(pb.role),
+      // Tanggal pengakuan beban. Berbeda dari tanggal dokumen pada termin berkala: bebannya
+      // milik periode yang di-BAPP, bukan hari dokumennya diketik.
+      journalDate: prefix === 'BAPP' ? journalDate : date,
+      file,
       lines,
       note,
     });
     toast(
-      prefix === 'BAST'
-        ? 'BAST dicatat. Menunggu persetujuan atasan sebelum bisa difaktur.'
+      prefix === 'BAPP'
+        ? 'BAPP dicatat. Menunggu persetujuan atasan sebelum bisa difaktur.'
         : `${prefix} dicatat. Sisa qty yang belum diterima tetap terbuka.`,
     );
     onClose();
@@ -526,21 +595,175 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
       onClose={onClose}
       size={760}
       icon={Truck}
-      title={isJasa ? 'Catat serah terima jasa (BAST)' : mixed ? 'Catat penerimaan (FPB / BAST)' : 'Catat penerimaan barang (FPB)'}
+      title={isJasa ? 'Catat BAPP' : mixed ? 'Catat penerimaan (FPB / BAPP)' : 'Catat penerimaan barang (FPB)'}
       subtitle={`${po.number} · ${pb.vendorsById[po.vendorId]?.name}`}
       footer={
         <>
           <Cancel onClick={onClose} />
-          <Button radius="md" onClick={submit}>
-            Simpan {isJasa ? 'BAST' : mixed ? 'penerimaan' : 'FPB'}
+          <Button radius="md" disabled={invalid} onClick={submit}>
+            Simpan {isJasa ? 'BAPP' : mixed ? 'penerimaan' : 'FPB'}
           </Button>
         </>
       }
     >
       <SimpleGrid cols={{ base: 1, sm: 2 }}>
-        <DateField label="Tanggal terima" size="sm" radius="md" value={date} onChange={(e) => setDate(e.currentTarget.value)} />
-        <TextInput label={isJasa ? 'No. BAST / berkas bertanda tangan' : mixed ? 'No. surat jalan / BAST' : 'No. surat jalan'} placeholder={isJasa ? 'Contoh: BAST/2026/11/007' : 'Contoh: SJ-20261104-01'} withAsterisk size="sm" radius="md" value={doNo} error={sub && err.doNo} onChange={(e) => setDoNo(e.currentTarget.value)} />
+        <TextInput label={isJasa ? 'No. BAPP' : mixed ? 'No. surat jalan / BAPP' : 'No. surat jalan'} placeholder={isJasa ? 'Contoh: BAPP/2026/11/0007' : 'Contoh: SJ-20261104-01'} withAsterisk size="sm" radius="md" value={doNo} error={sub && err.doNo} onChange={(e) => { setSub(true); setDoNo(e.currentTarget.value); }} />
+        <DateField
+          label={isJasa ? 'Tanggal BAPP' : 'Tanggal terima'}
+          withAsterisk
+          size="sm"
+          radius="md"
+          max={TODAY}
+          value={date}
+          error={sub && err.date}
+          onChange={(e) => { setSub(true); setDate(e.currentTarget.value); }}
+        />
       </SimpleGrid>
+      {bappMode ? (
+        <>
+          {/* Satu termin = satu pekerjaan: selesai atau belum, jadi dicentang, bukan diisi qty. */}
+          <Box style={tableFrame}>
+            {sched.map(({ item: i, received, lockedUntil, blockedByOrder }, idx) => {
+              const checked = picked.includes(i.id);
+              const disabled = received || !!lockedUntil || (blockedByOrder && !checked);
+              const sub2 = i.periodFrom
+                ? rangeLabel({ from: i.periodFrom, to: i.periodTo })
+                : i.unit === 'retensi'
+                  ? 'ditagih setelah masa pemeliharaan'
+                  : `${i.pct ?? 0}% dari nilai`;
+              return (
+                <Group
+                  key={i.id}
+                  justify="space-between"
+                  wrap="nowrap"
+                  px="md"
+                  py="sm"
+                  style={{ borderTop: idx ? '1px solid var(--mantine-color-gray-2)' : undefined, background: checked ? 'var(--mantine-color-primary-0)' : undefined }}
+                >
+                  <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                    <Checkbox
+                      size="sm"
+                      checked={checked}
+                      disabled={disabled}
+                      aria-label={i.desc}
+                      onChange={(e) => {
+                        const on = e.currentTarget.checked;
+                        setPicked((l) => {
+                          if (on) return [...l, i.id];
+                          // Lepas centang ini beserta termin sesudahnya: tanpa itu bisa
+                          // tersisa termin 4 tercentang sementara termin 3 tidak.
+                          const after = po.items.slice(po.items.findIndex((x) => x.id === i.id)).map((x) => x.id);
+                          return l.filter((x) => !after.includes(x));
+                        });
+                      }}
+                    />
+                    <Box style={{ minWidth: 0 }}>
+                      <Text fz="sm" fw={600} c={disabled && !received ? 'slate.5' : 'slate.9'}>{i.desc}</Text>
+                      <Group gap={6} wrap="nowrap">
+                        <Text fz={11} c="slate.6">{sub2}</Text>
+                        {lockedUntil && (
+                          <Text fz={11} c="slate.5">· bisa dicatat mulai {formatDate(lockedUntil)}</Text>
+                        )}
+                      </Group>
+                    </Box>
+                  </Group>
+                  {received ? (
+                    <Badge size="sm" radius="sm" variant="light" color="green" fw={700} tt="none">Diterima</Badge>
+                  ) : (
+                    <Text fz="sm" fw={700} c={disabled ? 'slate.5' : 'slate.9'} style={{ whiteSpace: 'nowrap' }}>{rupiah(i.qty * i.price)}</Text>
+                  )}
+                </Group>
+              );
+            })}
+          </Box>
+          <Text fz="xs" c="slate.6">
+            {sched.some((r) => r.lockedUntil)
+              ? 'Termin berkala baru bisa dicatat setelah periodenya berakhir.'
+              : 'Tidak terkunci tanggal. Boleh pilih lebih dari satu, asal berurutan.'}
+          </Text>
+          <FileField label="Unggah BAPP bertanda tangan" withAsterisk value={file} error={sub && err.file} onChange={touch(setFile)} />
+          {picked.length > 0 && (
+            <Box style={tableFrame} p="md">
+              <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mb={6}>Hasil</Text>
+              <SimpleGrid cols={{ base: 1, xs: 2 }} spacing={6}>
+                <Field label="Nilai dicatat">{rupiah(pickedValue)}</Field>
+                <Field label="Progres pesanan">
+                  {progress.periodic ? `${progress.done} dari ${progress.total} periode` : `${progress.pct}%`}
+                </Field>
+                <Field label="Sisa pesanan">{progress.remaining > 0 ? rupiah(progress.remaining) : `${rupiah(0)} · selesai`}</Field>
+                <Field label="Tanggal jurnal">
+                  {formatDate(journalDate)}
+                  <Text fz={11} c="slate.6" component="span"> · {journalDate === date ? 'tanggal BAPP' : 'akhir periode'}</Text>
+                </Field>
+              </SimpleGrid>
+            </Box>
+          )}
+        </>
+      ) : bappPlain ? (
+        <>
+          {/* Satu lingkup kerja = satu centang: diterima atau belum. Bentuknya sengaja sama
+              dengan BAPP bertermin, karena pertanyaannya memang sama. */}
+          <Box style={tableFrame}>
+            {po.items.map((i, idx) => {
+              const selesai = remainingQty(po, i.id, pb.receipts) === 0;
+              const checked = pickedWork.includes(i.id);
+              return (
+                <Group
+                  key={i.id}
+                  justify="space-between"
+                  wrap="nowrap"
+                  gap="md"
+                  px="md"
+                  py="sm"
+                  style={{
+                    borderTop: idx ? '1px solid var(--mantine-color-gray-2)' : undefined,
+                    background: checked ? 'var(--mantine-color-primary-0)' : undefined,
+                  }}
+                >
+                  <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                    <Checkbox
+                      size="sm"
+                      checked={checked}
+                      disabled={selesai}
+                      aria-label={i.desc}
+                      onChange={(e) => {
+                        setSub(true);
+                        const on = e.currentTarget.checked;
+                        setPickedWork((l) => (on ? [...l, i.id] : l.filter((x) => x !== i.id)));
+                      }}
+                    />
+                    <Box style={{ minWidth: 0 }}>
+                      <Text fz="sm" fw={600} c={selesai ? 'slate.5' : 'slate.9'}>{i.desc}</Text>
+                      <Text fz={11} c="slate.6">
+                        {i.qty} {i.unit}
+                        {i.spec ? ` · ${i.spec}` : ''}
+                      </Text>
+                    </Box>
+                  </Group>
+                  {selesai ? (
+                    <Badge size="sm" radius="sm" variant="light" color="green" fw={700} tt="none" style={{ flexShrink: 0 }}>Sudah di-BAPP</Badge>
+                  ) : (
+                    <Text fz="sm" fw={700} c="slate.9" style={{ whiteSpace: 'nowrap' }}>{rupiah(i.qty * i.price)}</Text>
+                  )}
+                </Group>
+              );
+            })}
+          </Box>
+          <Text fz="xs" c="slate.6">
+            Pekerjaan yang belum dipilih tidak ikut BAPP ini dan tetap terbuka untuk BAPP berikutnya.
+          </Text>
+          <FileField label="Unggah BAPP bertanda tangan" withAsterisk value={file} error={sub && err.file} onChange={touch(setFile)} />
+          {accepted.length > 0 && (
+            <Box style={tableFrame} p="md">
+              <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mb={6}>Hasil</Text>
+              <SimpleGrid cols={{ base: 1, xs: 2 }} spacing={6}>
+                <Field label="Diterima">{accepted.length} dari {po.items.length} pekerjaan</Field>
+                <Field label="Nilai dicatat">{rupiah(acceptedValue)}</Field>
+              </SimpleGrid>
+            </Box>
+          )}
+        </>
+      ) : (
       <Box style={tableFrame}>
         <Table verticalSpacing="xs" horizontalSpacing="sm" miw={620} styles={th}>
           <Table.Thead bg="slate.0">
@@ -561,8 +784,10 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
               const maxQty = Math.max(rem - (row.rejected || 0), 0);
               const maxRejected = Math.max(rem - (row.qty || 0), 0);
               const sisa = Math.max(rem - (row.qty || 0) - (row.rejected || 0), 0);
-              const setCell = (key, v, cap) =>
+              const setCell = (key, v, cap) => {
+                setSub(true);
                 setRows((r) => ({ ...r, [i.id]: { ...r[i.id], [key]: Math.min(Math.max(Number(v) || 0, 0), cap) } }));
+              };
               return (
                 <Table.Tr key={i.id}>
                   <Table.Td fz="sm" fw={600}>
@@ -583,211 +808,57 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
           </Table.Tbody>
         </Table>
       </Box>
+      )}
       {sub && err.qty && <Text fz="xs" c="red.7">{err.qty}</Text>}
-      <Textarea label="Catatan kondisi" placeholder="Contoh: Dus penyok, isi dalam kondisi baik" size="sm" radius="md" autosize minRows={2} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
-      <Callout>
-        Diterima dan ditolak dijumlah tidak boleh melebihi sisa pesanan. Qty ditolak tidak dihitung sebagai diterima,
-        jadi sisa PO tetap terbuka. Tidak perlu dokumen retur bila faktur belum dibuat.
-      </Callout>
+      {!bappMode && !bappPlain && total + totalRejected > 0 && (
+        <Box style={tableFrame} p="md">
+          <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mb={6}>Ringkasan</Text>
+          <SimpleGrid cols={{ base: 2, xs: 4 }} spacing={6}>
+            <Field label="Total diterima">{total}</Field>
+            <Field label="Total ditolak">
+              <Text fz="sm" fw={600} c={totalRejected ? 'red.7' : undefined} component="span">{totalRejected}</Text>
+            </Field>
+            <Field label="Baris diisi">{rowsFilled} dari {po.items.length}</Field>
+            <Field label="Sisa pesanan">
+              <Text fz="sm" fw={600} c={sisaSetelah === 0 ? 'green.8' : undefined} component="span">
+                {sisaSetelah === 0 ? 'Tidak ada · selesai' : sisaSetelah}
+              </Text>
+            </Field>
+          </SimpleGrid>
+        </Box>
+      )}
+      {!bappMode && !bappPlain && (
+        <FileField
+          label={isJasa ? 'Unggah BAPP bertanda tangan' : mixed ? 'Unggah surat jalan / BAPP (opsional)' : 'Unggah surat jalan (opsional)'}
+          withAsterisk={isJasa}
+          value={file}
+          error={sub && err.file}
+          onChange={touch(setFile)}
+        />
+      )}
+      <Textarea label={isJasa ? 'Catatan pemeriksaan' : 'Catatan kondisi'} placeholder={isJasa ? 'Contoh: Pekerjaan sesuai lingkup, tidak ada temuan' : 'Contoh: Dus penyok, isi dalam kondisi baik'} size="sm" radius="md" autosize minRows={2} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
+      {!bappMode && !bappPlain && (
+        <Callout>
+          Diterima dan ditolak dijumlah tidak boleh melebihi sisa pesanan. Qty ditolak tidak dihitung sebagai diterima,
+          jadi sisa PO tetap terbuka. Tidak perlu dokumen retur bila faktur belum dibuat.
+        </Callout>
+      )}
     </FormModal>
   );
 }
 
-// --- Faktur pembelian ----------------------------------------------------------------------------
-export function InvoiceModal({ opened, onClose, receiptIds, pb }) {
-  const receipts = receiptIds.map((id) => pb.receiptsById[id]).filter(Boolean);
-  const vendor = pb.vendorsById[receipts[0]?.vendorId];
-  const [vendorNo, setVendorNo] = useState('');
-  const [date, setDate] = useState(TODAY);
-  // Jatuh tempo mengikuti termin pesanan. Titik hitungnya ditentukan di Pengaturan:
-  // sejak penerimaan (FPB/BAST) atau sejak tanggal faktur vendor. Dulu selalu dihitung dari
-  // hari faktur diketik, sehingga "30 hari sejak barang diterima" meleset kalau fakturnya
-  // dicatat terlambat.
-  const poTerm = pb.posById[receipts[0]?.poId]?.term;
-  const termDue = dueDaysOf(poTerm);
-  const dueFrom = termMechanics(poTerm).dueFrom;
-  // Beberapa penerimaan sekaligus: dipakai yang paling akhir, karena kewajiban baru genap
-  // setelah kiriman terakhir diterima.
-  const receiptDate = receipts.map((r) => r.date).filter(Boolean).sort().at(-1) ?? TODAY;
-  const dueAnchor = (invDate) => (dueFrom === 'invoice' ? invDate : receiptDate);
-  const countDue = (invDate) => addDays(dueAnchor(invDate), termDue);
-  const [dueDate, setDueDate] = useState(() => countDue(TODAY));
-  // Jatuh tempo yang belum disentuh pengguna ikut bergerak saat tanggal faktur diubah.
-  const [dueTouched, setDueTouched] = useState(false);
-  const [pphInput, setPphInput] = useState(null);
-  const [inv, setInv] = useState('');
-  const [tax, setTax] = useState('');
-  const [sub, setSub] = useState(false);
-  const base = receipts.flatMap((r) => {
-    const po = pb.posById[r.poId];
-    return uninvoicedLines(r, pb.invoices).map((l) => ({
-      key: `${r.id}:${l.itemId}`,
-      receiptId: r.id,
-      receiptNo: r.number,
-      poId: po.id,
-      itemId: l.itemId,
-      desc: po.items.find((i) => i.id === l.itemId).desc,
-      unit: po.items.find((i) => i.id === l.itemId).unit,
-      price: po.items.find((i) => i.id === l.itemId).price,
-      ppnRate: po.items.find((i) => i.id === l.itemId).ppnRate,
-      pphRate: po.items.find((i) => i.id === l.itemId).pphRate ?? 0,
-      open: l.open,
-    }));
-  });
-  const [qtys, setQtys] = useState(() => Object.fromEntries(base.map((b) => [b.key, b.open])));
-  const lines = base.map((b) => ({ ...b, qty: qtys[b.key] ?? 0 }));
-  // PPh awal mengikuti pajak item di PO (rata-rata tertimbang bila tarifnya berbeda); masih bisa diubah.
-  const active = lines.filter((l) => l.qty > 0);
-  const baseDpp = active.reduce((n, l) => n + l.qty * l.price, 0);
-  const autoPph = baseDpp ? Math.round((active.reduce((n, l) => n + l.qty * l.price * l.pphRate, 0) / baseDpp) * 10000) / 100 : 0;
-  const pph = pphInput ?? autoPph;
-  const draft = { lines: lines.map((l) => ({ ...l })), pphPct: pph, poId: lines[0]?.poId };
-  const dpp = invDpp(draft);
-  const ppn = invPpn(draft);
-  const pphVal = Math.round((dpp * (pph || 0)) / 100);
-  const dpDeduct = invTotals({ ...draft }, { pos: pb.pos, prs: pb.prs, returns: [] }).dp;
-  const total = dpp + ppn - pphVal - dpDeduct;
-  const err = {
-    no: !vendorNo.trim() && 'No. invoice vendor wajib diisi',
-    files: (!inv || !tax) && 'Unggah invoice dan faktur pajak',
-    qty: lines.every((l) => !l.qty) && 'Isi minimal satu qty',
-  };
-  const submit = () => {
-    setSub(true);
-    if (Object.values(err).some(Boolean)) return;
-    pb.add('invoices', {
-      id: uid('fkt'),
-      number: nextNumber('FKT', pb.invoices),
-      vendorNo,
-      poId: lines[0].poId,
-      vendorId: vendor.id,
-      date,
-      dueDate,
-      lines: lines.filter((l) => l.qty > 0).map((l) => ({ receiptId: l.receiptId, poId: l.poId, itemId: l.itemId, qty: l.qty, price: l.price, ppnRate: l.ppnRate })),
-      pphPct: pph || 0,
-      files: [inv, tax],
-    });
-    toast('Faktur dibuat. Hutang usaha tercatat.');
-    onClose();
-  };
-  return (
-    <FormModal
-      opened={opened}
-      onClose={onClose}
-      size={860}
-      icon={Invoice}
-      title="Catat faktur pembelian"
-      subtitle={`${vendor?.name} · dari ${receipts.map((r) => r.number).join(', ')}`}
-      footer={
-        <>
-          <Cancel onClick={onClose} />
-          <Button radius="md" onClick={submit}>
-            Simpan faktur
-          </Button>
-        </>
-      }
-    >
-      {/* Baris pertama: identitas dan angka faktur — potongan PPh sebaris dengan tanggal jatuh tempo. */}
-      <Grid gutter="md">
-        <Grid.Col span={{ base: 12, sm: 4 }}>
-          <TextInput label="No. invoice vendor" placeholder="Contoh: INV-2026-0123" withAsterisk size="sm" radius="md" value={vendorNo} error={sub && err.no} onChange={(e) => setVendorNo(e.currentTarget.value)} />
-        </Grid.Col>
-        <Grid.Col span={{ base: 6, sm: 3 }}>
-          <DateField
-            label="Tanggal faktur"
-            size="sm"
-            radius="md"
-            value={date}
-            onChange={(e) => {
-              const v = e.currentTarget.value;
-              setDate(v);
-              if (!dueTouched && v) setDueDate(countDue(v));
-            }}
-          />
-        </Grid.Col>
-        <Grid.Col span={{ base: 6, sm: 3 }}>
-          <DateField
-            label="Jatuh tempo"
-            size="sm"
-            radius="md"
-            min={date}
-            value={dueDate}
-            description={
-              termDue > 0
-                ? `${termDue} hari sejak ${dueFromLabel(dueFrom)}${dueFrom === 'receipt' ? ` ${formatDate(receiptDate)}` : ''}`
-                : `Tanpa tempo · jatuh tempo pada tanggal ${dueFromLabel(dueFrom)}`
-            }
-            onChange={(e) => { setDueTouched(true); setDueDate(e.currentTarget.value); }}
-          />
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, sm: 2 }}>
-          <NumberField label="Potongan PPh" suffix=" %" size="sm" radius="md" min={0} max={100} decimalScale={2} value={pph} onChange={(v) => setPphInput(Number(v) || 0)} />
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, sm: 6 }}>
-          <FileField label="Invoice vendor" value={inv} onChange={setInv} />
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, sm: 6 }}>
-          <FileField label="Faktur pajak" value={tax} onChange={setTax} />
-        </Grid.Col>
-      </Grid>
-      {sub && err.files && <Text fz="xs" c="red.7">{err.files}</Text>}
-      <Box style={tableFrame}>
-        <Table verticalSpacing="xs" horizontalSpacing="sm" miw={720} styles={th}>
-          <Table.Thead bg="slate.0">
-            <Table.Tr>
-              <Table.Th>Item</Table.Th>
-              <Table.Th>Penerimaan</Table.Th>
-              <Table.Th ta="right">Belum difaktur</Table.Th>
-              <Table.Th w={120}>Qty faktur</Table.Th>
-              <Table.Th ta="right">Harga PO</Table.Th>
-              <Table.Th ta="right">Jumlah</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {lines.map((l) => (
-              <Table.Tr key={l.key}>
-                <Table.Td fz="sm" fw={600}>{l.desc}</Table.Td>
-                <Table.Td fz="xs" c="slate.7">{l.receiptNo}</Table.Td>
-                <Table.Td ta="right" fz="sm">{l.open} {l.unit}</Table.Td>
-                <Table.Td>
-                  <NumberField size="xs" radius="md" min={0} max={l.open} value={l.qty} onChange={(v) => setQtys((q) => ({ ...q, [l.key]: Math.min(Number(v) || 0, l.open) }))} />
-                </Table.Td>
-                <Table.Td ta="right" fz="sm">{rupiah(l.price)}</Table.Td>
-                <Table.Td ta="right" fz="sm" fw={600}>{rupiah(l.qty * l.price)}</Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-      </Box>
-      {sub && err.qty && <Text fz="xs" c="red.7">{err.qty}</Text>}
-      <Callout tone="warn" title="Pencocokan 3 arah">
-        Qty faktur dibatasi qty diterima (FPB/BAST) dan harga dikunci sama dengan PO.
-      </Callout>
-      <Box p="sm" bg="slate.0" style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 'var(--mantine-radius-md)' }}>
-        <SimpleGrid cols={{ base: 2, sm: 4 }}>
-          <Field label="DPP">{rupiah(dpp)}</Field>
-          <Field label={ppnLabel(lines.filter((l) => l.qty > 0))}>+{rupiah(ppn)}</Field>
-          <Field label="Potongan PPh" valueProps={{ c: 'red.7' }}>-{rupiah(pphVal)}</Field>
-          <Field label="Potongan uang muka" valueProps={{ c: 'red.7' }}>-{rupiah(dpDeduct)}</Field>
-        </SimpleGrid>
-        <Group justify="space-between" mt="sm" pt="sm" style={{ borderTop: '1px solid var(--mantine-color-gray-3)' }}>
-          <Text fz="sm" fw={700}>Hutang usaha</Text>
-          <Text fz="md" fw={700}>{rupiah(total)}</Text>
-        </Group>
-      </Box>
-    </FormModal>
-  );
-}
+// --- Pembayaran ke vendor ----------------------------------------------------------------------
+const SOURCE_ACCOUNTS = ['BCA 288-123-9001 · Kas Operasional', 'Mandiri 101-00-5577 · Kas Proyek', 'Kas kecil'];
 
-// --- Payment Request (DP/CBD atau pelunasan) ---------------------------------------------------------
-// Strip "Dibayarkan ke": dipakai PR DP maupun PR pelunasan supaya rekening tujuan
-// selalu terbaca sebagai tiga kolom pendek, bukan satu baris panjang yang terpotong.
-function PayeeStrip({ vendor }) {
+// Strip "Dibayarkan ke": dipakai PV maupun modal pembayaran.
+// "Atas nama" menempel di bawah nomor rekening — itu satu kesatuan saat mengetik transfer,
+// bukan keterangan terpisah. Subtotal jadi kaki kotaknya, bukan baris lepas di bawahnya.
+function PayeeStrip({ vendor, subtotalLabel, subtotal }) {
   const b = bankOf(vendor);
   const cells = [
-    ['Vendor', vendor?.name],
-    ['Bank', b?.bank],
-    ['Nomor rekening', b?.number],
+    ['Vendor', vendor?.name, null],
+    ['Bank', b?.bank, b?.branch],
+    ['Nomor rekening', b?.number, b?.holder && b.holder !== vendor?.name ? `a.n. ${b.holder}` : null],
   ];
   return (
     <Box style={tableFrame}>
@@ -795,221 +866,171 @@ function PayeeStrip({ vendor }) {
         <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.4 }}>Dibayarkan ke</Text>
       </Box>
       <SimpleGrid cols={{ base: 1, sm: 3 }} spacing={0}>
-        {cells.map(([k, v], i) => (
+        {cells.map(([k, v, sub], i) => (
           <Box key={k} px="md" py={9} style={{ minWidth: 0, borderLeft: i ? '1px solid var(--mantine-color-gray-2)' : undefined }}>
             <Text fz={11} c="slate.6">{k}</Text>
-            <Text fz="sm" fw={700} c="slate.9" truncate>{v || '—'}</Text>
+            <Text fz="sm" fw={700} c="slate.9" truncate>{v || '\u2014'}</Text>
+            {sub && <Text fz={11} c="slate.6" truncate>{sub}</Text>}
           </Box>
         ))}
       </SimpleGrid>
-      {b?.holder && b.holder !== vendor?.name && (
-        <Box px="md" py={8} style={{ borderTop: '1px solid var(--mantine-color-gray-2)' }}>
-          <Text fz={11} c="slate.6">Atas nama <Text span fz={11} fw={700} c="slate.9">{b.holder}</Text></Text>
-        </Box>
+      {subtotal != null && (
+        <Group
+          justify="space-between"
+          px="md"
+          py={9}
+          bg="slate.0"
+          style={{ borderTop: '1px solid var(--mantine-color-gray-2)' }}
+        >
+          <Text fz="xs" c="slate.6">{subtotalLabel}</Text>
+          <Text fz="sm" fw={700} c="slate.9">{rupiah(subtotal)}</Text>
+        </Group>
       )}
     </Box>
   );
 }
 
-export function PrModal({ opened, onClose, kind, po, invoiceIds, pb }) {
-  const isDp = kind === 'dp';
-  const invs = (invoiceIds ?? []).map((id) => pb.invoicesById[id]).filter(Boolean);
-  const totals = Object.fromEntries(invs.map((i) => [i.id, invTotals(i, pb.calc)]));
-  const vendor = pb.vendorsById[isDp ? po.vendorId : invs[0]?.vendorId];
+// --- Terbitkan Payment Voucher dari PR yang sudah disetujui ------------------------------------
+// PV adalah perintah bayar: terbit lebih dulu, baru uangnya keluar. Memisahkan keduanya membuat
+// "siapa memerintahkan" dan "siapa mentransfer" jadi dua jejak yang berbeda.
+export function VoucherModal({ opened, onClose, pr, pb }) {
+  // Satu PR boleh mencakup faktur dari beberapa vendor, tapi satu transfer hanya bisa ke satu
+  // rekening — jadi PV diterbitkan per vendor, masing-masing sebesar bagian vendor itu.
+  const vendorIds = pr.vendorIds?.length ? pr.vendorIds : [pr.vendorId];
+  const vendors = vendorIds.map((id) => pb.vendorsById[id]).filter(Boolean);
+  const bagian = (vid) => (vendorIds.length === 1
+    ? pr.amount
+    : (pr.invoiceIds ?? [])
+      .map((id) => pb.invoicesById[id])
+      .filter((i) => i?.vendorId === vid)
+      .reduce((n, i) => n + (pr.alloc?.[i.id] ?? 0), 0));
+  const vendor = vendors[0];
+  const bank = bankOf(vendor);
   const [date, setDate] = useState(TODAY);
-  const [ref, setRef] = useState('');
+  const [source, setSource] = useState(SOURCE_ACCOUNTS[0]);
   const [note, setNote] = useState('');
-  const [dpAmount, setDpAmount] = useState(isDp ? poDpAmount(po) : 0);
-  const [alloc, setAlloc] = useState(() => Object.fromEntries(invs.map((i) => [i.id, totals[i.id].free])));
   const [sub, setSub] = useState(false);
-  const amount = isDp ? dpAmount : invs.reduce((n, i) => n + (alloc[i.id] || 0), 0);
-  const totalFree = invs.reduce((n, i) => n + totals[i.id].free, 0);
-  // Nominal DP diubah manual dari nilai uang muka pada PO: ditandai supaya tidak lewat tanpa disadari.
-  const offBase = isDp && dpAmount !== poDpAmount(po);
   const err = {
-    amount: amount <= 0 && 'Nominal wajib diisi',
-    ref: isDp && !ref && 'Unggah invoice proforma',
+    date: (!date && 'Tanggal PV wajib diisi') || (date > TODAY && 'Tidak boleh setelah hari ini'),
+    bank: !bank?.number && 'Rekening vendor belum diisi di data kontak',
   };
+  const invalid = Object.values(err).some(Boolean);
   const submit = () => {
     setSub(true);
-    if (err.amount || err.ref) return;
-    pb.add('prs', {
-      id: uid('pr'),
-      number: nextNumber('PR', pb.prs),
-      kind,
-      vendorId: vendor.id,
-      poId: isDp ? po.id : invs[0].poId,
-      invoiceIds: isDp ? [] : invs.map((i) => i.id),
-      alloc: isDp ? undefined : alloc,
-      amount,
-      date,
-      status: 'diajukan',
-      // Dicatat untuk pemisahan tugas: pembuat PR tidak boleh menyetujui PR-nya sendiri.
-      createdBy: personLabel(pb.role),
-      note,
-      ref,
+    if (invalid) return;
+    let list = pb.vouchers;
+    const dibuat = [];
+    vendors.forEach((v) => {
+      const doc = {
+        id: uid('pv'),
+        number: nextNumber('PV', list),
+        prIds: [pr.id],
+        vendorId: v.id,
+        date,
+        amount: bagian(v.id),
+        source,
+        note,
+        status: 'draf',
+        issuedBy: personLabel(pb.role),
+        // Diisi saat pembayaran dicatat, bukan sekarang.
+        payRef: '',
+        proofs: [],
+      };
+      list = [doc, ...list];
+      pb.add('vouchers', doc);
+      dibuat.push(doc);
     });
-    toast('Payment Request diajukan ke approver.');
+    pb.update('prs', pr.id, (d) => ({ ...d, status: 'diproses', voucherId: dibuat[0].id, voucherIds: dibuat.map((x) => x.id) }));
+    toast(dibuat.length > 1
+      ? `${dibuat.length} Payment Voucher terbit, satu per vendor.`
+      : 'Payment Voucher terbit. Tinggal dicatat pembayarannya.');
     onClose();
   };
   return (
     <FormModal
       opened={opened}
       onClose={onClose}
-      size={640}
-      icon={Wallet}
-      title={isDp ? `Payment Request ${advanceLabel(po.term)}` : 'Payment Request pelunasan'}
-      subtitle={isDp ? `${po.number} · ${vendor?.name}` : `${vendor?.name} · ${invs.map((i) => i.number).join(', ')}`}
+      size={620}
+      icon={CurrencyCircleDollar}
+      title={vendors.length > 1 ? `Terbitkan ${vendors.length} Payment Voucher` : 'Terbitkan Payment Voucher'}
+      subtitle={`${pr.number} · ${vendors.map((v) => v.name).join(', ')}`}
       footer={
         <>
           <Cancel onClick={onClose} />
-          <Button radius="md" onClick={submit}>Ajukan</Button>
+          <Button radius="md" disabled={invalid} onClick={submit}>Terbitkan {vendors.length > 1 ? `${vendors.length} PV` : 'PV'}</Button>
         </>
       }
     >
-      {isDp ? (
-        <>
-          {/* Urutan sama dengan PR pelunasan: rekening tujuan dulu, lalu isian, lalu total. */}
-          <PayeeStrip vendor={vendor} />
+      <Group
+        justify="space-between"
+        px="md"
+        py="sm"
+        bg="primary.0"
+        style={{ border: '1px solid var(--mantine-color-primary-1)', borderRadius: 'var(--mantine-radius-md)' }}
+      >
+        <Box>
+          <Text fz={11} fw={600} c="primary.9">Nominal diperintahkan</Text>
+          <Text fz={11} c="slate.6">{pr.kind === 'dp' ? 'Uang muka / CBD' : 'Pelunasan faktur'}</Text>
+        </Box>
+        <Text fz={22} fw={700} c="primary.9">{rupiah(pr.amount)}</Text>
+      </Group>
 
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-            <DateField label="Tanggal pengajuan" size="sm" radius="md" value={date} onChange={(e) => setDate(e.currentTarget.value)} />
-            <Box>
-              <NumberField label="Nominal diajukan" size="sm" radius="md" money prefix="Rp " value={dpAmount} error={sub && err.amount} onChange={(v) => setDpAmount(Number(v) || 0)} />
-              {!sub || !err.amount ? (
-                <Group gap={6} mt={4} wrap="nowrap">
-                  <Text fz={11} c={offBase ? 'orange.8' : 'slate.6'} style={{ minWidth: 0 }}>
-                    {advancePct(po.term) >= 100 ? 'Bayar penuh di muka' : `Uang muka ${advancePct(po.term)}%`} = {rupiah(poDpAmount(po))}
-                  </Text>
-                  {offBase && (
-                    <Button size="compact-xs" radius="md" variant="subtle" onClick={() => setDpAmount(poDpAmount(po))}>
-                      Pakai nilai ini
-                    </Button>
-                  )}
-                </Group>
-              ) : null}
-            </Box>
-          </SimpleGrid>
+      {vendors.map((v) => (
+        <PayeeStrip key={v.id} vendor={v} subtotalLabel={vendors.length > 1 ? 'PV untuk vendor ini' : 'Nilai PV'} subtotal={bagian(v.id)} />
+      ))}
 
-          <FileField label="Invoice proforma" value={ref} error={sub && err.ref} onChange={setRef} />
+      <SimpleGrid cols={{ base: 1, sm: 2 }}>
+        <DateField label="Tanggal PV" withAsterisk size="sm" radius="md" max={TODAY} value={date} error={sub && err.date} onChange={(e) => { setSub(true); setDate(e.currentTarget.value); }} />
+        <Select label="Dibayar dari" size="sm" radius="md" data={SOURCE_ACCOUNTS} value={source} onChange={(v) => setSource(v ?? SOURCE_ACCOUNTS[0])} allowDeselect={false} />
+      </SimpleGrid>
 
-          <Group
-            justify="space-between"
-            px="md"
-            py="sm"
-            bg="primary.0"
-            style={{ border: '1px solid var(--mantine-color-primary-1)', borderRadius: 'var(--mantine-radius-md)' }}
-          >
-            <Box>
-              <Text fz={11} fw={600} c="primary.9">Total diajukan</Text>
-              <Text fz={11} c="slate.6">{termText(po.term)} · dari total {poDocLabel(po)} {rupiah(poTotal(po))}</Text>
-            </Box>
-            <Text fz={22} fw={700} c="primary.9">{rupiah(amount)}</Text>
-          </Group>
-        </>
-      ) : (
-        <>
-          {/* Rekening tujuan dulu, baru alokasi per faktur, lalu total — urutan sama dengan modal pembayaran. */}
-          <PayeeStrip vendor={vendor} />
+      <Textarea label="Catatan" placeholder="Opsional. Contoh: dibayar setelah konfirmasi vendor." size="sm" radius="md" autosize minRows={2} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
 
-          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-            <DateField label="Tanggal pengajuan" size="sm" radius="md" value={date} onChange={(e) => setDate(e.currentTarget.value)} />
-            <Field label="Faktur dibayar">{`${invs.length} faktur · sisa hutang ${rupiah(totalFree)}`}</Field>
-          </SimpleGrid>
-
-          <Box>
-            <Group justify="space-between" mb={6}>
-              <Text fz="sm" fw={600} c="slate.9">Alokasi pembayaran</Text>
-              <Group gap={4}>
-                <Button size="compact-xs" radius="md" variant="subtle" onClick={() => setAlloc(Object.fromEntries(invs.map((i) => [i.id, totals[i.id].free])))}>Bayar penuh</Button>
-                <Button size="compact-xs" radius="md" variant="subtle" color="slate" onClick={() => setAlloc(Object.fromEntries(invs.map((i) => [i.id, 0])))}>Kosongkan</Button>
-              </Group>
-            </Group>
-            <Box style={tableFrame}>
-              <Table verticalSpacing="xs" horizontalSpacing="sm" styles={th}>
-                <Table.Thead bg="slate.0">
-                  <Table.Tr>
-                    <Table.Th>Faktur</Table.Th>
-                    <Table.Th ta="right">Sisa hutang</Table.Th>
-                    <Table.Th w={170} ta="right">Dibayar sekarang</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {invs.map((i) => {
-                    const late = i.dueDate < TODAY;
-                    return (
-                      <Table.Tr key={i.id}>
-                        <Table.Td fz="sm" fw={600}>
-                          {i.number}
-                          <Text fz={11} c={late ? 'red.7' : 'slate.6'} fw={late ? 600 : 400}>
-                            {i.vendorNo ? `${i.vendorNo} · ` : ''}jatuh tempo {formatDate(i.dueDate)}{late ? ' · telat' : ''}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td ta="right" fz="sm">{rupiah(totals[i.id].free)}</Table.Td>
-                        <Table.Td>
-                          <NumberField size="xs" radius="md" money max={totals[i.id].free} clampBehavior="strict" prefix="Rp " value={alloc[i.id]} onChange={(v) => setAlloc((a) => ({ ...a, [i.id]: Math.min(Number(v) || 0, totals[i.id].free) }))} />
-                        </Table.Td>
-                      </Table.Tr>
-                    );
-                  })}
-                </Table.Tbody>
-              </Table>
-            </Box>
-          </Box>
-
-          <Group
-            justify="space-between"
-            px="md"
-            py="sm"
-            bg="primary.0"
-            style={{ border: '1px solid var(--mantine-color-primary-1)', borderRadius: 'var(--mantine-radius-md)' }}
-          >
-            <Box>
-              <Text fz={11} fw={600} c="primary.9">Total diajukan</Text>
-              <Text fz={11} c="slate.6">Sisa hutang setelah PR ini {rupiah(Math.max(totalFree - amount, 0))}</Text>
-            </Box>
-            <Text fz={22} fw={700} c="primary.9">{rupiah(amount)}</Text>
-          </Group>
-          {sub && err.amount && <Text fz="xs" c="red.7">{err.amount}</Text>}
-        </>
-      )}
-      <Textarea label="Catatan" placeholder="Contoh: Mohon diproses sebelum akhir pekan" size="sm" radius="md" autosize minRows={2} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
+      {sub && err.bank && <Text fz="xs" c="red.7">{err.bank}</Text>}
+      <Callout>
+        PV ini baru perintah bayar — kas belum berkurang. Uang keluar dicatat terpisah pada PV-nya,
+        dan jurnal kas keluarnya terposting saat itu juga.
+      </Callout>
     </FormModal>
   );
 }
 
-// --- Finance membayar ----------------------------------------------------------------------------
-// Rekening sumber pembayaran; di produksi diambil dari daftar akun Kas & Bank.
-const SOURCE_ACCOUNTS = ['BCA 288-123-9001 · Kas Operasional', 'Mandiri 101-00-5577 · Kas Proyek', 'Kas kecil'];
-export function PayModal({ opened, onClose, pr, pb }) {
-  const vendor = pb.vendorsById[pr.vendorId];
+// --- Catat pembayaran atas Payment Voucher -----------------------------------------------------
+export function PayModal({ opened, onClose, voucher: v, pb }) {
+  const pr = pb.prsById[(v.prIds ?? [])[0]];
+  const vendor = pb.vendorsById[v.vendorId];
   const bank = bankOf(vendor);
-  const [proofs, setProofs] = useState(() => (pr.proof ? [pr.proof] : []));
-  const [date, setDate] = useState(TODAY);
-  const [ref, setRef] = useState('');
+  const [proofs, setProofs] = useState(() => proofFiles(v));
+  const [date, setDate] = useState(v.date || TODAY);
+  const [ref, setRef] = useState(v.payRef ?? '');
   const [note, setNote] = useState('');
-  const [source, setSource] = useState(SOURCE_ACCOUNTS[0]);
   const [sub, setSub] = useState(false);
-  // Pembayaran menerbitkan Payment Voucher (PV); Payment Request-nya ditandai dibayar dan ditautkan.
+  const err = {
+    date: (!date && 'Tanggal bayar wajib diisi')
+      || (date > TODAY && 'Tidak boleh setelah hari ini')
+      || (date < v.date && `Tidak boleh sebelum tanggal PV ${formatDate(v.date)}`),
+    ref: !ref.trim() && 'No. referensi transfer wajib diisi',
+    proofs: !proofs.length && 'Bukti transfer wajib diunggah',
+  };
+  const invalid = Object.values(err).some(Boolean);
   const pay = () => {
     setSub(true);
-    if (!proofs.length) return;
-    const id = uid('pv');
-    pb.add('vouchers', {
-      id,
-      number: nextNumber('PV', pb.vouchers),
-      prIds: [pr.id],
-      vendorId: pr.vendorId,
-      date,
-      amount: pr.amount,
-      source,
+    if (invalid) return;
+    pb.update('vouchers', v.id, (d) => ({
+      ...d,
+      status: 'dibayar',
+      paidAt: date,
       payRef: ref,
       proofs,
-      note,
-      paidBy: personLabel('kasir'),
-    });
-    pb.update('prs', pr.id, (d) => ({ ...d, status: 'dibayar', paidAt: date, voucherId: id }));
-    toast('Pembayaran dicatat. Payment Voucher diterbitkan.');
+      paidBy: personLabel(pb.role),
+      note: note || d.note,
+      // Jurnal kas keluar terposting bersamaan: uang keluar dan pencatatannya satu peristiwa,
+      // memisahkannya hanya menyisakan pekerjaan yang gampang terlupa.
+      journalPostedAt: date,
+      journalBy: personLabel(pb.role),
+    }));
+    if (pr) pb.update('prs', pr.id, (d) => ({ ...d, status: 'dibayar', paidAt: date }));
+    toast('Pembayaran dicatat dan jurnal kas keluar diposting.');
     onClose();
   };
   const rowStyle = (i) => ({ borderTop: i ? '1px solid var(--mantine-color-gray-2)' : undefined });
@@ -1019,12 +1040,12 @@ export function PayModal({ opened, onClose, pr, pb }) {
       onClose={onClose}
       size={620}
       icon={CurrencyCircleDollar}
-      title="Bayar Payment Request"
-      subtitle={`${pr.number} · ${vendor?.name}`}
+      title="Catat pembayaran"
+      subtitle={`${v.number} · ${vendor?.name}`}
       footer={
         <>
           <Cancel onClick={onClose} />
-          <Button radius="md" onClick={pay}>Bayar &amp; terbitkan PV</Button>
+          <Button radius="md" disabled={invalid} onClick={pay}>Simpan pembayaran</Button>
         </>
       }
     >
@@ -1038,9 +1059,9 @@ export function PayModal({ opened, onClose, pr, pb }) {
       >
         <Box>
           <Text fz={11} fw={600} c="primary.9">Nominal dibayar</Text>
-          <Text fz={11} c="slate.6">{pr.kind === 'dp' ? 'Uang muka / CBD' : 'Pelunasan faktur'}</Text>
+          <Text fz={11} c="slate.6">{pr?.kind === 'dp' ? 'Uang muka / CBD' : 'Pelunasan faktur'}</Text>
         </Box>
-        <Text fz={22} fw={700} c="primary.9">{rupiah(pr.amount)}</Text>
+        <Text fz={22} fw={700} c="primary.9">{rupiah(v.amount)}</Text>
       </Group>
 
       <Box style={tableFrame}>
@@ -1052,12 +1073,12 @@ export function PayModal({ opened, onClose, pr, pb }) {
             ['Nama bank', bank.branch ? `${bank.bank} · ${bank.branch}` : bank.bank],
             ['Nomor rekening', bank.number],
             ['Atas nama', bank.holder],
-          ].map(([k, v], i) => (
+          ].map(([k, val], i) => (
             <Group key={k} justify="space-between" wrap="nowrap" px="md" py={9} gap="md" style={rowStyle(i)}>
               <Text fz="xs" c="slate.6">{k}</Text>
               <Group gap={6} wrap="nowrap">
-                <Text fz="sm" fw={700} c="slate.9">{v || '—'}</Text>
-                {k === 'Nomor rekening' && v && <CopyIcon value={v} size={14} />}
+                <Text fz="sm" fw={700} c="slate.9">{val || '—'}</Text>
+                {k === 'Nomor rekening' && val && <CopyIcon value={val} size={14} />}
               </Group>
             </Group>
           ))
@@ -1067,17 +1088,17 @@ export function PayModal({ opened, onClose, pr, pb }) {
       </Box>
 
       <SimpleGrid cols={{ base: 1, sm: 2 }}>
-        <DateField label="Tanggal bayar" size="sm" radius="md" value={date} onChange={(e) => setDate(e.currentTarget.value)} />
-        <TextInput label="No. referensi transfer" placeholder="Contoh: TRF-20261104-0098" size="sm" radius="md" value={ref} onChange={(e) => setRef(e.currentTarget.value)} />
+        <DateField label="Tanggal bayar" withAsterisk size="sm" radius="md" max={TODAY} min={v.date} value={date} error={sub && err.date} onChange={(e) => { setSub(true); setDate(e.currentTarget.value); }} />
+        <TextInput label="No. referensi transfer" withAsterisk placeholder="Contoh: TRF-20261104-0098" size="sm" radius="md" value={ref} error={sub && err.ref} onChange={(e) => { setSub(true); setRef(e.currentTarget.value); }} />
       </SimpleGrid>
-      <Select label="Dibayar dari" size="sm" radius="md" data={SOURCE_ACCOUNTS} value={source} onChange={(v) => setSource(v ?? SOURCE_ACCOUNTS[0])} allowDeselect={false} />
 
       <DropField
         label="Bukti transfer"
+        withAsterisk
         multiple
         value={proofs}
-        onChange={setProofs}
-        error={sub && !proofs.length && 'Bukti transfer wajib diunggah'}
+        onChange={(v2) => { setSub(true); setProofs(v2); }}
+        error={sub && err.proofs}
       />
 
       <Textarea label="Catatan pembayaran" placeholder="Opsional. Contoh: transfer dipecah dua kali karena limit harian." size="sm" radius="md" autosize minRows={2} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
@@ -1085,7 +1106,6 @@ export function PayModal({ opened, onClose, pr, pb }) {
   );
 }
 
-// --- Retur pembelian ------------------------------------------------------------------------------
 export function ReturnModal({ opened, onClose, invoice, pb }) {
   const po = pb.posById[invoice.poId];
   const [date, setDate] = useState(TODAY);
@@ -1189,7 +1209,7 @@ export function ReturnModal({ opened, onClose, invoice, pb }) {
         <Text fz="sm" fw={700}>Nilai retur (termasuk PPN)</Text>
         <Text fz="md" fw={700}>{rupiah(Math.round(picked.reduce((n, r) => n + qtys[r.key] * r.price * (1 + r.rate), 0)))}</Text>
       </Group>
-      <Callout>Retur hanya untuk barang. Untuk jasa, koreksi lewat revisi BAST atau potongan di faktur.</Callout>
+      <Callout>Retur hanya untuk barang. Untuk jasa, koreksi lewat revisi BAPP atau potongan di faktur.</Callout>
     </FormModal>
   );
 }
@@ -1557,7 +1577,7 @@ export function DetailModal({ opened, onClose, kind, doc, pb }) {
   const po = pb.posById[doc.poId];
   const vendor = pb.vendorsById[doc.vendorId];
   const itemOf = (id) => po?.items.find((i) => i.id === id);
-  const titles = { receipts: doc.kind === 'jasa' ? 'Detail BAST' : 'Detail penerimaan barang', invoices: 'Detail faktur pembelian', prs: 'Detail Payment Request', returns: 'Detail retur pembelian' };
+  const titles = { receipts: doc.kind === 'jasa' ? 'Detail BAPP' : 'Detail penerimaan barang (FPB)', invoices: 'Detail faktur pembelian', prs: 'Detail Payment Request', returns: 'Detail retur pembelian' };
   const showLines = kind !== 'prs';
   const t = kind === 'invoices' ? invTotals(doc, pb.calc) : null;
   return (
@@ -1566,7 +1586,7 @@ export function DetailModal({ opened, onClose, kind, doc, pb }) {
         <Field label="Vendor">{vendor?.name}</Field>
         <Field label="Tanggal">{formatDate(doc.date)}</Field>
         {po && <Field label={poDocLabel(po)}>{po.number}</Field>}
-        {doc.doNumber && <Field label="Surat jalan / BAST">{doc.doNumber}</Field>}
+        {doc.doNumber && <Field label="Surat jalan / BAPP">{doc.doNumber}</Field>}
         {doc.vendorNo && <Field label="No. invoice vendor" placeholder="Contoh: INV-2026-0123">{doc.vendorNo}</Field>}
         {doc.dueDate && <Field label="Jatuh tempo">{formatDate(doc.dueDate)}</Field>}
         {doc.reason && <Field label="Alasan">{doc.reason}</Field>}

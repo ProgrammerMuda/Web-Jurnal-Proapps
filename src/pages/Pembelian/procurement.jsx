@@ -13,7 +13,7 @@ import {
   Textarea,
   ThemeIcon,
 } from '@mantine/core';
-import { blockedBySoD, canApprove, canCreate } from './permissions.js';
+import { blockedBySoD, approvalState, isApproverTurn, canCreate } from './permissions.js';
 import { Check, Eye, ListChecks, PencilSimple, Plus, Scales, Storefront, Trash, Warning } from '@/components/Icon.jsx';
 import NumberField from '@/components/NumberField.jsx';
 import { Callout, RowMenu, Section } from './components.jsx';
@@ -431,7 +431,8 @@ export function ApprovalBar({ st, role, ready, onSubmit, onApprove, onReject, la
   // Setelah disetujui tidak ada alert lagi: kabar sukses ditampilkan lewat modal saat tombol Setujui ditekan.
   if (st === 'disetujui') return null;
   if (st === 'diajukan') {
-    if (!canApprove(role, 'procurement')) return <Hint role="building_manager" />;
+    const ap = approvalState(fppbj?.procurement, 'procurement');
+    if (!isApproverTurn(role, fppbj?.procurement, 'procurement')) return <Hint role={ap.next ?? 'cfo'} />;
     // Pemisahan tugas 2.4: pembuat FPPBJ tidak boleh menyetujui pengadaannya sendiri.
     if (blockedBySoD(role, fppbj)) {
       return (
@@ -444,7 +445,7 @@ export function ApprovalBar({ st, role, ready, onSubmit, onApprove, onReject, la
     return (
       <Group justify="flex-end">
         <Button radius="md" color="red" variant="light" onClick={onReject}>Tolak</Button>
-        <Button radius="md" leftSection={<Check size={16} />} onClick={onApprove}>Setujui</Button>
+        <Button radius="md" leftSection={<Check size={16} />} onClick={onApprove}>Setujui ({ap.done.length + 1}/{ap.total})</Button>
       </Group>
     );
   }

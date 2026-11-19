@@ -132,3 +132,13 @@
   background-color: var(--mantine-color-gray-2) !important;
   color: var(--mantine-color-gray-6) !important;
 }
+
+/* Tombol nonaktif: abu-abu muda dengan teks abu-abu, bukan warna utama yang diredupkan.
+   Dipakai saat masih ada isian wajib yang kosong, supaya keadaan "belum bisa disimpan"
+   terbaca dari tombolnya sendiri, bukan baru ketahuan setelah diklik. */
+.mantine-Button-root:disabled,
+.mantine-Button-root[data-disabled] {
+  background-color: var(--mantine-color-slate-1);
+  color: var(--mantine-color-slate-5);
+  border: 1px solid var(--mantine-color-slate-2);
+}

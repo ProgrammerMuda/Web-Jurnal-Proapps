@@ -6,13 +6,14 @@ import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, 
 import PurchaseFlow from './PurchaseFlow.jsx';
 import { ReasonModal, SendPoModal } from './Dialogs.jsx';
 import { personLabel, TODAY } from './data.js';
-import { canApprove, canCreate, hidesPrices, prBlockedBySoD, receiptDoc } from './permissions.js';
+import { approvalState, isApproverTurn, signApproval, canCreate, hidesPrices, prBlockedBySoD, receiptDoc } from './permissions.js';
 import {
   formatDate,
   INV_STATUS,
   invStatus,
   invTotals,
   invoicedQty,
+  invoicedQtyOfPo,
   PO_STATUS,
   canReturn as canReturnInv,
   advancePct,
@@ -25,6 +26,7 @@ import {
   poStatus,
   termText,
   poSubtotal,
+  scheduleCount,
   poPpn,
   ppnLabel,
   poTotal,
@@ -33,7 +35,9 @@ import {
   receiptsOf,
   remainingQty,
   rupiah,
+  poHasReceipt,
   uninvoicedLines,
+  uninvoicedPoLines,
 } from './utils.js';
 import { downloadPo } from './poPdf.js';
 import { toast } from './usePb.js';
@@ -44,20 +48,34 @@ const th = { th: { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 600, col
 export function PrActions({ pr, pb, openDialog }) {
   const role = pb.role;
   if (pr.status === 'diajukan') {
-    // Approval PR ada di Finance Manager (spesifikasi 2.2), bukan approver pengadaan.
-    if (prBlockedBySoD(role, pr)) return <RoleChip role="finance_manager" />;
-    return canApprove(role, 'pr') ? (
+    // Approval PR berjenjang dua: Chief Finance lalu Building Manager.
+    const ap = approvalState(pr, 'pr');
+    if (prBlockedBySoD(role, pr)) return <RoleChip role={ap.next ?? 'cfo'} />;
+    return isApproverTurn(role, pr, 'pr') ? (
       <Group gap={6} wrap="nowrap">
         <Button size="compact-xs" radius="md" color="red" variant="light" onClick={() => openDialog({ type: 'pr-reject', prId: pr.id })}>Tolak</Button>
-        <Button size="compact-xs" radius="md" leftSection={<Check size={12} />} onClick={() => { pb.update('prs', pr.id, (d) => ({ ...d, status: 'disetujui' })); toast('Payment Request disetujui.'); }}>Setujui</Button>
+        <Button
+          size="compact-xs"
+          radius="md"
+          leftSection={<Check size={12} />}
+          onClick={() => {
+            pb.update('prs', pr.id, (d) => {
+              const { doc, complete } = signApproval(d, 'pr', role);
+              return complete ? { ...doc, status: 'disetujui', approvedAt: TODAY } : doc;
+            });
+            toast('Approval dicatat.');
+          }}
+        >
+          Setujui ({ap.done.length + 1}/{ap.total})
+        </Button>
       </Group>
     ) : (
-      <RoleChip role="finance_manager" />
+      <RoleChip role={ap.next ?? 'cfo'} />
     );
   }
   if (pr.status === 'disetujui') {
     return canCreate(role, 'pv') ? (
-      <Button size="compact-xs" radius="md" onClick={() => openDialog({ type: 'pay', prId: pr.id })}>Bayar</Button>
+      <Button size="compact-xs" radius="md" onClick={() => openDialog({ type: 'pv', prId: pr.id })}>Terbitkan PV</Button>
     ) : (
       <RoleChip role="kasir" />
     );
@@ -83,7 +101,11 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const hasDp = advancePct(po.term) > 0;
   const dpPr = prs.find((p) => p.kind === 'dp' && p.status !== 'ditolak');
   const anyRemaining = po.items.some((i) => remainingQty(po, i.id, pb.receipts) > 0);
-  const openLines = receipts.flatMap((r) => uninvoicedLines(r, pb.invoices));
+  // Pesanan tanpa serah terima tidak pernah menghasilkan FPB/BAPP; fakturnya langsung dari sini.
+  const pakaiTerima = poHasReceipt(po);
+  const openLines = pakaiTerima
+    ? receipts.flatMap((r) => uninvoicedLines(r, pb.invoices))
+    : uninvoicedPoLines(po, pb.invoices);
   // Batalkan / tutup pesanan hanya selama belum ada penerimaan yang dicatat.
   const closed = !!po.closedAs;
   const canClose = !closed && receipts.length === 0 && canCreate(role, 'po');
@@ -125,7 +147,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                 <CopyIcon value={po.number} size={16} />
                 <StatusPill map={PO_STATUS} status={status} />
               </Group>
-              <Text fz="sm" c="slate.6">{vendor?.name}{fppbj && <> · dari <DocNumber onClick={() => go({ name: 'fppbj', id: fppbj.id })}>{fppbj.number}</DocNumber></>}</Text>
+              <Text fz="sm" c="slate.6">{formatDate(po.date)}</Text>
               {po.note && <Text fz={11} c="teal.8" fw={600}>{po.note}</Text>}
             </Box>
           </Group>
@@ -143,13 +165,20 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               <Button radius="md" leftSection={<PaperPlaneTilt size={16} />} onClick={() => setSendOpen(true)}>Kirim ke vendor</Button>
             ) : <RoleChip role="accounting" />)}
             {!closed && po.sent && hasDp && !dpPr && canCreate(role, 'pr') && (
-              <Button radius="md" variant="light" onClick={() => openDialog({ type: 'pr', kind: 'dp', poId: po.id })}>Buat Payment Request {advanceLabel(po.term)}</Button>
+              <Button radius="md" variant="light" onClick={() => go({ name: 'pr-new', poId: po.id })}>Buat Payment Request {advanceLabel(po.term)}</Button>
             )}
-            {!closed && po.sent && anyRemaining && canCreate(role, receiptDoc(isJasa)) && (
-              <Button radius="md" onClick={() => openDialog({ type: 'receipt', poId: po.id })}>{poAllJasa(po) ? 'Catat BAST' : 'Catat penerimaan'}</Button>
+            {!closed && po.sent && pakaiTerima && anyRemaining && canCreate(role, receiptDoc(isJasa)) && (
+              <Button radius="md" onClick={() => openDialog({ type: 'receipt', poId: po.id })}>{poAllJasa(po) ? 'Catat BAPP' : 'Catat penerimaan'}</Button>
             )}
             {openLines.length > 0 && canCreate(role, 'invoice') && (
-              <Button radius="md" onClick={() => openDialog({ type: 'invoice', receiptIds: receipts.filter((r) => uninvoicedLines(r, pb.invoices).length).map((r) => r.id) })}>Catat faktur</Button>
+              <Button
+                radius="md"
+                onClick={() => (pakaiTerima
+                  ? go({ name: 'invoice-new', receiptIds: receipts.filter((r) => uninvoicedLines(r, pb.invoices).length).map((r) => r.id) })
+                  : go({ name: 'invoice-new', poId: po.id }))}
+              >
+                Catat faktur
+              </Button>
             )}
             {canClose && (
               <>
@@ -202,30 +231,35 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
           <Stack gap="lg">
             <Card withBorder radius="lg" padding={0} bg="white">
               <Box px="lg" py="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
-                <CardHead icon={Info} desc={isJasa ? 'Vendor, tanggal, dan termin bayar' : 'Vendor, tanggal, gudang, dan termin bayar'}>Informasi {label}</CardHead>
+                <CardHead icon={Info} desc={isJasa ? 'Vendor, target selesai, jadwal tagihan, dan termin bayar' : 'Vendor, perkiraan tiba, gudang, dan termin bayar'}>Informasi {label}</CardHead>
               </Box>
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={0}>
                 {[
                   ['Vendor', vendor?.name],
-                  [`Tanggal ${label}`, formatDate(po.date)],
                   // SPK tidak mengirim barang ke gudang: istilahnya target selesai, bukan perkiraan tiba.
                   [isJasa ? 'Target selesai' : 'Perkiraan tiba', formatDate(po.expectedAt)],
-                  ...(isJasa ? [] : [['Gudang tujuan', po.warehouse]]),
+                  isJasa
+                    ? ['Jadwal tagihan', scheduleCount(po.term) > 1
+                      ? `${scheduleCount(po.term)} ${po.items.some((i) => i.unit === 'periode') ? 'periode' : 'termin'}`
+                      : 'Sekali tagih']
+                    : ['Gudang tujuan', po.warehouse],
                   ['Dari permintaan', fppbj ? <DocNumber onClick={() => go({ name: 'fppbj', id: fppbj.id })}>{fppbj.number}</DocNumber> : '—'],
                   ['Termin bayar', termText(po.term)],
-                  // Jejak pengiriman hanya muncul setelah dokumen benar-benar dikirim.
-                  ...(po.sent
-                    ? [[
-                      'Dikirim ke vendor',
+                  // Selalu ditampilkan: belum terkirim justru keadaan yang perlu terlihat.
+                  [
+                    'Dikirim ke vendor',
+                    po.sent ? (
                       <>
                         {vendorEmail(vendor) || '—'}
                         <Text fz={11} fw={400} c="slate.6">
                           {[po.sentAt && formatDate(po.sentAt), po.sentBy].filter(Boolean).join(' · ') || 'Tanggal tidak tercatat'}
                           {po.sentCc ? ` · cc ${po.sentCc}` : ''}
                         </Text>
-                      </>,
-                    ]]
-                    : []),
+                      </>
+                    ) : (
+                      <Text fz="sm" fw={700} c="orange.8" component="span">Belum dikirim</Text>
+                    ),
+                  ],
                 ].map(([k, v], i) => (
                   <Box
                     key={k}
@@ -244,14 +278,16 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               </SimpleGrid>
             </Card>
 
-            <Section divided flush icon={Package} title="Item pesanan" description="Jumlah dipesan, diterima, dan difaktur per item" right={count(po.items.length, 'item')}>
+            <Section divided flush icon={Package} title="Item pesanan" description={pakaiTerima ? 'Jumlah dipesan, diterima, dan difaktur per item' : 'Jumlah dipesan dan difaktur per item'} right={count(po.items.length, 'item')}>
               <Box style={{ overflow: 'auto' }}>
                 <Table verticalSpacing="xs" horizontalSpacing="sm" miw={560} styles={th}>
                   <Table.Thead bg="slate.0">
                     <Table.Tr>
                       <Table.Th w={240}>Item</Table.Th>
                       <Table.Th ta="right">Dipesan</Table.Th>
-                      <Table.Th ta="right">Diterima</Table.Th>
+                      {/* Tanpa serah terima tidak ada qty diterima — kolomnya akan selalu 0
+                          dan terbaca seperti barang yang tak kunjung datang. */}
+                      {pakaiTerima && <Table.Th ta="right">Diterima</Table.Th>}
                       <Table.Th ta="right">Difaktur</Table.Th>
                       {!noPrice && <Table.Th ta="right">Harga</Table.Th>}
                       {!noPrice && <Table.Th ta="right">Jumlah</Table.Th>}
@@ -262,8 +298,10 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                       <Table.Tr key={i.id}>
                         <Table.Td fz="sm" fw={600}>{i.desc}{i.spec && <Text fz={11} c="slate.6" fw={400}>{i.spec}</Text>}</Table.Td>
                         <Table.Td ta="right" fz="sm">{i.qty} {i.unit}</Table.Td>
-                        <Table.Td ta="right" fz="sm">{receivedQty(po, i.id, pb.receipts)}</Table.Td>
-                        <Table.Td ta="right" fz="sm">{receipts.reduce((n, r) => n + invoicedQty(r.id, i.id, pb.invoices), 0)}</Table.Td>
+                        {pakaiTerima && <Table.Td ta="right" fz="sm">{receivedQty(po, i.id, pb.receipts)}</Table.Td>}
+                        <Table.Td ta="right" fz="sm">{pakaiTerima
+                          ? receipts.reduce((n, r) => n + invoicedQty(r.id, i.id, pb.invoices), 0)
+                          : invoicedQtyOfPo(po.id, i.id, pb.invoices)}</Table.Td>
                         {!noPrice && <Table.Td ta="right" fz="sm">{rupiah(i.price)}</Table.Td>}
                         {!noPrice && <Table.Td ta="right" fz="sm" fw={700}>{rupiah(i.qty * i.price)}</Table.Td>}
                       </Table.Tr>
@@ -274,11 +312,15 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               {!poAllBarang(po) && <Box p="lg" pt={0}><Callout>Item jasa: lingkup, periode, dan milestone mengikuti penawaran pemenang.</Callout></Box>}
             </Section>
 
-            <Section divided flush icon={Truck} title={poAllJasa(po) ? 'Serah terima (BAST)' : poAllBarang(po) ? 'Penerimaan barang (FPB)' : 'Penerimaan (FPB / BAST)'} description="Surat jalan dan serah terima yang dicatat gudang" right={count(receipts.length, 'dokumen')}>
+            {/* Pesanan tanpa serah terima tidak akan pernah punya FPB/BAPP, jadi kartunya
+                tidak ditampilkan — bukan ditampilkan kosong. Kartu kosong mengundang
+                pertanyaan "kenapa belum ada penerimaannya?" yang tidak ada jawabannya. */}
+            {pakaiTerima && (
+            <Section divided flush icon={Truck} title={poAllJasa(po) ? 'Serah terima (BAPP)' : poAllBarang(po) ? 'Penerimaan barang (FPB)' : 'Penerimaan (FPB / BAPP)'} description="Surat jalan dan serah terima yang dicatat gudang" right={count(receipts.length, 'dokumen')}>
               {receipts.length === 0 ? (
                 <Text fz="xs" c="slate.6" p="lg">Belum ada penerimaan. {po.sent ? '' : `Kirim ${label} ke vendor lebih dulu.`}</Text>
               ) : (
-                <DataTable bare head={[{ label: 'Nomor' }, { label: 'Tanggal' }, { label: poAllJasa(po) ? 'No. BAST' : poAllBarang(po) ? 'Surat jalan' : 'Surat jalan / BAST' }, { label: 'Diterima', align: 'right' }, { label: 'Faktur' }, { label: '', w: 120 }]} minWidth={600}>
+                <DataTable bare head={[{ label: 'Nomor' }, { label: 'Tanggal' }, { label: poAllJasa(po) ? 'No. BAPP' : poAllBarang(po) ? 'No. surat jalan' : 'No. surat jalan / BAPP' }, { label: 'Diterima', align: 'right' }, { label: 'Faktur' }]} minWidth={520}>
                   {receipts.map((r) => {
                     const open = uninvoicedLines(r, pb.invoices).length > 0;
                     return (
@@ -288,19 +330,19 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                         <Table.Td fz="sm">{r.doNumber}</Table.Td>
                         <Table.Td ta="right" fz="sm">{r.lines.reduce((n, l) => n + l.qty, 0)}</Table.Td>
                         <Table.Td fz="xs" c={open ? 'orange.8' : 'green.8'} fw={600}>{open ? 'Belum difaktur' : 'Sudah difaktur'}</Table.Td>
-                        <Table.Td ta="right">
-                          {open && canCreate(role, 'invoice') && <Button size="compact-xs" radius="md" variant="light" onClick={() => openDialog({ type: 'invoice', receiptIds: [r.id] })}>Catat faktur</Button>}
-                        </Table.Td>
                       </Table.Tr>
                     );
                   })}
                 </DataTable>
               )}
             </Section>
+            )}
 
-            <Section divided flush icon={Receipt} title="Faktur pembelian" description="Tagihan vendor yang dibuat dari penerimaan" right={count(invoices.length, 'faktur')}>
+            <Section divided flush icon={Receipt} title="Faktur pembelian" description={pakaiTerima ? 'Tagihan vendor yang dibuat dari penerimaan' : `Tagihan vendor yang dibuat langsung dari ${label}`} right={count(invoices.length, 'faktur')}>
               {invoices.length === 0 ? (
-                <Text fz="xs" c="slate.6" p="lg">Faktur dibuat dari penerimaan yang sudah dikonfirmasi.</Text>
+                <Text fz="xs" c="slate.6" p="lg">{pakaiTerima
+                  ? 'Faktur dibuat dari penerimaan yang sudah dikonfirmasi.'
+                  : `Pesanan ini tanpa serah terima, jadi fakturnya dibuat langsung dari ${label}.`}</Text>
               ) : (
                 <DataTable bare head={[{ label: 'Nomor' }, { label: 'Jatuh tempo' }, { label: 'Status' }, { label: 'Sisa hutang', align: 'right' }, { label: '', w: 190 }]} minWidth={700}>
                   {invoices.map((i) => {
@@ -315,7 +357,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                         <Table.Td ta="right">
                           {canCreate(role, 'pr') && (
                             <Group gap={6} justify="flex-end" wrap="nowrap">
-                              {t.free > 0 && <Button size="compact-xs" radius="md" onClick={() => openDialog({ type: 'pr', kind: 'pelunasan', invoiceIds: [i.id] })}>Bayar</Button>}
+                              {t.free > 0 && <Button size="compact-xs" radius="md" onClick={() => go({ name: 'pr-new', invoiceIds: [i.id] })}>Ajukan bayar</Button>}
                               {canReturn && <Button size="compact-xs" radius="md" variant="default" onClick={() => openDialog({ type: 'return', invoiceId: i.id })}>Retur</Button>}
                             </Group>
                           )}

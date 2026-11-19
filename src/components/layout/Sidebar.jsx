@@ -98,7 +98,7 @@ const groups = [
           { key: 'pembelian:overview', label: 'Ringkasan Pembelian', icon: SquaresFour },
           { key: 'pembelian:fppbj', label: 'Permintaan', icon: FileText },
           { key: 'pembelian:orders', label: 'Pesanan', icon: Package },
-          { key: 'pembelian:receipts', label: 'Penerimaan Barang', icon: Truck },
+          { key: 'pembelian:receipts', label: 'Penerimaan Barang/Jasa', icon: Truck },
           { key: 'pembelian:bills', label: 'Tagihan Vendor', icon: Receipt },
           { key: 'pembelian:payments', label: 'Pembayaran', icon: Wallet },
           { key: 'pembelian:returns', label: 'Retur Pembelian', icon: ArrowCounterClockwise },

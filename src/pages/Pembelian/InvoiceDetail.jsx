@@ -16,6 +16,7 @@ import {
   INV_STATUS,
   invOverdue,
   invStatus,
+  invLineDesc,
   invTotals,
   PR_STATUS,
   poDocLabel,
@@ -81,23 +82,23 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
               <Group gap="xs" wrap="wrap">
                 <Title order={2} fz={{ base: 20, md: 24 }} c="slate.9">{inv.number}</Title>
                 <CopyIcon value={inv.number} size={16} />
+                {/* Status sudah berbunyi "Jatuh tempo" sendiri; badge kedua cuma mengulang. */}
                 <StatusPill map={INV_STATUS} status={status} />
-                {overdue && <Badge size="sm" radius="sm" variant="light" color="red" fw={700} tt="none">Lewat jatuh tempo</Badge>}
               </Group>
-              <Text fz="sm" c="slate.6">
-                {vendor?.name}
-                {inv.vendorNo && <> · {inv.vendorNo}</>}
-                {po && <> · dari <DocNumber onClick={() => go({ name: 'po', id: po.id })}>{po.number}</DocNumber></>}
-              </Text>
+              {/* Cukup tanggal dokumennya — vendor, no. invoice vendor, dan pesanan asalnya
+                  sudah tertera di kartu Informasi faktur. */}
+              <Text fz="sm" c="slate.6">{formatDate(inv.date)}</Text>
             </Box>
           </Group>
           {/* Aksi utama satu tombol; sisanya masuk menu titik tiga. */}
           <Group gap="xs">
             {!cancelled && canCreate(role, 'invoice') ? (
               <>
+                {/* Tombol ini membuat Payment Request, bukan mengeluarkan uang — kasnya baru
+                    berkurang tiga tahap kemudian, setelah approval dan Payment Voucher. */}
                 {t.free > 0 && (
-                  <Button radius="md" leftSection={<Money size={16} />} onClick={() => openDialog({ type: 'pr', kind: 'pelunasan', invoiceIds: [inv.id] })}>
-                    Bayar
+                  <Button radius="md" leftSection={<Money size={16} />} onClick={() => go({ name: 'pr-new', invoiceIds: [inv.id] })}>
+                    Ajukan Pembayaran
                   </Button>
                 )}
                 {(credit > 0 || canReturn || canCancel) && (
@@ -196,10 +197,15 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
                       return (
                         <Table.Tr key={i}>
                           <Table.Td fz="sm" fw={600}>
-                            {it?.desc ?? '—'}
-                            {pb.receiptsById[l.receiptId] && <Text fz={11} c="slate.6" fw={400}>{pb.receiptsById[l.receiptId].number}</Text>}
+                            {invLineDesc(l, it)}
+                            {/* Keterangan baris (periode, lokasi) hanya ada pada baris manual;
+                                baris dari penerimaan sudah dijelaskan nomor FPB/BAPP-nya. */}
+                            {l.spec && <Text fz={11} c="slate.7" fw={400}>{l.spec}</Text>}
+                            {pb.receiptsById[l.receiptId]
+                              ? <Text fz={11} c="slate.6" fw={400}>{pb.receiptsById[l.receiptId].number}</Text>
+                              : <Text fz={11} c="slate.6" fw={400}>Tanpa penerimaan</Text>}
                           </Table.Td>
-                          <Table.Td ta="right" fz="sm">{l.qty} {it?.unit}</Table.Td>
+                          <Table.Td ta="right" fz="sm">{l.qty} {it?.unit ?? l.unit ?? ''}</Table.Td>
                           <Table.Td ta="right" fz="sm">{rupiah(l.price)}</Table.Td>
                           <Table.Td ta="right" fz="sm" c={back ? 'red.7' : 'slate.5'}>{back || 0}</Table.Td>
                           <Table.Td ta="right" fz="sm" fw={700}>{rupiah(l.qty * l.price)}</Table.Td>

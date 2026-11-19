@@ -24,14 +24,14 @@ import { roleOf } from './data.js';
 
 import { FormModal } from '@/components/common.jsx';
 
-export { BackLink, CopyIcon, Field, FormModal, PageIntro } from '@/components/common.jsx';
+export { BackLink, blockedProps, CopyIcon, Field, FormModal, PageIntro } from '@/components/common.jsx';
 
-// Opsi dropdown vendor referensi: ikon, nama vendor, dan jumlah PO sebelumnya.
+// Opsi dropdown vendor: ikon, nama vendor, dan jumlah PO sebelumnya.
 // Jumlah PO dihitung dari PO yang benar-benar ada, bukan statistik vendor, supaya sama dengan isi dropdown PO referensi.
-export const vendorSelectData = (vendors, pos) =>
-  vendors
-    .map((v) => ({ value: v.id, label: v.name, po: pos.filter((p) => p.vendorId === v.id).length }))
-    .filter((v) => v.po > 0);
+// pos boleh dikosongkan: vendor tanpa riwayat PO (mis. PLN, pemilik gedung) tetap harus bisa
+// dipilih untuk tagihan non-PO, jadi daftarnya tidak disaring.
+export const vendorSelectData = (vendors, pos = []) =>
+  vendors.map((v) => ({ value: v.id, label: v.name, po: pos.filter((p) => p.vendorId === v.id).length }));
 export const renderVendorOption = ({ option, checked }) => (
   <Group gap="sm" wrap="nowrap" style={{ width: '100%' }}>
     <ThemeIcon variant="light" size={32} radius="md" style={{ flexShrink: 0 }}>
@@ -39,7 +39,7 @@ export const renderVendorOption = ({ option, checked }) => (
     </ThemeIcon>
     <Box style={{ minWidth: 0, flex: 1 }}>
       <Text fz="sm" fw={600} c="slate.9" truncate>{option.label}</Text>
-      <Text fz={11} c="slate.6">{option.po} PO sebelumnya</Text>
+      <Text fz={11} c="slate.6">{option.po ? `${option.po} PO sebelumnya` : 'Belum ada PO'}</Text>
     </Box>
     {checked && <Check size={16} />}
   </Group>

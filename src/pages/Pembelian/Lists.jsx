@@ -1,5 +1,5 @@
 // Daftar dokumen per tab (permintaan, PO, Penerimaan, Faktur, Pembayaran, Retur) dengan pola tabel seperti halaman Kontak.
-import { Badge, Button, Select, Switch, Table, Text, Tooltip } from '@mantine/core';
+import { Badge, Button, Select, Table, Text, Tooltip } from '@mantine/core';
 import { useState } from 'react';
 import {
   ArrowCounterClockwise,
@@ -35,11 +35,12 @@ import {
   returnValue,
   RECEIPT_STATUS,
   receiptConfirmed,
+  pvPaid,
   rupiah,
   sum,
   uninvoicedLines,
 } from './utils.js';
-import { canApprove, canCreate, hidesPrices, prBlockedBySoD, receiptDoc } from './permissions.js';
+import { approvalState, canCreate, hidesPrices, isApproverTurn, prBlockedBySoD, receiptDoc, signApproval } from './permissions.js';
 import { toast } from './usePb.js';
 
 const Money = ({ children, c }) => (
@@ -64,7 +65,6 @@ function RouteBadge({ f }) {
 export default function ListTab({ tab, pb, go, openDialog }) {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState(null);
-  const [onlyDue, setOnlyDue] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState('10');
   // Setiap perubahan pencarian/filter mengembalikan ke halaman pertama.
@@ -145,7 +145,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
               <Table.Td ta="right">
                 <RowMenu label={p.number} items={[
                   { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'po', id: p.id }) },
-                  canCreate(role, receiptDoc(poAllJasa(p))) && ['dikirim', 'sebagian'].includes(st) && { label: poAllJasa(p) ? 'Catat BAST' : 'Catat Penerimaan', icon: Truck, onClick: () => openDialog({ type: 'receipt', poId: p.id }) },
+                  canCreate(role, receiptDoc(poAllJasa(p))) && ['dikirim', 'sebagian'].includes(st) && { label: poAllJasa(p) ? 'Catat BAPP' : 'Catat Penerimaan', icon: Truck, onClick: () => openDialog({ type: 'receipt', poId: p.id }) },
                 ]} />
               </Table.Td>
             </Table.Tr>
@@ -162,7 +162,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
         {...shell}
         noun="penerimaan"
         placeholder="Cari nomor, vendor, atau surat jalan..."
-        head={[{ label: 'Penerimaan & Tanggal' }, { label: 'Vendor' }, { label: 'Surat Jalan / BAST' }, { label: 'Jumlah Diterima', align: 'right' }, { label: 'Faktur' }, { label: 'Aksi', align: 'right', w: 70 }]}
+        head={[{ label: 'Penerimaan & Tanggal' }, { label: 'Vendor' }, { label: 'Surat Jalan / BAPP' }, { label: 'Jumlah Diterima', align: 'right' }, { label: 'Faktur' }, { label: 'Aksi', align: 'right', w: 70 }]}
         minWidth={940}
         empty={pb.receipts.length === 0 ? <EmptyState icon={Truck} title="Belum ada penerimaan" text="Penerimaan dicatat dari PO yang sudah dikirim ke vendor, saat barang atau jasa sudah sampai." /> : undefined}
         rows={rows.map((r) => {
@@ -182,8 +182,8 @@ export default function ListTab({ tab, pb, go, openDialog }) {
               <Table.Td ta="right">
                 <RowMenu label={r.number} items={[
                   { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'receipt', id: r.id }) },
-                  !receiptConfirmed(r) && canApprove(role, 'bast') && { label: 'Setujui BAST', icon: Check, onClick: () => { pb.update('receipts', r.id, (d) => ({ ...d, status: 'dikonfirmasi', approvedBy: personLabel(role) })); toast('BAST disetujui. Sudah bisa difaktur.'); } },
-                  receiptConfirmed(r) && open && canCreate(role, 'invoice') && { label: 'Buat Faktur', icon: Invoice, onClick: () => openDialog({ type: 'invoice', receiptIds: [r.id] }) },
+                  !receiptConfirmed(r) && isApproverTurn(role, r, 'bapp') && { label: `Setujui BAPP (${approvalState(r, 'bapp').done.length + 1}/${approvalState(r, 'bapp').total})`, icon: Check, onClick: () => { pb.update('receipts', r.id, (d) => { const { doc, complete } = signApproval(d, 'bapp', role); return complete ? { ...doc, status: 'dikonfirmasi', approvedBy: personLabel(role) } : doc; }); toast('Approval dicatat.'); } },
+                  receiptConfirmed(r) && open && canCreate(role, 'invoice') && { label: 'Buat Faktur', icon: Invoice, onClick: () => go({ name: 'invoice-new', receiptIds: [r.id] }) },
                 ]} />
               </Table.Td>
             </Table.Tr>
@@ -196,7 +196,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
   if (tab === 'bills') {
     const rows = pb.invoices
       .map((i) => ({ i, t: invTotals(i, pb.calc) }))
-      .filter(({ i, t }) => match(q, i.number, i.vendorNo, vendor(i.vendorId)) && (!status || invStatus(i, t) === status) && (!onlyDue || (t.balance > 0 && i.dueDate < TODAY)));
+      .filter(({ i, t }) => match(q, i.number, i.vendorNo, vendor(i.vendorId)) && (!status || invStatus(i, t) === status));
     return (
       <ListShell
         {...shell}
@@ -204,13 +204,14 @@ export default function ListTab({ tab, pb, go, openDialog }) {
         placeholder="Cari nomor faktur, no. invoice vendor, atau vendor..."
         filters={
           <>
+            {/* Jatuh tempo sekarang salah satu status, jadi saringan terpisahnya dibuang:
+                dua kontrol untuk satu pertanyaan hanya bikin hasilnya saling meniadakan. */}
             {statusFilter(INV_STATUS)}
-            <Switch size="sm" label="Hanya yang jatuh tempo" checked={onlyDue} onChange={(e) => reset(setOnlyDue)(e.currentTarget.checked)} />
           </>
         }
         head={[{ label: 'Faktur & No. Vendor' }, { label: 'Vendor' }, { label: 'Jatuh Tempo' }, { label: 'Status' }, { label: 'Hutang', align: 'right' }, { label: 'Sisa Hutang', align: 'right' }, { label: 'Aksi', align: 'right', w: 70 }]}
         minWidth={1040}
-        empty={pb.invoices.length === 0 ? <EmptyState icon={Invoice} title="Belum ada faktur" text="Faktur dibuat dari penerimaan (FPB/BAST) yang sudah dikonfirmasi, lalu dicocokkan 3 arah dengan PO." /> : undefined}
+        empty={pb.invoices.length === 0 ? <EmptyState icon={Invoice} title="Belum ada faktur" text="Faktur dibuat dari penerimaan (FPB/BAPP) yang sudah dikonfirmasi, lalu dicocokkan 3 arah dengan PO." /> : undefined}
         rows={rows.map(({ i, t }) => {
           const late = t.balance > 0 && i.dueDate < TODAY;
           const po = pb.posById[i.poId];
@@ -232,7 +233,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
               <Table.Td ta="right">
                 <RowMenu label={i.number} items={[
                   { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'invoice', id: i.id }) },
-                  t.free > 0 && canCreate(role, 'pr') && { label: 'Ajukan Pembayaran', icon: Wallet, onClick: () => openDialog({ type: 'pr', kind: 'pelunasan', invoiceIds: [i.id] }) },
+                  t.free > 0 && canCreate(role, 'pr') && { label: 'Ajukan Pembayaran', icon: Wallet, onClick: () => go({ name: 'pr-new', invoiceIds: [i.id] }) },
                   canReturn && canCreate(role, 'return') && { label: 'Buat Retur', icon: ArrowCounterClockwise, onClick: () => openDialog({ type: 'return', invoiceId: i.id }) },
                 ]} />
               </Table.Td>
@@ -281,9 +282,10 @@ export default function ListTab({ tab, pb, go, openDialog }) {
             <Table.Td ta="right">
               <RowMenu label={p.number} items={[
                 { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'pr', id: p.id }) },
-                p.status === 'diajukan' && canApprove(role, 'pr') && !prBlockedBySoD(role, p) && { label: 'Setujui', icon: Check, onClick: () => { pb.update('prs', p.id, (d) => ({ ...d, status: 'disetujui' })); toast('Payment Request disetujui.'); } },
-                p.status === 'diajukan' && canApprove(role, 'pr') && !prBlockedBySoD(role, p) && { label: 'Tolak', icon: X, color: 'red', onClick: () => openDialog({ type: 'pr-reject', prId: p.id }) },
-                p.status === 'disetujui' && canCreate(role, 'pv') && { label: 'Bayar', icon: CurrencyCircleDollar, onClick: () => openDialog({ type: 'pay', prId: p.id }) },
+                p.status === 'diajukan' && isApproverTurn(role, p, 'pr') && !prBlockedBySoD(role, p) && { label: `Setujui (${approvalState(p, 'pr').done.length + 1}/${approvalState(p, 'pr').total})`, icon: Check, onClick: () => { pb.update('prs', p.id, (d) => { const { doc, complete } = signApproval(d, 'pr', role); return complete ? { ...doc, status: 'disetujui', approvedAt: TODAY } : doc; }); toast('Approval dicatat.'); } },
+                p.status === 'diajukan' && isApproverTurn(role, p, 'pr') && !prBlockedBySoD(role, p) && { label: 'Tolak', icon: X, color: 'red', onClick: () => openDialog({ type: 'pr-reject', prId: p.id }) },
+                p.status === 'disetujui' && canCreate(role, 'pv') && { label: 'Terbitkan Payment Voucher', icon: CurrencyCircleDollar, onClick: () => openDialog({ type: 'pv', prId: p.id }) },
+                pv && !pvPaid(pv) && canCreate(role, 'pv') && { label: 'Catat pembayaran', icon: CurrencyCircleDollar, onClick: () => openDialog({ type: 'pay', voucherId: pv.id }) },
                 pv && { label: 'Lihat Payment Voucher', icon: CurrencyCircleDollar, onClick: () => go({ name: 'voucher', id: pv.id }) },
               ]} />
             </Table.Td>

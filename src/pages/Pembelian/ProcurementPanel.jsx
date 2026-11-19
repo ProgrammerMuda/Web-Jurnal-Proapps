@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Badge, Box, Button, Card, Group, Text } from '@mantine/core';
 import { ConfirmDeleteQuoteModal, QuoteDetailModal, QuoteModal, ReasonModal, SwitchRouteModal } from './Dialogs.jsx';
 import { SuccessModal } from './components.jsx';
-import { canCreate } from './permissions.js';
+import { approvalState, canCreate, signApproval } from './permissions.js';
 import { BiddingSection, Hint, ProcGuide, RouteSelector, SingleSection } from './procurement.jsx';
 import { TODAY } from './data.js';
 import { toast } from './usePb.js';
@@ -106,9 +106,13 @@ export default function ProcurementPanel({ f, pb, role, go }) {
     patchProc({ status: 'diajukan', note: '', submittedAt: TODAY });
     toast('Diajukan ke approver.');
   };
+  // Approval pengadaan berjenjang dua: Chief Finance lalu Building Manager. PO/SPK baru
+  // terbit setelah tanda tangan kedua — bukan setelah yang pertama.
   const approve = () => {
-    patchProc({ status: 'disetujui' });
-    setApprovedPos(pos.length === 0 ? createPOs(f, pb) : pos);
+    const { doc, complete } = signApproval(f.procurement ?? {}, 'procurement', role);
+    patchProc(complete ? { ...doc, status: 'disetujui' } : doc);
+    if (complete) setApprovedPos(pos.length === 0 ? createPOs(f, pb) : pos);
+    else toast(`Approval ${approvalState(doc, 'procurement').done.length} dari ${approvalState(doc, 'procurement').total} dicatat. Menunggu approval berikutnya.`);
   };
   const rejectProc = (note) => {
     patchProc({ status: 'ditolak', note });

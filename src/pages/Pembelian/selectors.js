@@ -1,6 +1,6 @@
 // Turunan data untuk menu "Buat baru" (dokumen siap dilanjutkan) dan halaman Ringkasan.
 import { TODAY } from './data.js';
-import { blockedBySoD, canApprove, canCreate, canVerify, prBlockedBySoD, receiptDoc } from './permissions.js';
+import { blockedBySoD, approvalState, canApprove, isApproverTurn, canCreate, canVerify, prBlockedBySoD, receiptDoc } from './permissions.js';
 import {
   canReturn,
   poAllBarang,
@@ -13,6 +13,8 @@ import {
   poStatus,
   receiptsOf,
   remainingQty,
+  poHasReceipt,
+  pvPaid,
   uninvoicedLines,
 } from './utils.js';
 
@@ -31,7 +33,8 @@ export function readiness(pb) {
     po: pb.fppbj.filter(
       (f) => f.status !== 'dibatalkan' && f.procurement?.status === 'disetujui' && !pb.pos.some((p) => p.fppbjId === f.id),
     ),
-    receipt: sentPos.filter((p) => p.items.some((i) => remainingQty(p, i.id, pb.receipts) > 0)),
+    // Pesanan tanpa serah terima tidak pernah menghasilkan FPB/BAPP: fakturnya langsung dari PO/SPK.
+    receipt: sentPos.filter((p) => poHasReceipt(p) && p.items.some((i) => remainingQty(p, i.id, pb.receipts) > 0)),
     invoice: pb.receipts.filter((r) => uninvoicedLines(r, pb.invoices).length > 0),
     prDp: sentPos.filter(
       (p) => advancePct(p.term) > 0 && !pb.prs.some((x) => x.kind === 'dp' && x.poId === p.id && x.status !== 'ditolak'),
@@ -58,11 +61,12 @@ export const SLA = {
   approve: 7, // pengadaan diajukan -> disetujui approver
   po: 3, // pengadaan disetujui -> PO/SPK dibuat
   send: 3, // PO dibuat -> dikirim ke vendor
-  bast: 5, // BAST dicatat -> disetujui Building Manager
+  bapp: 5, // BAPP dicatat -> disetujui Building Manager
   invoice: 7, // penerimaan dikonfirmasi -> faktur dicatat
   prDp: 5, // PO dengan uang muka -> PR diajukan
   prApprove: 5, // PR diajukan -> disetujui
-  pay: 3, // PR disetujui -> dibayar
+  pv: 2, // PR disetujui -> Payment Voucher terbit
+  pay: 3, // PV terbit -> uang ditransfer
   returned: 7, // permintaan dikembalikan -> diperbaiki peminta
   draft: 14, // draf permintaan tidak diajukan-ajukan
 };
@@ -104,11 +108,13 @@ export function actionsFor(role, pb) {
   // Approver pengadaan (spesifikasi 2.2).
   if (canApprove(role, 'procurement')) {
     pb.fppbj
-      .filter((f) => f.procurement?.status === 'diajukan' && !blockedBySoD(role, f))
+      // Hanya muncul bagi peran yang sedang giliran, supaya satu dokumen tidak nongol di
+      // dua dashboard sekaligus padahal urutannya memang berjenjang.
+      .filter((f) => f.procurement?.status === 'diajukan' && isApproverTurn(role, f.procurement, 'procurement') && !blockedBySoD(role, f))
       .forEach((f) =>
         add({
           id: `ap-${f.id}`,
-          title: `Approval ${f.single?.on ? 'vendor tunggal' : 'bidding'}`,
+          title: `Approval ${f.single?.on ? 'vendor tunggal' : 'bidding'} (${approvalState(f.procurement, 'procurement').done.length + 1}/${approvalState(f.procurement, 'procurement').total})`,
           sub: `${f.number} · ${f.purpose}`,
           cta: 'Tinjau',
           to: { name: 'fppbj', id: f.id },
@@ -117,19 +123,26 @@ export function actionsFor(role, pb) {
         }),
       );
   }
-  // Approval Payment Request ada di Finance Manager, bukan approver pengadaan.
+  // Approval Payment Request berjenjang sama: Chief Finance lalu Building Manager.
   if (canApprove(role, 'pr')) {
     pb.prs
-      .filter((p) => p.status === 'diajukan' && !prBlockedBySoD(role, p))
+      .filter((p) => p.status === 'diajukan' && isApproverTurn(role, p, 'pr') && !prBlockedBySoD(role, p))
       .forEach((p) =>
-        add({ id: `ar-${p.id}`, title: `Approval Payment Request ${p.kind === 'dp' ? 'DP' : 'pelunasan'}`, sub: p.number, cta: 'Tinjau', to: { name: 'tab', tab: 'payments' }, since: p.submittedAt ?? p.date, limit: SLA.prApprove }),
+        add({ id: `ar-${p.id}`, title: `Approval Payment Request ${p.kind === 'dp' ? 'DP' : 'pelunasan'} (${approvalState(p, 'pr').done.length + 1}/${approvalState(p, 'pr').total})`, sub: p.number, cta: 'Tinjau', to: { name: 'tab', tab: 'payments' }, since: p.submittedAt ?? p.date, limit: SLA.prApprove }),
       );
   }
   if (canCreate(role, 'pv')) {
+    // Dua tahap sesudah approval: terbitkan PV, lalu catat pembayarannya.
+    // Jurnal kas keluar ikut terposting saat pembayaran dicatat, jadi tidak jadi tugas sendiri.
     pb.prs
       .filter((p) => p.status === 'disetujui')
       .forEach((p) =>
-        add({ id: `fp-${p.id}`, title: 'Bayar Payment Request', sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name}`, cta: 'Bayar', to: { name: 'tab', tab: 'payments' }, since: p.approvedAt ?? p.date, limit: SLA.pay, due: p.dueDate }),
+        add({ id: `fp-${p.id}`, title: 'Terbitkan Payment Voucher', sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name}`, cta: 'Terbitkan', to: { name: 'tab', tab: 'payments' }, since: p.approvedAt ?? p.date, limit: SLA.pv, due: p.dueDate }),
+      );
+    pb.vouchers
+      .filter((v) => !pvPaid(v))
+      .forEach((v) =>
+        add({ id: `pv-${v.id}`, title: 'Catat pembayaran', sub: `${v.number} · ${pb.vendorsById[v.vendorId]?.name}`, cta: 'Bayar', to: { name: 'voucher', id: v.id }, since: v.date, limit: SLA.pay }),
       );
   }
   // Verifikasi permintaan: hanya memeriksa kelayakan, belum menyentuh jalur pengadaan.
@@ -152,15 +165,15 @@ export function actionsFor(role, pb) {
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
       .forEach((i) => add({ id: `b-${i.id}`, title: 'Ajukan pembayaran faktur', sub: `${i.number} · jatuh tempo ${formatDate(i.dueDate)}`, cta: 'Buka', to: { name: 'po', id: i.poId }, due: i.dueDate }));
   }
-  // FPB untuk barang ke Gudang, BAST untuk jasa ke PIC jasa.
+  // FPB untuk barang ke Gudang, BAPP untuk jasa ke PIC jasa.
   r.receipt
     .filter((p) => canCreate(role, receiptDoc(poAllJasa(p))))
-    .forEach((p) => add({ id: `r-${p.id}`, title: poAllJasa(p) ? 'Catat BAST' : poAllBarang(p) ? 'Catat penerimaan barang' : 'Catat penerimaan (FPB/BAST)', sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name}`, cta: 'Catat', to: { name: 'po', id: p.id }, since: p.sentAt ?? p.date, due: p.expectedAt }));
-  // BAST jasa yang menunggu persetujuan Building Manager.
-  if (canApprove(role, 'bast')) {
+    .forEach((p) => add({ id: `r-${p.id}`, title: poAllJasa(p) ? 'Catat BAPP' : poAllBarang(p) ? 'Catat penerimaan barang' : 'Catat penerimaan (FPB/BAPP)', sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name}`, cta: 'Catat', to: { name: 'po', id: p.id }, since: p.sentAt ?? p.date, due: p.expectedAt }));
+  // BAPP jasa yang menunggu approval berjenjang.
+  if (canApprove(role, 'bapp')) {
     pb.receipts
-      .filter((x) => !receiptConfirmed(x))
-      .forEach((x) => add({ id: `ba-${x.id}`, title: 'Setujui BAST', sub: `${x.number} · ${pb.vendorsById[x.vendorId]?.name}`, cta: 'Tinjau', to: { name: 'receipt', id: x.id }, since: x.date, limit: SLA.bast }));
+      .filter((x) => !receiptConfirmed(x) && isApproverTurn(role, x, 'bapp'))
+      .forEach((x) => add({ id: `ba-${x.id}`, title: `Setujui BAPP (${approvalState(x, 'bapp').done.length + 1}/${approvalState(x, 'bapp').total})`, sub: `${x.number} · ${pb.vendorsById[x.vendorId]?.name}`, cta: 'Tinjau', to: { name: 'receipt', id: x.id }, since: x.date, limit: SLA.bapp }));
   }
   if (canCreate(role, 'fppbj')) {
     pb.fppbj.filter((f) => f.status === 'dikembalikan').forEach((f) => add({ id: `k-${f.id}`, title: 'Permintaan dikembalikan', sub: `${f.number} · ${f.returnNote}`, cta: 'Buka', to: { name: 'fppbj', id: f.id }, since: f.returnedAt ?? f.date, limit: SLA.returned }));
@@ -181,7 +194,7 @@ export function pipeline(pb) {
     { key: 'po', label: 'PO', tab: 'orders', count: pb.pos.filter((p) => poStatus(p, pb.calc) !== 'selesai').length },
     { key: 'receipt', label: 'Penerimaan', tab: 'receipts', count: r.receipt.length },
     { key: 'invoice', label: 'Faktur', tab: 'bills', count: pb.invoices.filter((i) => invTotals(i, pb.calc).balance > 0).length },
-    { key: 'pay', label: 'Pembayaran', tab: 'payments', count: pb.prs.filter((p) => ['diajukan', 'disetujui'].includes(p.status)).length },
+    { key: 'pay', label: 'Pembayaran', tab: 'payments', count: pb.prs.filter((p) => ['diajukan', 'disetujui', 'diproses'].includes(p.status)).length },
   ];
 }
 

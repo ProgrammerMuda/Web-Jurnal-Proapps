@@ -1,6 +1,7 @@
 // Data & aturan modul Pembelian — mengikuti artifact "Skenario Pembelian Proapps" (flow baru).
-// Alur: permintaan → verifikasi → pengadaan (bidding | vendor tunggal) → approval → PO → DP → penerimaan (FPB/BAST) → faktur → pelunasan.
+// Alur: permintaan → verifikasi → pengadaan (bidding | vendor tunggal) → approval → PO → DP → penerimaan (FPB/BAPP) → faktur → pelunasan.
 import { TODAY } from '@/pages/Penjualan/data.js';
+import { paymentTermsSeed, snapshotTerm } from './paymentTerms.js';
 
 export { TODAY };
 
@@ -21,6 +22,7 @@ export const roles = [
   { value: 'accounting', label: 'Accounting', color: 'primary', person: { name: 'Maya Sari', title: 'Staff Accounting' } },
   { value: 'bm', label: 'Building Manager', color: 'orange', person: { name: 'Budi Hartono', title: 'Building Manager' } },
   { value: 'gudang', label: 'Gudang / PIC Jasa', color: 'green', person: { name: 'Rudi Hermawan', title: 'Kepala Gudang' } },
+  { value: 'cfo', label: 'Chief Finance', color: 'indigo', person: { name: 'Hendra Wijaya', title: 'Chief Finance' } },
   { value: 'finance', label: 'Finance', color: 'grape', person: { name: 'Dewi Lestari', title: 'Staff Finance' } },
   // Superadmin memegang semua hak sekaligus, termasuk melewati pemisahan tugas.
   { value: 'superadmin', label: 'Superadmin', color: 'dark', person: { name: 'Admin Sistem', title: 'Superadmin' } },
@@ -29,7 +31,8 @@ export const roles = [
 const legacyRole = {
   atasan: 'bm', chief_seksi: 'bm', chief_engineering: 'bm',
   approver: 'bm', approver_pengadaan: 'bm', building_manager: 'bm',
-  finance_manager: 'bm', kasir: 'finance', pic_jasa: 'gudang',
+  // finance_manager dulu dipetakan ke Building Manager; sekarang ada perannya sendiri.
+  finance_manager: 'cfo', chief_finance: 'cfo', kasir: 'finance', pic_jasa: 'gudang',
 };
 export const normalizeRole = (v) => (roles.some((r) => r.value === v) ? v : legacyRole[v] ?? 'accounting');
 export const roleOf = (v) => roles.find((r) => r.value === normalizeRole(v));
@@ -43,24 +46,32 @@ export const personTitle = (role) => roleOf(role)?.person?.title ?? '';
 
 // Katalog produk contoh untuk memilih barang atau jasa di form permintaan (nantinya diambil dari modul Produk).
 export const productCatalog = [
-  { id: 'kertas-a4', name: 'Kertas A4 80 gsm', kind: 'barang', unit: 'rim', price: 56000 },
-  { id: 'map-plastik', name: 'Map plastik', kind: 'barang', unit: 'pcs', price: 3500 },
-  { id: 'tinta-printer', name: 'Tinta printer', kind: 'barang', unit: 'box', price: 185000 },
-  { id: 'printer-laser', name: 'Printer laser A4', kind: 'barang', unit: 'unit', price: 4200000 },
-  { id: 'meja-lipat', name: 'Meja lipat 120x60', kind: 'barang', unit: 'pcs', price: 650000 },
-  { id: 'kursi-kantor', name: 'Kursi kantor ergonomis', kind: 'barang', unit: 'unit', price: 1450000 },
-  { id: 'lemari-arsip', name: 'Lemari arsip besi 4 laci', kind: 'barang', unit: 'unit', price: 2500000 },
-  { id: 'pipa-pvc', name: 'Pipa PVC', kind: 'barang', unit: 'pcs', price: 65000 },
-  { id: 'elbow-pvc', name: 'Elbow PVC', kind: 'barang', unit: 'pcs', price: 6500 },
-  { id: 'pompa-air', name: 'Pompa air', kind: 'barang', unit: 'unit', price: 2500000 },
-  { id: 'cairan-lantai', name: 'Cairan pembersih lantai', kind: 'barang', unit: 'box', price: 85000 },
-  { id: 'kain-pel', name: 'Kain pel microfiber', kind: 'barang', unit: 'pcs', price: 22500 },
-  { id: 'radio-ht', name: 'Radio HT', kind: 'barang', unit: 'unit', price: 1250000 },
-  { id: 'seragam-satpam', name: 'Seragam satpam', kind: 'barang', unit: 'set', price: 450000 },
-  { id: 'jasa-servis-lift', name: 'Jasa servis berkala lift', kind: 'jasa', unit: 'paket', price: 8500000 },
-  { id: 'jasa-cctv', name: 'Jasa instalasi CCTV', kind: 'jasa', unit: 'paket', price: 3500000 },
-  { id: 'jasa-ac', name: 'Jasa servis AC', kind: 'jasa', unit: 'unit', price: 350000 },
-  { id: 'jasa-pest', name: 'Jasa pest control', kind: 'jasa', unit: 'bulan', price: 1800000 },
+  { id: 'kertas-a4', name: 'Kertas A4 80 gsm', description: 'Kertas HVS A4 80 gsm, isi 500 lembar', kind: 'barang', unit: 'rim', price: 56000 },
+  { id: 'map-plastik', name: 'Map plastik', description: 'Map plastik folder arsip', kind: 'barang', unit: 'pcs', price: 3500 },
+  { id: 'tinta-printer', name: 'Tinta printer', description: 'Tinta refill printer, isi 4 warna', kind: 'barang', unit: 'box', price: 185000 },
+  { id: 'printer-laser', name: 'Printer laser A4', description: 'Printer laser monokrom A4', kind: 'barang', unit: 'unit', price: 4200000 },
+  { id: 'meja-lipat', name: 'Meja lipat 120x60', description: 'Meja lipat rangka besi, 120x60 cm', kind: 'barang', unit: 'pcs', price: 650000 },
+  { id: 'kursi-kantor', name: 'Kursi kantor ergonomis', description: 'Sandaran jaring, roda, ketinggian bisa diatur', kind: 'barang', unit: 'unit', price: 1450000 },
+  { id: 'lemari-arsip', name: 'Lemari arsip besi 4 laci', description: 'Lemari arsip besi 4 laci berkunci', kind: 'barang', unit: 'unit', price: 2500000 },
+  { id: 'pipa-pvc', name: 'Pipa PVC', description: 'Pipa PVC saluran air, panjang 4 m', kind: 'barang', unit: 'pcs', price: 65000 },
+  { id: 'elbow-pvc', name: 'Elbow PVC', description: 'Sambungan elbow PVC 90 derajat', kind: 'barang', unit: 'pcs', price: 6500 },
+  { id: 'pompa-air', name: 'Pompa air', description: 'Pompa air dorong untuk tandon gedung', kind: 'barang', unit: 'unit', price: 2500000 },
+  { id: 'cairan-lantai', name: 'Cairan pembersih lantai', description: 'Cairan pembersih lantai, isi 12 botol', kind: 'barang', unit: 'box', price: 85000 },
+  { id: 'kain-pel', name: 'Kain pel microfiber', description: 'Kain pel microfiber daya serap tinggi', kind: 'barang', unit: 'pcs', price: 22500 },
+  { id: 'radio-ht', name: 'Radio HT', description: 'Radio HT dua arah untuk petugas keamanan', kind: 'barang', unit: 'unit', price: 1250000 },
+  { id: 'seragam-satpam', name: 'Seragam satpam', description: 'Seragam satpam lengkap, satu set', kind: 'barang', unit: 'set', price: 450000 },
+  { id: 'jasa-servis-lift', name: 'Jasa servis berkala lift', description: 'Servis berkala lift termasuk sparepart habis pakai', kind: 'jasa', unit: 'paket', price: 8500000 },
+  { id: 'jasa-cctv', name: 'Jasa instalasi CCTV', description: 'Instalasi CCTV termasuk kabel dan konfigurasi', kind: 'jasa', unit: 'paket', price: 3500000 },
+  { id: 'jasa-ac', name: 'Jasa servis AC', description: 'Cuci evaporator dan isi freon bila perlu', kind: 'jasa', unit: 'unit', price: 350000 },
+  { id: 'jasa-pest', name: 'Jasa pest control', description: 'Pengendalian hama berkala seluruh area gedung', kind: 'jasa', unit: 'bulan', price: 1800000 },
+  // Tagihan rutin non-PO: tidak lewat permintaan maupun gudang, tapi tetap perlu ada di
+  // katalog supaya faktur manual bisa memilihnya, bukan mengetik namanya bebas.
+  { id: 'tagihan-listrik', name: 'Tagihan listrik', description: 'Pemakaian listrik gedung', kind: 'jasa', unit: 'bulan', price: 0 },
+  { id: 'tagihan-air', name: 'Tagihan air (PDAM)', description: 'Pemakaian air PDAM gedung', kind: 'jasa', unit: 'bulan', price: 0 },
+  { id: 'tagihan-internet', name: 'Tagihan internet & telepon', description: 'Langganan internet dan telepon gedung', kind: 'jasa', unit: 'bulan', price: 0 },
+  { id: 'sewa-ruang', name: 'Sewa ruang / lahan', description: 'Sewa ruang atau lahan per bulan', kind: 'jasa', unit: 'bulan', price: 0 },
+  { id: 'jasa-cleaning', name: 'Jasa cleaning service', description: 'Tenaga kebersihan harian gedung', kind: 'jasa', unit: 'bulan', price: 0 },
+  { id: 'jasa-security', name: 'Jasa security', description: 'Tenaga keamanan gedung per bulan', kind: 'jasa', unit: 'bulan', price: 0 },
 ];
 
 export const units = ['pcs', 'unit', 'rim', 'box', 'set', 'paket', 'bulan', 'lot'];
@@ -156,12 +167,22 @@ const poItem = (id, desc, qty, unit, price, extra = {}) => ({ ...item(id, desc, 
 // Termin pada dokumen membawa salinan mekanismenya sendiri (lihat snapshotTerm di
 // paymentTerms.js), supaya artinya tidak bergantung pada katalog yang bisa berubah.
 // Dokumen contoh di bawah memakai pembantu ini agar bentuknya sama dengan dokumen asli.
-const term = (label, mech, params = {}) => ({ type: label.toLowerCase().replace(/[^a-z]+/g, '-'), label, mech: { ...mech, label }, ...params });
+// Termin dokumen dirakit dari katalog syarat pembayaran, persis seperti yang dilakukan
+// QuoteModal: id-nya ikut katalog (jadi hitungan "dipakai N dokumen" jalan) dan salinan
+// mekanismenya ikut tersimpan (jadi artinya tidak berubah walau katalognya diubah).
+const term = (id, params = {}) => {
+  const def = paymentTermsSeed.find((t) => t.id === id);
+  return { type: def.id, ...snapshotTerm(def), ...def.defaults, ...params };
+};
+// Baris jadwal pada SPK bertermin — bentuknya sama dengan keluaran expandSchedule().
+const schedItem = (id, desc, slot, slotOf, price, extra = {}) => ({
+  id, desc, spec: '', qty: 1, unit: 'termin', kind: 'jasa', slot, slotOf, price, ppnRate: RULES.ppn, ...extra,
+});
 const TERM = {
-  cad: () => term('CAD (bayar setelah diterima)', { advance: 'none', split: 'none', due: false, dueFrom: 'receipt' }, { dpPct: 0 }),
-  dp: (pct) => term('DP (uang muka %)', { advance: 'partial', split: 'none', due: false, dueFrom: 'receipt' }, { dpPct: pct }),
-  cbd: () => term('CBD (bayar sebelum kirim)', { advance: 'full', split: 'none', due: false, dueFrom: 'receipt' }, { dpPct: 100 }),
-  postpaid: (days) => term('Bayar penuh di akhir', { advance: 'none', split: 'none', due: true, dueFrom: 'receipt' }, { dueDays: days }),
+  cad: () => term('cad'),
+  dp: (pct) => term('dp-30', { dpPct: pct }),
+  cbd: () => term('cbd', { dpPct: 100 }),
+  postpaid: (days) => term('net-30', { dueDays: days }),
 };
 
 // --- Dokumen contoh -------------------------------------------------------------------------
@@ -204,7 +225,199 @@ const poChair = {
   note: '',
 };
 
+// --- Tujuh kasus uji penerimaan -----------------------------------------------------------------
+// Tiap kasus: permintaan jasa/barang yang pengadaannya sudah disetujui, lalu PO/SPK yang sudah
+// dikirim ke vendor sehingga FPB / BAPP bisa langsung dicatat.
+const kasus = ({ no, purpose, dept, vendorId, termId, items, poItems, quotePrice, quoteSpec, lead, isJasa, termParams = {}, withReceipt = true, seq = `01${no}` }) => {
+  const id = `uji-${no}`;
+  const t = term(termId, termParams);
+  return {
+    fppbj: {
+      id: `fppbj-${id}`,
+      number: `FPPBJ/2026/11/${seq}`,
+      date: '2026-11-02',
+      neededBy: '2026-12-20',
+      dept,
+      purpose,
+      iom: { no: '', date: '', files: [] },
+      items,
+      status: 'dalam_pengadaan',
+      note: '',
+      returnNote: '',
+      submittedAt: '2026-11-02',
+      verifiedAt: '2026-11-03',
+      routedAt: '2026-11-03',
+      route: 'bidding',
+      single: { on: true, reason: 'Vendor langganan gedung, hanya ini yang sanggup sesuai jadwal.' },
+      quotes: [
+        {
+          id: `q-${id}`,
+          vendorId,
+          no: `QT-${no}-2026`,
+          validUntil: '2026-12-31',
+          desc: quoteSpec,
+          file: `penawaran-${id}.pdf`,
+          term: t,
+          lead,
+          warranty: isJasa ? '6 bulan' : '12 bulan',
+          withReceipt,
+          lines: items.map((it) => ({ itemId: it.id, price: quotePrice[it.id], spec: it.spec || '-', taxes: ['ppn'] })),
+        },
+      ],
+      procurement: { kind: 'bidding', status: 'disetujui', note: '', reason: '', negotiation: '', winners: {}, finals: {} },
+      requester: 'Andi Wijaya · Staff Housekeeping',
+    },
+    po: {
+      id: `po-${id}`,
+      withReceipt,
+      number: `${isJasa ? 'SPK' : 'PO'}/2026/11/${seq}`,
+      date: '2026-11-03',
+      fppbjId: `fppbj-${id}`,
+      vendorId,
+      sent: true,
+      sentAt: '2026-11-03',
+      term: t,
+      expectedAt: '2026-12-15',
+      warehouse: isJasa ? '-' : 'Gudang Utama',
+      ppnIncluded: false,
+      items: poItems,
+      note: '',
+    },
+  };
+};
+
+const uji = [
+  // 1. CAD — barang, bayar setelah diterima. Dua item dengan qty besar: FPB sebagian bisa diuji.
+  kasus({
+    no: '1', purpose: 'ATK bulanan lantai 1-3', dept: 'Umum', vendorId: 'v-alfa', termId: 'cad', lead: 7,
+    items: [item('a1', 'Kertas A4 80 gsm', 50, 'rim'), item('a2', 'Map plastik', 200, 'pcs')],
+    quotePrice: { a1: 56000, a2: 3500 },
+    quoteSpec: 'Harga belum termasuk PPN, kirim ke gudang utama.',
+    poItems: [poItem('a1', 'Kertas A4 80 gsm', 50, 'rim', 56000, { ppnRate: RULES.ppn }), poItem('a2', 'Map plastik', 200, 'pcs', 3500, { ppnRate: RULES.ppn })],
+  }),
+  // 2. DP + pelunasan — barang, ada uang muka 30% sebelum barang datang.
+  kasus({
+    no: '2', purpose: 'Kursi kantor ruang meeting baru', dept: 'Umum', vendorId: 'v-bintang', termId: 'dp-30', lead: 21,
+    items: [item('b1', 'Kursi kantor ergonomis', 12, 'unit', { spec: 'Sandaran jaring, roda, adjustable' })],
+    quotePrice: { b1: 1450000 },
+    quoteSpec: 'Uang muka 30% sebelum produksi, sisanya setelah barang diterima.',
+    poItems: [poItem('b1', 'Kursi kantor ergonomis', 12, 'unit', 1450000, { spec: 'Sandaran jaring, roda, adjustable', ppnRate: RULES.ppn })],
+  }),
+  // 3. CBD — barang, dibayar penuh sebelum dikirim.
+  kasus({
+    // Dibayar penuh sebelum dikirim dan tidak lewat gudang: fakturnya langsung dari PO.
+    no: '3', purpose: 'Printer dan tinta lantai 2', dept: 'Keuangan', vendorId: 'v-delta', termId: 'cbd', lead: 10, withReceipt: false,
+    items: [item('c1', 'Printer laser A4', 3, 'unit'), item('c2', 'Tinta printer', 10, 'box')],
+    quotePrice: { c1: 4200000, c2: 185000 },
+    quoteSpec: 'Pembayaran penuh di muka, kirim setelah dana masuk.',
+    poItems: [poItem('c1', 'Printer laser A4', 3, 'unit', 4200000, { ppnRate: RULES.ppn }), poItem('c2', 'Tinta printer', 10, 'box', 185000, { ppnRate: RULES.ppn })],
+  }),
+  // 4. Bayar penuh di akhir — jasa tanpa jadwal termin: BAPP sekali, pakai isian qty.
+  kasus({
+    no: '4', purpose: 'Servis AC seluruh lantai', dept: 'Engineering', vendorId: 'v-delta', termId: 'net-30', lead: 14, isJasa: true,
+    items: [item('d1', 'Jasa servis AC', 20, 'unit', { kind: 'jasa', spec: 'Cuci evaporator, isi freon bila perlu' })],
+    quotePrice: { d1: 350000 },
+    quoteSpec: 'Sudah termasuk material pembersih dan freon standar.',
+    poItems: [poItem('d1', 'Jasa servis AC', 20, 'unit', 350000, { kind: 'jasa', spec: 'Cuci evaporator, isi freon bila perlu', ppnRate: RULES.ppn })],
+  }),
+  // 5. Termin progres — jasa, 3 milestone. BAPP dicentang per termin, tanpa kunci tanggal.
+  kasus({
+    no: '5', purpose: 'Renovasi lobi gedung A', dept: 'Engineering', vendorId: 'v-mitra', termId: 'progres-3', lead: 60, isJasa: true,
+    items: [item('e1', 'Renovasi lobi gedung A', 1, 'paket', { kind: 'jasa', spec: 'Lantai, plafon, pencahayaan' })],
+    quotePrice: { e1: 180000000 },
+    quoteSpec: 'Sudah termasuk material, tenaga kerja, dan pembersihan akhir.',
+    poItems: [
+      schedItem('e1-s1', 'Renovasi lobi gedung A — Termin 1 dari 3 · 33.3%', 1, 3, 59940000, { pct: 33.3 }),
+      schedItem('e1-s2', 'Renovasi lobi gedung A — Termin 2 dari 3 · 33.3%', 2, 3, 59940000, { pct: 33.3 }),
+      schedItem('e1-s3', 'Renovasi lobi gedung A — Termin 3 dari 3 · 33.4%', 3, 3, 60120000, { pct: 33.4 }),
+    ],
+  }),
+  // 6. DP + termin progres — uang muka 20% di luar jadwal, sisanya dibagi 4 termin.
+  kasus({
+    no: '6', purpose: 'Pembangunan pos jaga depan', dept: 'Engineering', vendorId: 'v-prima', termId: 'dp-progres', lead: 90, isJasa: true,
+    items: [item('f1', 'Pembangunan pos jaga', 1, 'paket', { kind: 'jasa', spec: 'Struktur, atap, instalasi listrik' })],
+    quotePrice: { f1: 100000000 },
+    quoteSpec: 'Uang muka 20% untuk material awal, sisanya per termin progres.',
+    poItems: [
+      schedItem('f1-s1', 'Pembangunan pos jaga — Termin 1 dari 4 · 25%', 1, 4, 20000000, { pct: 25 }),
+      schedItem('f1-s2', 'Pembangunan pos jaga — Termin 2 dari 4 · 25%', 2, 4, 20000000, { pct: 25 }),
+      schedItem('f1-s3', 'Pembangunan pos jaga — Termin 3 dari 4 · 25%', 3, 4, 20000000, { pct: 25 }),
+      schedItem('f1-s4', 'Pembangunan pos jaga — Termin 4 dari 4 · 25%', 4, 4, 20000000, { pct: 25 }),
+    ],
+  }),
+  // 7. Berkala per periode — kontrak triwulan mulai Januari. Tiga periode sudah lewat dan bisa
+  //    di-BAPP; periode Okt-Des masih terkunci sampai 31 Des, untuk menguji kunci tanggal.
+  kasus({
+    // Layanan berkala yang ditagih per periode tanpa berita acara per termin.
+    no: '7', purpose: 'Cleaning service gedung 2026', dept: 'Housekeeping', vendorId: 'v-karya', termId: 'bulanan-12', lead: 7, isJasa: true, withReceipt: false,
+    termParams: { period: 'triwulan', periods: 4 },
+    items: [item('g1', 'Cleaning service gedung', 1, 'paket', { kind: 'jasa', spec: '6 orang, 6 hari kerja per minggu' })],
+    quotePrice: { g1: 120000000 },
+    quoteSpec: 'Sudah termasuk alat, bahan pembersih, dan seragam.',
+    poItems: [
+      schedItem('g1-s1', 'Cleaning service gedung — Triwulan ke-1 dari 4', 1, 4, 30000000, { unit: 'periode', periodFrom: '2026-01-01', periodTo: '2026-03-31' }),
+      schedItem('g1-s2', 'Cleaning service gedung — Triwulan ke-2 dari 4', 2, 4, 30000000, { unit: 'periode', periodFrom: '2026-04-01', periodTo: '2026-06-30' }),
+      schedItem('g1-s3', 'Cleaning service gedung — Triwulan ke-3 dari 4', 3, 4, 30000000, { unit: 'periode', periodFrom: '2026-07-01', periodTo: '2026-09-30' }),
+      schedItem('g1-s4', 'Cleaning service gedung — Triwulan ke-4 dari 4', 4, 4, 30000000, { unit: 'periode', periodFrom: '2026-10-01', periodTo: '2026-12-31' }),
+    ],
+  }),
+  // --- Dua kasus kembar untuk menguji penanda serah terima -------------------------------------
+  // Isinya sengaja persis sama — vendor, termin, barang, qty, harga — supaya satu-satunya
+  // yang berbeda adalah ada atau tidaknya FPB. Yang satu melewati gudang, yang satu dikirim
+  // vendor langsung ke lokasi kerja dan ditagih tanpa penerimaan.
+  // 8. Ada serah terima: PO -> FPB -> faktur dari FPB.
+  kasus({
+    no: '8', purpose: 'Pipa PVC dan elbow — stok gudang', dept: 'Engineering', vendorId: 'v-prima', termId: 'cad', lead: 7,
+    withReceipt: true,
+    items: [
+      item('h1', 'Pipa PVC', 40, 'pcs', { spec: 'Diameter 3 inci, panjang 4 m' }),
+      item('h2', 'Elbow PVC', 60, 'pcs', { spec: 'Sambungan 90 derajat, 3 inci' }),
+    ],
+    quotePrice: { h1: 65000, h2: 6500 },
+    quoteSpec: 'Kirim ke gudang utama, diterima dan dihitung petugas gudang.',
+    poItems: [
+      poItem('h1', 'Pipa PVC', 40, 'pcs', 65000, { spec: 'Diameter 3 inci, panjang 4 m', ppnRate: RULES.ppn }),
+      poItem('h2', 'Elbow PVC', 60, 'pcs', 6500, { spec: 'Sambungan 90 derajat, 3 inci', ppnRate: RULES.ppn }),
+    ],
+  }),
+  // 9. Tanpa serah terima: PO -> faktur langsung dari PO.
+  kasus({
+    no: '9', purpose: 'Pipa PVC dan elbow — kirim langsung ke lokasi lantai 4', dept: 'Engineering', vendorId: 'v-prima', termId: 'cad', lead: 7,
+    withReceipt: false,
+    items: [
+      item('j1', 'Pipa PVC', 40, 'pcs', { spec: 'Diameter 3 inci, panjang 4 m' }),
+      item('j2', 'Elbow PVC', 60, 'pcs', { spec: 'Sambungan 90 derajat, 3 inci' }),
+    ],
+    quotePrice: { j1: 65000, j2: 6500 },
+    quoteSpec: 'Dibongkar langsung di lokasi kerja lantai 4, tidak melewati gudang.',
+    poItems: [
+      poItem('j1', 'Pipa PVC', 40, 'pcs', 65000, { spec: 'Diameter 3 inci, panjang 4 m', ppnRate: RULES.ppn }),
+      poItem('j2', 'Elbow PVC', 60, 'pcs', 6500, { spec: 'Sambungan 90 derajat, 3 inci', ppnRate: RULES.ppn }),
+    ],
+  }),
+  // 10. Jasa tanpa jadwal termin: BAPP-nya dicatat per lingkup kerja — diterima atau ditolak,
+  // bukan diisi qty. Dua lingkup yang berbeda supaya satu bisa diterima dan satu ditolak.
+  kasus({
+    no: '10', seq: '020', purpose: 'Servis AC dan pest control triwulan IV', dept: 'Engineering',
+    vendorId: 'v-delta', termId: 'net-30', lead: 14, isJasa: true,
+    items: [
+      item('m1', 'Jasa servis AC', 12, 'unit', { kind: 'jasa', spec: 'Lantai 1-3, cuci evaporator dan isi freon' }),
+      item('m2', 'Jasa pest control', 1, 'paket', { kind: 'jasa', spec: 'Seluruh area gedung, termasuk basement' }),
+    ],
+    quotePrice: { m1: 350000, m2: 1800000 },
+    quoteSpec: 'Dikerjakan di luar jam operasional, laporan hasil diserahkan setelah selesai.',
+    poItems: [
+      poItem('m1', 'Jasa servis AC', 12, 'unit', 350000, { kind: 'jasa', spec: 'Lantai 1-3, cuci evaporator dan isi freon', ppnRate: RULES.ppn }),
+      poItem('m2', 'Jasa pest control', 1, 'paket', 1800000, { kind: 'jasa', spec: 'Seluruh area gedung, termasuk basement', ppnRate: RULES.ppn }),
+    ],
+  }),
+];
+
 export const fppbjSeed = [
+  // --- Tujuh kasus uji: satu per syarat pembayaran, semuanya sudah sampai PO/SPK ----------------
+  // Barang -> PO -> FPB. Jasa -> SPK -> BAPP. Jalur vendor tunggal dipakai semuanya supaya
+  // rantainya pendek dan yang diuji tetap penerimaannya, bukan proses biddingnya.
+  ...uji.map((u) => u.fppbj),
   {
     id: 'fppbj-0001',
     number: 'FPPBJ/2026/11/0001',
@@ -424,6 +637,43 @@ export const fppbjSeed = [
     poId: 'po-0040',
     requester: 'Andi Wijaya · Staff Housekeeping',
   },
+  // Sudah diverifikasi dan jalurnya ditetapkan bidding, tapi penawaran vendornya belum ada
+  // satu pun. Inilah keadaan pengadaan yang paling sering tertahan: jalurnya sudah jelas,
+  // yang kurang tinggal mengundang vendor dan memasukkan penawarannya.
+  {
+    id: 'fppbj-0006',
+    number: 'FPPBJ/2026/10/0007',
+    date: '2026-10-28',
+    neededBy: '2026-12-01',
+    dept: 'Security',
+    purpose: 'Radio HT dan seragam untuk tim security',
+    iom: { no: '', date: '', file: '' },
+    items: [
+      item('s1', 'Radio HT', 10, 'unit', { spec: 'Dua arah, baterai cadangan, jangkauan seluruh gedung' }),
+      item('s2', 'Seragam satpam', 15, 'set', { spec: 'Lengkap dengan atribut dan sepatu' }),
+    ],
+    status: 'dalam_pengadaan',
+    note: '',
+    returnNote: '',
+    submittedAt: '2026-10-28',
+    verifiedAt: '2026-10-29',
+    routedAt: '2026-10-30',
+    route: 'bidding',
+    quotes: [],
+    single: { on: false, reason: '' },
+    procurement: {
+      kind: 'bidding',
+      status: 'draf',
+      note: '',
+      reason: '',
+      termNote: '',
+      negotiation: '',
+      winners: {},
+      finals: {},
+      scores: {},
+    },
+    requester: 'Bagus Nugroho · Staff Security',
+  },
 ];
 
 // PO jasa yang sudah diterima dan difaktur tapi belum dibayar (lewat jatuh tempo) → contoh umur hutang.
@@ -468,6 +718,20 @@ const poBintang1 = histPo('po-0018', 'PO/2026/06/0018', '2026-06-12', 'v-bintang
   poItem('d1', 'Meja lipat 120x60', 6, 'pcs', 620000),
   poItem('d2', 'Lemari arsip besi 4 laci', 2, 'unit', 2400000),
 ]);
+// PO yang dikirim bertahap: tiga FPB atas satu PO, masing-masing bertanggal berbeda.
+// Dipakai untuk mencoba menggabungkan beberapa penerimaan ke satu faktur — termasuk apa yang
+// terjadi pada jatuh tempo ketika tanggal penerimaannya tidak sama.
+const poAlfaStaged = histPo('po-0041', 'PO/2026/10/0041', '2026-10-20', 'v-alfa', [
+  poItem('a1', 'Kertas A4 80 gsm', 50, 'rim', 56000, { ppnRate: RULES.ppn }),
+  poItem('a2', 'Map plastik', 200, 'pcs', 3500, { ppnRate: RULES.ppn }),
+]);
+
+// Pesanan besar yang dikirim enam kali: dipakai untuk mencoba kepala kartu saat penerimaannya
+// lebih dari lima — nomornya diringkas jadi satu badge yang membuka daftar.
+const poBintangStaged = histPo('po-0042', 'PO/2026/09/0042', '2026-09-05', 'v-bintang', [
+  poItem('k1', 'Kursi kantor ergonomis', 60, 'unit', 1450000, { spec: 'Sandaran jaring, roda, adjustable', ppnRate: RULES.ppn }),
+]);
+
 // Jasa semua → SPK, dengan termin jasa "bayar penuh di akhir".
 const poMitra1 = histPo('po-0025', 'SPK/2026/08/0025', '2026-08-18', 'v-mitra', [
   poItem('m1', 'Jasa servis AC', 20, 'unit', 330000, { kind: 'jasa' }),
@@ -476,7 +740,7 @@ const histDocs = [
   { po: poAlfa1, rc: ['fpb-0005', 'FPB/2026/07/0005', '2026-07-12', 'SJ-ALF-6120'], inv: ['fkt-0014', 'FKT/2026/07/0014', 'INV-ALF-70231', '2026-07-14', '2026-08-13'], pr: ['pr-0010', 'PR/2026/08/0010', '2026-08-10'] },
   { po: poAlfa2, rc: ['fpb-0006', 'FPB/2026/08/0006', '2026-08-09', 'SJ-ALF-6544'], inv: ['fkt-0017', 'FKT/2026/08/0017', 'INV-ALF-80377', '2026-08-11', '2026-09-10'], pr: ['pr-0013', 'PR/2026/09/0013', '2026-09-08'] },
   { po: poBintang1, rc: ['fpb-0004', 'FPB/2026/06/0004', '2026-06-20', 'SJ-BF-2210'], inv: ['fkt-0011', 'FKT/2026/06/0011', 'INV-BF-60418', '2026-06-22', '2026-07-22'], pr: ['pr-0008', 'PR/2026/07/0008', '2026-07-20'] },
-  { po: poMitra1, rc: ['bast-0002', 'BAST/2026/08/0002', '2026-08-28', 'BAST-MTL-0828'], inv: ['fkt-0019', 'FKT/2026/08/0019', 'INV-MTL-2208', '2026-08-29', '2026-09-28'], pr: ['pr-0014', 'PR/2026/09/0014', '2026-09-25'] },
+  { po: poMitra1, rc: ['bapp-0002', 'BAPP/2026/08/0002', '2026-08-28', 'BAPP-MTL-0828'], inv: ['fkt-0019', 'FKT/2026/08/0019', 'INV-MTL-2208', '2026-08-29', '2026-09-28'], pr: ['pr-0014', 'PR/2026/09/0014', '2026-09-25'] },
 ];
 const histReceipts = histDocs.map(({ po, rc }) => ({
   id: rc[0],
@@ -486,6 +750,7 @@ const histReceipts = histDocs.map(({ po, rc }) => ({
   date: rc[2],
   doNumber: rc[3],
   kind: po.items.every((i) => i.kind === 'jasa') ? 'jasa' : 'barang',
+  createdBy: 'Rudi Hermawan · Kepala Gudang',
   lines: po.items.map((i) => ({ itemId: i.id, qty: i.qty, rejected: 0 })),
   note: '',
 }));
@@ -518,19 +783,23 @@ const histPrs = histDocs.map(({ po, inv, pr }) => {
   };
 });
 
-export const posSeed = [poOld, poChair, spkLift, poAlfa2, poAlfa1, poBintang1, poMitra1];
+
+
+export const posSeed = [...uji.map((u) => u.po), poOld, poChair, spkLift, poAlfaStaged, poBintangStaged, poAlfa2, poAlfa1, poBintang1, poMitra1];
 
 // poOld: selesai (diterima penuh, difaktur, lunas). poChair: diterima sebagian, DP disetujui.
 export const receiptsSeed = [
   ...histReceipts,
   {
-    id: 'bast-0003',
-    number: 'BAST/2026/10/0003',
+    id: 'bapp-0003',
+    number: 'BAPP/2026/10/0003',
     poId: 'po-0036',
     vendorId: 'v-mitra',
     date: '2026-10-15',
     kind: 'jasa',
-    doNumber: 'BAST-MTL-1015',
+    doNumber: 'BAPP-MTL-1015',
+    file: 'bapp-mtl-1015-ttd.pdf',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
     lines: [{ itemId: 's1', qty: 1, rejected: 0 }],
     note: 'Servis selesai',
   },
@@ -542,11 +811,165 @@ export const receiptsSeed = [
     date: '2026-09-20',
     doNumber: 'SJ-ALF-7781',
     kind: 'barang',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
     lines: [
       { itemId: 'i1', qty: 50, rejected: 0 },
       { itemId: 'i2', qty: 200, rejected: 0 },
     ],
     note: '',
+  },
+  // Tiga FPB dari satu vendor (PT Alfa Sejahtera) atas satu PO yang dikirim bertahap.
+  // Ketiganya belum difaktur, jadi satu faktur bisa mencakup dua atau tiga FPB sekaligus
+  // — inilah yang dipakai untuk mencoba pilih-banyak di langkah 1 form faktur.
+  {
+    id: 'fpb-0013',
+    number: 'FPB/2026/10/0013',
+    poId: 'po-0041',
+    vendorId: 'v-alfa',
+    date: '2026-10-22',
+    doNumber: 'SJ-ALF-8801',
+    kind: 'barang',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
+    file: 'sj-alf-8801.pdf',
+    lines: [{ itemId: 'a1', qty: 20, rejected: 0 }],
+    note: 'Kiriman tahap 1: kertas sebagian.',
+  },
+  {
+    id: 'fpb-0014',
+    number: 'FPB/2026/10/0014',
+    poId: 'po-0041',
+    vendorId: 'v-alfa',
+    date: '2026-10-27',
+    doNumber: 'SJ-ALF-8814',
+    kind: 'barang',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
+    file: 'sj-alf-8814.pdf',
+    lines: [{ itemId: 'a1', qty: 30, rejected: 0 }],
+    note: 'Kiriman tahap 2: sisa kertas.',
+  },
+  {
+    id: 'fpb-0015',
+    number: 'FPB/2026/11/0015',
+    poId: 'po-0041',
+    vendorId: 'v-alfa',
+    date: '2026-11-03',
+    doNumber: 'SJ-ALF-8830',
+    kind: 'barang',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
+    file: 'sj-alf-8830.pdf',
+    lines: [{ itemId: 'a2', qty: 200, rejected: 0 }],
+    note: 'Kiriman tahap 3: map plastik.',
+  },
+  // Dua penerimaan CV Delta Elektronik dengan termin BERBEDA: satu CBD (barang), satu
+  // bayar penuh di akhir (jasa). Keduanya siap difaktur tapi TIDAK boleh digabung jadi satu
+  // faktur — dipakai untuk mencoba penguncian termin di langkah 1 form faktur.
+  {
+    id: 'fpb-0016',
+    number: 'FPB/2026/11/0016',
+    poId: 'po-uji-3',
+    vendorId: 'v-delta',
+    date: '2026-11-03',
+    doNumber: 'SJ-DLT-5521',
+    kind: 'barang',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
+    file: 'sj-dlt-5521.pdf',
+    lines: [
+      { itemId: 'c1', qty: 3, rejected: 0 },
+      { itemId: 'c2', qty: 10, rejected: 0 },
+    ],
+    note: 'Printer dan tinta diterima lengkap.',
+  },
+  {
+    id: 'bapp-0017',
+    number: 'BAPP/2026/11/0017',
+    poId: 'po-uji-4',
+    vendorId: 'v-delta',
+    date: '2026-11-04',
+    doNumber: 'BAPP-DLT-1109',
+    kind: 'jasa',
+    createdBy: 'Budi Santoso · Teknisi Engineering',
+    file: 'bapp-dlt-1109-ttd.pdf',
+    lines: [{ itemId: 'd1', qty: 20, rejected: 0 }],
+    note: 'Servis AC 20 unit selesai, hasil diperiksa.',
+  },
+  // Enam kiriman atas satu pesanan kursi; semuanya belum difaktur dan berjatuh tempo berbeda.
+  {
+    id: 'fpb-0018',
+    number: 'FPB/2026/09/0018',
+    poId: 'po-0042',
+    vendorId: 'v-bintang',
+    date: '2026-09-10',
+    doNumber: 'SJ-BF-918',
+    kind: 'barang',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
+    file: 'sj-bf-918.pdf',
+    lines: [{ itemId: 'k1', qty: 10, rejected: 0 }],
+    note: 'Kiriman tahap 1 dari 6.',
+  },
+  {
+    id: 'fpb-0019',
+    number: 'FPB/2026/09/0019',
+    poId: 'po-0042',
+    vendorId: 'v-bintang',
+    date: '2026-09-17',
+    doNumber: 'SJ-BF-919',
+    kind: 'barang',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
+    file: 'sj-bf-919.pdf',
+    lines: [{ itemId: 'k1', qty: 10, rejected: 0 }],
+    note: 'Kiriman tahap 2 dari 6.',
+  },
+  {
+    id: 'fpb-0020',
+    number: 'FPB/2026/09/0020',
+    poId: 'po-0042',
+    vendorId: 'v-bintang',
+    date: '2026-09-24',
+    doNumber: 'SJ-BF-920',
+    kind: 'barang',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
+    file: 'sj-bf-920.pdf',
+    lines: [{ itemId: 'k1', qty: 10, rejected: 0 }],
+    note: 'Kiriman tahap 3 dari 6.',
+  },
+  {
+    id: 'fpb-0021',
+    number: 'FPB/2026/10/0021',
+    poId: 'po-0042',
+    vendorId: 'v-bintang',
+    date: '2026-10-01',
+    doNumber: 'SJ-BF-921',
+    kind: 'barang',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
+    file: 'sj-bf-921.pdf',
+    lines: [{ itemId: 'k1', qty: 10, rejected: 0 }],
+    note: 'Kiriman tahap 4 dari 6.',
+  },
+  {
+    id: 'fpb-0022',
+    number: 'FPB/2026/10/0022',
+    poId: 'po-0042',
+    vendorId: 'v-bintang',
+    date: '2026-10-08',
+    doNumber: 'SJ-BF-922',
+    kind: 'barang',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
+    file: 'sj-bf-922.pdf',
+    lines: [{ itemId: 'k1', qty: 10, rejected: 0 }],
+    note: 'Kiriman tahap 5 dari 6.',
+  },
+  {
+    id: 'fpb-0023',
+    number: 'FPB/2026/10/0023',
+    poId: 'po-0042',
+    vendorId: 'v-bintang',
+    date: '2026-10-15',
+    doNumber: 'SJ-BF-923',
+    kind: 'barang',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
+    file: 'sj-bf-923.pdf',
+    lines: [{ itemId: 'k1', qty: 10, rejected: 0 }],
+    note: 'Kiriman tahap 6 dari 6.',
   },
   {
     id: 'fpb-0012',
@@ -556,13 +979,40 @@ export const receiptsSeed = [
     date: '2026-11-03',
     doNumber: 'SJ-BF-3301',
     kind: 'barang',
-    lines: [{ itemId: 'c1', qty: 6, rejected: 0 }],
-    note: 'Pengiriman tahap 1',
+    createdBy: 'Rudi Hermawan · Kepala Gudang',
+    file: 'sj-bf-3301.pdf',
+    lines: [{ itemId: 'c1', qty: 6, rejected: 2 }],
+    note: 'Pengiriman tahap 1. 2 unit sandaran retak, dikembalikan ke vendor.',
+  },
+];
+
+// Dua tagihan rutin non-PO dari vendor yang sama, dua-duanya belum dibayar. Bersama
+// FKT/2026/10/0024 (vendor yang sama) jadi tiga faktur terbuka — dipakai untuk mencoba
+// satu Payment Request yang mencakup beberapa faktur sekaligus.
+const fakturRutin = [
+  {
+    id: 'fkt-0030', number: 'FKT/2026/10/0030', vendorNo: 'INV-MTL-2291',
+    vendorId: 'v-mitra', date: '2026-10-05', dueDate: '2026-11-04', pphPct: 0,
+    lines: [{ productId: 'jasa-pest', kind: 'jasa', desc: 'Jasa pest control', spec: 'Periode Oktober 2026', unit: 'bulan', qty: 1, price: 1800000, ppnRate: RULES.ppn, received: true }],
+    files: ['invoice-mtl-2291.pdf', 'faktur-pajak-mtl-2291.pdf'],
+  },
+  {
+    id: 'fkt-0031', number: 'FKT/2026/10/0031', vendorNo: 'INV-MTL-2302',
+    vendorId: 'v-mitra', date: '2026-10-18', dueDate: '2026-11-17', pphPct: 0,
+    lines: [{ productId: 'jasa-servis-lift', kind: 'jasa', desc: 'Jasa servis berkala lift', spec: 'Servis tambahan lift barang', unit: 'paket', qty: 1, price: 4250000, ppnRate: RULES.ppn, received: true }],
+    files: ['invoice-mtl-2302.pdf', 'faktur-pajak-mtl-2302.pdf'],
+  },
+  {
+    id: 'fkt-0032', number: 'FKT/2026/10/0032', vendorNo: 'INV-KRY-5510',
+    vendorId: 'v-karya', date: '2026-10-12', dueDate: '2026-11-11', pphPct: 0,
+    lines: [{ productId: 'tagihan-internet', kind: 'jasa', desc: 'Tagihan internet & telepon', spec: 'Periode Oktober 2026', unit: 'bulan', qty: 1, price: 2750000, ppnRate: RULES.ppn, received: true }],
+    files: ['invoice-kry-5510.pdf', 'faktur-pajak-kry-5510.pdf'],
   },
 ];
 
 export const invoicesSeed = [
   ...histInvoices,
+  ...fakturRutin,
   {
     id: 'fkt-0024',
     number: 'FKT/2026/10/0024',
@@ -571,7 +1021,7 @@ export const invoicesSeed = [
     vendorId: 'v-mitra',
     date: '2026-10-16',
     dueDate: '2026-10-25',
-    lines: [{ receiptId: 'bast-0003', itemId: 's1', qty: 1, price: 8500000 }],
+    lines: [{ receiptId: 'bapp-0003', itemId: 's1', qty: 1, price: 8500000 }],
     pphPct: 2,
     files: ['invoice-mitra.pdf', 'faktur-pajak-mitra.pdf'],
   },
@@ -625,6 +1075,9 @@ export const returnsSeed = [];
 
 // Payment Voucher (PV): terbit saat kas benar-benar keluar, satu per pembayaran.
 // Nomornya dipakai jurnal kas keluar; Payment Request tetap jadi dokumen permintaannya.
+// PV dari PR yang sudah dibayar: terbit sehari sebelum transfernya, lalu dijurnal hari itu juga.
+// Jarak satu hari itu disengaja supaya terlihat bahwa perintah bayar mendahului uang keluar.
+const kemarin = (iso) => new Date(Date.parse(iso) - 864e5).toISOString().slice(0, 10);
 export const vouchersSeed = prsSeed
   .filter((p) => p.status === 'dibayar')
   .map((p, i) => ({
@@ -632,11 +1085,16 @@ export const vouchersSeed = prsSeed
     number: `PV/${p.paidAt.slice(0, 4)}/${p.paidAt.slice(5, 7)}/${String(i + 1).padStart(4, '0')}`,
     prIds: [p.id],
     vendorId: p.vendorId,
-    date: p.paidAt,
+    date: kemarin(p.paidAt),
+    paidAt: p.paidAt,
     amount: p.amount,
     source: 'BCA 288-123-9001 · Kas Operasional',
     payRef: `TRF-${p.paidAt.replace(/-/g, '')}-${String(i + 1).padStart(3, '0')}`,
     proofs: [`bukti-transfer-${p.number.split('/').pop()}.pdf`],
     note: '',
+    status: 'dibayar',
+    issuedBy: 'Dewi Lestari · Staff Finance',
     paidBy: 'Dewi Lestari · Staff Finance',
+    journalPostedAt: p.paidAt,
+    journalBy: 'Maya Sari · Staff Accounting',
   }));

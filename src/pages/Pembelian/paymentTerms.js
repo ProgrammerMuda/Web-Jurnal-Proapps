@@ -20,7 +20,7 @@
 // Titik hitung jatuh tempo. "Sejak barang/pekerjaan diterima" dan "sejak faktur vendor" adalah
 // dua kesepakatan yang berbeda, dan sebelumnya keduanya tertulis sama: "30 hari".
 export const DUE_FROM = [
-  { value: 'receipt', label: 'Tanggal penerimaan (FPB / BAST)' },
+  { value: 'receipt', label: 'Tanggal penerimaan (FPB / BAPP)' },
   { value: 'invoice', label: 'Tanggal faktur vendor' },
 ];
 export const dueFromLabel = (v) => (v === 'invoice' ? 'faktur' : 'penerimaan');
@@ -37,10 +37,58 @@ export function termFields(def) {
 }
 
 // --- Katalog awal -----------------------------------------------------------------------------
-// Sengaja kosong: syarat pembayaran dirakit sendiri lewat Pengaturan, tidak ada termin bawaan
-// yang dipaksakan. Dokumen yang sudah terbit tetap terbaca karena masing-masing membawa
-// salinan mekanismenya sendiri (lihat snapshotTerm di bawah).
-export const paymentTermsSeed = [];
+// Isi awal, bukan termin bawaan: semuanya termin biasa yang bisa diubah, dinonaktifkan, dan
+// dihapus selama belum dipakai dokumen. Tujuannya cuma supaya penawaran vendor bisa langsung
+// diisi tanpa menyiapkan katalog dari nol dulu. Hapus saja yang tidak dipakai gedung Anda.
+const starter = (o) => ({ hint: '', example: '', active: true, dueFrom: 'receipt', defaults: {}, ...o });
+
+export const paymentTermsSeed = [
+  // --- Barang (PO): patokannya pengiriman ---
+  starter({
+    id: 'cad', label: 'CAD — bayar setelah diterima', scope: 'barang',
+    hint: 'Dibayar penuh setelah barang diterima', example: 'ATK, consumable, vendor langganan',
+    advance: 'none', split: 'none', due: false,
+  }),
+  starter({
+    id: 'dp-30', label: 'DP + pelunasan', scope: 'barang',
+    hint: 'Uang muka di awal, sisanya setelah barang diterima', example: 'Furnitur custom, mesin, pesanan khusus',
+    advance: 'partial', split: 'none', due: false, defaults: { dpPct: 30 },
+  }),
+  starter({
+    id: 'cbd', label: 'CBD — bayar sebelum kirim', scope: 'barang',
+    hint: '100% dibayar sebelum barang dikirim', example: 'Vendor baru, pembelian kecil',
+    advance: 'full', split: 'none', due: false,
+  }),
+
+  // --- Jasa (SPK): patokannya penyelesaian pekerjaan ---
+  starter({
+    id: 'net-30', label: 'Bayar penuh di akhir', scope: 'jasa',
+    hint: 'Dibayar penuh setelah BAPP, dengan tempo', example: 'Servis AC, perbaikan kecil, konsultasi singkat',
+    advance: 'none', split: 'none', due: true, defaults: { dueDays: 30 },
+  }),
+  starter({
+    id: 'progres-3', label: 'Termin progres', scope: 'jasa',
+    hint: 'Ditagih per milestone sesuai progres pekerjaan', example: 'Renovasi, instalasi jaringan',
+    advance: 'none', split: 'terms', due: true, defaults: { terms: 3, dueDays: 30 },
+  }),
+  starter({
+    id: 'dp-progres', label: 'DP + termin progres', scope: 'jasa',
+    hint: 'Uang muka di awal, sisanya dibagi per milestone', example: 'Konstruksi, renovasi besar',
+    advance: 'partial', split: 'terms', dpOutOfSchedule: true, due: true,
+    defaults: { dpPct: 20, terms: 4, dueDays: 30 },
+  }),
+  starter({
+    id: 'retensi-5', label: 'Termin progres + retensi', scope: 'jasa',
+    hint: 'Per milestone, sebagian ditahan selama masa pemeliharaan', example: 'Konstruksi, instalasi mesin, MEP',
+    advance: 'none', split: 'terms', retention: true, due: true,
+    defaults: { terms: 3, retentionPct: 5, retentionMonths: 6, dueDays: 30 },
+  }),
+  starter({
+    id: 'bulanan-12', label: 'Berkala per periode', scope: 'jasa',
+    hint: 'Ditagih rutin tiap periode sesuai BAPP periode', example: 'Cleaning service, security, maintenance',
+    advance: 'none', split: 'periods', due: true, defaults: { period: 'bulan', periods: 12, dueDays: 30 },
+  }),
+];
 
 // --- Membaca mekanis dari satu termin tersimpan ----------------------------------------------
 // Termin yang tersimpan di penawaran / PO membawa salinan saklarnya sendiri (lihat snapshotTerm).

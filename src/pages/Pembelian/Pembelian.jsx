@@ -1,5 +1,5 @@
 // Modul Pembelian: permintaan → verifikasi → pengadaan (bidding / vendor tunggal) → PO → penerimaan → faktur → pembayaran.
-import { ActionIcon, Badge, Button, Card, Group, Menu, Select, Stack, Text } from '@mantine/core';
+import { ActionIcon, Badge, Button, Card, Group, Menu, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import {
   ArrowCounterClockwise,
@@ -12,10 +12,9 @@ import {
   Truck,
   Wallet,
   Package,
-  Scales,
 } from '@/components/Icon.jsx';
 import { PageIntro, ReferencePicker } from './components.jsx';
-import { CreditModal, DetailModal, InvoiceModal, PayModal, PrModal, ReasonModal, ReturnModal, ReceiptModal } from './Dialogs.jsx';
+import { CreditModal, DetailModal, PayModal, ReasonModal, ReturnModal, ReceiptModal, VoucherModal } from './Dialogs.jsx';
 import FppbjDetail from './FppbjDetail.jsx';
 import FppbjForm from './FppbjForm.jsx';
 import LaporanHutang from './LaporanHutang.jsx';
@@ -24,13 +23,15 @@ import Overview from './Overview.jsx';
 import PoDetail from './PoDetail.jsx';
 import ReceiptDetail from './ReceiptDetail.jsx';
 import InvoiceDetail from './InvoiceDetail.jsx';
+import InvoiceForm from './InvoiceForm.jsx';
+import JournalDetail from './JournalDetail.jsx';
+import PrForm from './PrForm.jsx';
 import PrDetail from './PrDetail.jsx';
 import VoucherDetail from './VoucherDetail.jsx';
-import { roles } from './data.js';
 import { formatHash, parseHash } from './routes.js';
 import { readiness } from './selectors.js';
 import { canCreate } from './permissions.js';
-import { invTotals, poDpAmount, poTotal, routeLabel, rupiah, sum, termText, uninvoicedLines, remainingQty } from './utils.js';
+import { invTotals, poTotal, routeLabel, rupiah, sum, remainingQty } from './utils.js';
 import { usePb } from './usePb.js';
 
 // Definisi menu "Buat baru": peran yang boleh membuat + sumber referensi.
@@ -50,38 +51,14 @@ const buatBaruOrder = ['fppbj', 'po', 'receipt', 'invoice', 'pr', 'return'];
 
 // Judul & deskripsi halaman per menu sidebar.
 const pageIntros = {
-  overview: { icon: ShoppingCart, title: 'Pembelian', description: 'Kelola pembelian dari permintaan, pengadaan, PO, penerimaan barang, tagihan vendor hingga pembayaran.' },
+  overview: { icon: ShoppingCart, title: 'Pembelian', description: 'Kelola pembelian dari permintaan, pengadaan, PO, penerimaan barang/jasa, tagihan vendor hingga pembayaran.' },
   fppbj: { icon: FileText, title: 'Permintaan Pembelian', description: 'Ajukan kebutuhan barang atau jasa; IOM opsional. Setelah diverifikasi, jalur bidding atau vendor tunggal dipilih di tahap pengadaan.' },
   orders: { icon: Package, title: 'Pesanan Pembelian', description: 'Pesanan ke vendor yang dibuat dari pengadaan yang sudah disetujui.' },
-  receipts: { icon: Truck, title: 'Penerimaan Barang', description: 'Catat barang (FPB) atau jasa (BAST) dari vendor yang sudah sampai. Penerimaan bisa sebagian.' },
+  receipts: { icon: Truck, title: 'Penerimaan Barang/Jasa', description: 'Catat barang (FPB) atau jasa (BAPP) dari vendor yang sudah sampai. Penerimaan bisa sebagian.' },
   bills: { icon: Invoice, title: 'Tagihan Vendor', description: 'Faktur dari vendor, dibuat dari penerimaan dan dicocokkan 3 arah dengan PO sebelum dibayar.' },
   payments: { icon: Wallet, title: 'Pembayaran Pembelian', description: 'Payment Request DP dan pelunasan ke vendor. Approver menyetujui, Finance membayar.' },
   returns: { icon: ArrowCounterClockwise, title: 'Retur Pembelian', description: 'Pengembalian barang ke vendor atas faktur yang sudah dibuat.' },
 };
-
-// Pengalih peran (prototype): melayang di semua tampilan agar alur bisa diuji dari tiap peran.
-function RoleBar({ role, setRole }) {
-  return (
-    <Group
-      gap="xs"
-      wrap="nowrap"
-      p="xs"
-      bg="white"
-      style={{
-        position: 'fixed',
-        right: 24,
-        bottom: 76,
-        zIndex: 150,
-        border: '1px solid var(--mantine-color-gray-3)',
-        borderRadius: 'var(--mantine-radius-md)',
-        boxShadow: 'var(--mantine-shadow-md)',
-      }}
-    >
-      <Text fz={11} fw={600} c="slate.6">Lihat sebagai</Text>
-      <Select size="xs" radius="md" w={170} allowDeselect={false} aria-label="Lihat sebagai" leftSection={<Scales size={14} />} data={roles.map((r) => ({ value: r.value, label: r.label }))} value={role} onChange={setRole} comboboxProps={{ position: 'top' }} />
-    </Group>
-  );
-}
 
 export default function Pembelian() {
   const pb = usePb();
@@ -100,6 +77,9 @@ export default function Pembelian() {
     window.scrollTo({ top: 0 });
   };
   const home = () => go({ name: 'tab', tab });
+
+  // Dipakai kaki halaman, yang muncul di semua tampilan modul ini.
+  const debt = sum(pb.invoices, (i) => invTotals(i, pb.calc).balance);
 
   const rd = readiness(pb);
 
@@ -132,31 +112,6 @@ export default function Pembelian() {
       emptyActions: [<Button key="b" size="xs" radius="md" variant="default" onClick={() => { close(); go({ name: 'tab', tab: 'orders' }); }}>Lihat PO</Button>, <Button key="c" size="xs" radius="md" onClick={() => { close(); go({ name: 'fppbj-new' }); }}>Buat permintaan</Button>],
       pick: ([id]) => setDialog({ type: 'receipt', poId: id }),
     },
-    invoice: {
-      multi: true,
-      title: 'Faktur · pilih penerimaan (FPB/BAST)',
-      icon: Invoice,
-      rows: rd.invoice.map((r) => ({ id: r.id, number: r.number, vendorId: r.vendorId, vendor: vendorName(r.vendorId), value: `${r.lines.reduce((n, l) => n + l.qty, 0)} diterima`, remain: `${uninvoicedLines(r, pb.invoices).length} baris belum difaktur`, hint: pb.posById[r.poId]?.number })),
-      emptyTitle: 'Belum ada penerimaan yang siap difaktur',
-      emptyText: 'Faktur dibuat dari FPB/BAST yang sudah dikonfirmasi dan belum difaktur penuh.',
-      emptyActions: [<Button key="b" size="xs" radius="md" variant="default" onClick={() => { close(); go({ name: 'tab', tab: 'orders' }); }}>Lihat PO</Button>],
-      pick: (ids) => setDialog({ type: 'invoice', receiptIds: ids }),
-    },
-    pr: {
-      multi: true,
-      title: 'Payment Request · pilih dasar pembayaran',
-      icon: Wallet,
-      rows: [
-        ...rd.prDp.map((p) => ({ id: `dp:${p.id}`, solo: true, group: 'DP / CBD · dari PO', number: p.number, vendor: vendorName(p.vendorId), value: rupiah(poDpAmount(p)), hint: `Termin ${termText(p.term)}` })),
-        ...rd.prPay.map((i) => ({ id: i.id, group: 'Pelunasan · dari faktur', number: i.number, vendorId: i.vendorId, vendor: vendorName(i.vendorId), value: rupiah(invTotals(i, pb.calc).free), hint: `Jatuh tempo ${i.dueDate}` })),
-      ],
-      emptyTitle: 'Belum ada yang perlu dibayar',
-      emptyText: 'Payment Request dibuat dari PO bertermin DP/CBD yang belum diajukan, atau dari faktur yang belum dibayar.',
-      emptyActions: [<Button key="b" size="xs" radius="md" variant="default" onClick={() => { close(); go({ name: 'tab', tab: 'receipts' }); }}>Lihat penerimaan</Button>],
-      pick: (ids) => (ids[0].startsWith('dp:')
-        ? setDialog({ type: 'pr', kind: 'dp', poId: ids[0].slice(3) })
-        : setDialog({ type: 'pr', kind: 'pelunasan', invoiceIds: ids })),
-    },
     return: {
       title: 'Retur pembelian · pilih faktur',
       icon: ArrowCounterClockwise,
@@ -168,15 +123,20 @@ export default function Pembelian() {
   };
 
   const onBuat = (key) => {
+    // Permintaan dan faktur punya halaman formnya sendiri. Khusus faktur, langkah 1 form itu
+    // sudah memuat pemilihan vendor dan penerimaan, jadi modal pemilih di depannya cuma
+    // menambah satu klik untuk pekerjaan yang sama.
     if (key === 'fppbj') return go({ name: 'fppbj-new' });
+    if (key === 'invoice') return go({ name: 'invoice-new' });
+    if (key === 'pr') return go({ name: 'pr-new' });
     setDialog({ type: 'ref', kind: key });
   };
 
   // Dokumen di luar peran aktif: tombol/menu-nya tidak ditampilkan sama sekali.
-  // Penerimaan dibuat Gudang (FPB) atau PIC jasa (BAST), tergantung isi pesanannya.
+  // Penerimaan dibuat Gudang (FPB) atau PIC jasa (BAPP), tergantung isi pesanannya.
   const allowed = (key) =>
     actions[key].doc === 'receipt'
-      ? canCreate(pb.role, 'fpb') || canCreate(pb.role, 'bast')
+      ? canCreate(pb.role, 'fpb') || canCreate(pb.role, 'bapp')
       : canCreate(pb.role, actions[key].doc);
 
   // Tombol tunggal untuk tab dokumen.
@@ -231,9 +191,8 @@ export default function Pembelian() {
         />
       )}
       {d?.type === 'receipt' && <ReceiptModal opened onClose={close} po={pb.posById[d.poId]} pb={pb} />}
-      {d?.type === 'invoice' && <InvoiceModal opened onClose={close} receiptIds={d.receiptIds} pb={pb} />}
-      {d?.type === 'pr' && <PrModal opened onClose={close} kind={d.kind} po={d.poId ? pb.posById[d.poId] : null} invoiceIds={d.invoiceIds} pb={pb} />}
-      {d?.type === 'pay' && prDoc && <PayModal opened onClose={close} pr={prDoc} pb={pb} />}
+      {d?.type === 'pv' && prDoc && <VoucherModal opened onClose={close} pr={prDoc} pb={pb} />}
+      {d?.type === 'pay' && pb.vouchersById[d.voucherId] && <PayModal opened onClose={close} voucher={pb.vouchersById[d.voucherId]} pb={pb} />}
       {d?.type === 'pr-reject' && prDoc && (
         <ReasonModal
           opened
@@ -251,19 +210,17 @@ export default function Pembelian() {
   );
 
   // --- tampilan ---
-  const roleBar = <RoleBar role={pb.role} setRole={pb.setRole} />;
   if (view.name === 'fppbj-new') {
-    return <><FppbjForm pb={pb} onBack={home} onSaved={(id) => go({ name: 'fppbj', id })} />{roleBar}</>;
+    return <FppbjForm pb={pb} onBack={home} onSaved={(id) => go({ name: 'fppbj', id })} />;
   }
   if (view.name === 'fppbj-edit' && pb.fppbjById[view.id]) {
-    return <><FppbjForm key={view.id} pb={pb} editing={pb.fppbjById[view.id]} onBack={() => go({ name: 'fppbj', id: view.id })} onSaved={(id) => go({ name: 'fppbj', id })} />{roleBar}</>;
+    return <FppbjForm key={view.id} pb={pb} editing={pb.fppbjById[view.id]} onBack={() => go({ name: 'fppbj', id: view.id })} onSaved={(id) => go({ name: 'fppbj', id })} />;
   }
   if (view.name === 'fppbj' && pb.fppbjById[view.id]) {
     return (
       <>
         <FppbjDetail fppbj={pb.fppbjById[view.id]} pb={pb} onBack={() => go({ name: 'tab', tab: 'fppbj' })} go={go} />
         {dialogs}
-        {roleBar}
       </>
     );
   }
@@ -272,7 +229,6 @@ export default function Pembelian() {
       <>
         <PoDetail po={pb.posById[view.id]} pb={pb} onBack={() => go({ name: 'tab', tab: 'orders' })} go={go} openDialog={setDialog} />
         {dialogs}
-        {roleBar}
       </>
     );
   }
@@ -282,27 +238,58 @@ export default function Pembelian() {
       <>
         <ReceiptDetail receipt={pb.receiptsById[view.id]} pb={pb} onBack={() => go({ name: 'tab', tab: 'receipts' })} go={go} openDialog={setDialog} />
         {dialogs}
-        {roleBar}
       </>
     );
   }
 
+  if (view.name === 'pr-new') {
+    return (
+      <>
+        <PrForm
+          pb={pb}
+          initialInvoiceIds={view.invoiceIds}
+          initialPoId={view.poId}
+          onBack={() => go({ name: 'tab', tab: 'payments' })}
+          onSaved={(id) => go({ name: 'pr', id })}
+        />
+      </>
+    );
+  }
+  if (view.name === 'invoice-new') {
+    return (
+      <>
+        <InvoiceForm
+          pb={pb}
+          initialReceiptIds={view.receiptIds}
+          initialPoId={view.poId}
+          onBack={() => go({ name: 'tab', tab: 'bills' })}
+          onSaved={(id) => go({ name: 'invoice', id })}
+        />
+      </>
+    );
+  }
   if (view.name === 'invoice' && pb.invoicesById[view.id]) {
     return (
       <>
         <InvoiceDetail invoice={pb.invoicesById[view.id]} pb={pb} onBack={() => go({ name: 'tab', tab: 'bills' })} go={go} openDialog={setDialog} />
         {dialogs}
-        {roleBar}
       </>
     );
   }
 
+  if (view.name === 'journal' && pb.vouchersById[view.id]) {
+    return (
+      <>
+        <JournalDetail voucher={pb.vouchersById[view.id]} pb={pb} onBack={() => go({ name: 'voucher', id: view.id })} go={go} />
+        {dialogs}
+      </>
+    );
+  }
   if (view.name === 'voucher' && pb.vouchersById[view.id]) {
     return (
       <>
-        <VoucherDetail voucher={pb.vouchersById[view.id]} pb={pb} onBack={() => go({ name: 'tab', tab: 'payments' })} go={go} />
+        <VoucherDetail voucher={pb.vouchersById[view.id]} pb={pb} onBack={() => go({ name: 'tab', tab: 'payments' })} go={go} openDialog={setDialog} />
         {dialogs}
-        {roleBar}
       </>
     );
   }
@@ -312,12 +299,10 @@ export default function Pembelian() {
       <>
         <PrDetail pr={pb.prs.find((p) => p.id === view.id)} pb={pb} onBack={() => go({ name: 'tab', tab: 'payments' })} go={go} openDialog={setDialog} />
         {dialogs}
-        {roleBar}
       </>
     );
   }
 
-  const debt = sum(pb.invoices, (i) => invTotals(i, pb.calc).balance);
   const refresh = (
     <ActionIcon variant="default" size="lg" radius="md" aria-label="Segarkan data pembelian">
       <ArrowsClockwise size={16} />
@@ -352,12 +337,11 @@ export default function Pembelian() {
       )}
       <Group justify="center" gap="xs">
         <Text fz={11} c="slate.5">
-          Prototype: gunakan &quot;Lihat sebagai&quot; (kanan bawah) untuk berpindah peran. Total hutang berjalan {rupiah(debt)}. Data tersimpan di browser.
+          Prototype: gunakan &quot;Lihat sebagai&quot; di kaki halaman untuk berpindah peran. Total hutang berjalan {rupiah(debt)}. Data tersimpan di browser.
         </Text>
         <Button size="compact-xs" variant="subtle" color="slate" onClick={() => { pb.reset(); go({ name: 'tab', tab: 'overview' }); }}>Reset data contoh</Button>
       </Group>
       {dialogs}
-      {roleBar}
     </Stack>
   );
 }

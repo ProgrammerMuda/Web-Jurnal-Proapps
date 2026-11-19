@@ -2,7 +2,10 @@
 import { periodOptions, personLabel, RULES, TODAY } from './data.js';
 import { dueFromLabel, termFields, termMechanics } from './paymentTerms.js';
 
-export { rupiah, rupiahShort, formatDate, addDays } from '@/pages/Penjualan/utils.js';
+import { addDays, formatDate } from '@/pages/Penjualan/utils.js';
+
+export { rupiah, rupiahShort } from '@/pages/Penjualan/utils.js';
+export { formatDate, addDays };
 
 export const sum = (arr, fn) => arr.reduce((n, x) => n + fn(x), 0);
 export const uid = (p) => `${p}-${Math.random().toString(36).slice(2, 8)}`;
@@ -13,6 +16,40 @@ export function nextNumber(prefix, list) {
     .filter((d) => d.number.startsWith(`${prefix}/`))
     .reduce((m, d) => Math.max(m, parseInt(d.number.split('/').pop(), 10) || 0), 0);
   return `${prefix}/2026/11/${String(max + 1).padStart(4, '0')}`;
+}
+
+// Panjang satu periode dalam bulan.
+export const PERIOD_MONTHS = { bulan: 1, triwulan: 3, semester: 6, tahun: 12 };
+
+// Tambah n bulan, dengan menjaga akhir bulan tetap akhir bulan (31 Jan + 1 bln = 28/29 Feb).
+export function addMonths(iso, n) {
+  const d = new Date(iso);
+  const day = d.getUTCDate();
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
+  const lastDay = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+  t.setUTCDate(Math.min(day, lastDay));
+  return t.toISOString().slice(0, 10);
+}
+const dayBefore = (iso) => new Date(Date.parse(iso) - 864e5).toISOString().slice(0, 10);
+
+// Rentang periode ke-i (1-based) dihitung dari tanggal mulai kontrak.
+export function periodRange(startIso, period, i) {
+  const m = PERIOD_MONTHS[period] ?? 1;
+  const from = addMonths(startIso, (i - 1) * m);
+  return { from, to: dayBefore(addMonths(startIso, i * m)) };
+}
+
+const BULAN_PENDEK = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+// "Jul–Sep 2026", atau "Des 2026–Feb 2027" kalau menyeberang tahun.
+export function rangeLabel({ from, to }) {
+  const a = new Date(from);
+  const b = new Date(to);
+  const ma = BULAN_PENDEK[a.getUTCMonth()];
+  const mb = BULAN_PENDEK[b.getUTCMonth()];
+  const ya = a.getUTCFullYear();
+  const yb = b.getUTCFullYear();
+  if (ya !== yb) return `${ma} ${ya}–${mb} ${yb}`;
+  return ma === mb ? `${ma} ${ya}` : `${ma}–${mb} ${ya}`;
 }
 
 export const monthsBetween = (fromIso, toIso) => {
@@ -82,6 +119,57 @@ export const remainingQty = (po, itemId, receipts) => {
   return Math.max(it.qty - receivedQty(po, itemId, receipts), 0);
 };
 
+// --- Jadwal termin pada form Catat BAPP ---------------------------------------------------------
+// Tiap baris jadwal SPK (Termin 1..N, lalu Retensi) punya tiga keadaan:
+//   diterima  — sudah pernah di-BAPP, tidak bisa dipilih lagi
+//   terkunci  — termin berkala yang periodenya belum berakhir; baru boleh dicatat setelah
+//               tanggal akhir periode, karena yang di-BAPP adalah pekerjaan yang sudah lewat
+//   terbuka   — bisa dicentang
+//
+// Termin persen (milestone) tidak terkunci tanggal: milestone bisa tercapai kapan saja, dan
+// beberapa sekaligus boleh dicatat dalam satu BAPP asal berurutan.
+export function scheduleRows(po, receipts, today, picked = []) {
+  const rows = po.items.map((it) => {
+    const received = remainingQty(po, it.id, receipts) === 0;
+    const lockedUntil = it.periodTo && it.periodTo > today ? it.periodTo : null;
+    return { item: it, received, lockedUntil, slot: it.slot ?? 0 };
+  });
+  // Berurutan: satu termin baru bisa dipilih kalau semua termin sebelumnya sudah diterima
+  // ATAU ikut dicentang pada BAPP yang sama. Tanpa bagian kedua, beberapa milestone yang
+  // selesai bersamaan tidak akan pernah bisa dicatat sekaligus.
+  let blocked = false;
+  return rows.map((r) => {
+    const beres = r.received || picked.includes(r.item.id);
+    const out = { ...r, blockedByOrder: blocked && !beres };
+    if (!beres) blocked = true;
+    return out;
+  });
+}
+
+// Tanggal jurnal satu BAPP. Termin berkala diakui pada akhir periode yang di-BAPP — bebannya
+// milik periode itu, bukan milik hari dokumennya diketik. Termin milestone diakui pada tanggal
+// BAPP, karena saat itulah pekerjaannya dinyatakan selesai.
+export function bappJournalDate(po, pickedItemIds, bappDate) {
+  const picked = po.items.filter((i) => pickedItemIds.includes(i.id));
+  const ends = picked.map((i) => i.periodTo).filter(Boolean);
+  return ends.length ? ends.sort().at(-1) : bappDate;
+}
+
+// Progres pesanan sesudah BAPP ini: dipakai di ringkasan hasil.
+export function bappProgress(po, receipts, pickedItemIds) {
+  const done = po.items.filter((i) => remainingQty(po, i.id, receipts) === 0 || pickedItemIds.includes(i.id));
+  const periodic = po.items.some((i) => i.unit === 'periode');
+  const totalValue = sum(po.items, (i) => i.qty * i.price);
+  const doneValue = sum(done, (i) => i.qty * i.price);
+  return {
+    periodic,
+    done: done.length,
+    total: po.items.length,
+    pct: totalValue > 0 ? Math.round((doneValue / totalValue) * 100) : 0,
+    remaining: totalValue - doneValue,
+  };
+}
+
 // Qty pada baris penerimaan yang sudah masuk faktur.
 // Faktur yang dibatalkan tidak lagi menghitung apa pun: qty-nya kembali terbuka untuk difaktur ulang.
 export const liveInvoices = (invoices) => invoices.filter((i) => !i.cancelled);
@@ -90,6 +178,29 @@ export const invoicedQty = (receiptId, itemId, invoices) =>
     liveInvoices(invoices).flatMap((i) => i.lines),
     (l) => (l.receiptId === receiptId && l.itemId === itemId ? l.qty : 0),
   );
+// Pesanan ini melewati serah terima (FPB/BAPP) atau tidak. Ditetapkan di penawaran vendor;
+// pesanan lama tanpa kolom ini dianggap memakai serah terima.
+export const poHasReceipt = (po) => po?.withReceipt !== false;
+
+// Qty satu item PO yang sudah difaktur, dari jalur mana pun — lewat penerimaan maupun
+// langsung dari PO/SPK. Dihitung per pesanan, bukan per penerimaan, supaya dua jalur itu
+// tidak saling menagih qty yang sama.
+export const invoicedQtyOfPo = (poId, itemId, invoices) =>
+  sum(
+    liveInvoices(invoices).flatMap((i) => i.lines.map((l) => ({ ...l, poId: l.poId ?? i.poId }))),
+    (l) => (l.poId === poId && l.itemId === itemId ? l.qty : 0),
+  );
+
+// Baris PO/SPK yang masih bisa ditagih langsung, tanpa lewat FPB/BAPP. Dipakai untuk pesanan
+// yang memang tidak melewati gudang: dibayar di muka (CBD), jasa yang ditagih per termin
+// tanpa berita acara, atau pesanan lama yang penerimaannya tidak pernah dicatat.
+export const uninvoicedPoLines = (po, invoices) =>
+  !po?.sent || poHasReceipt(po)
+    ? []
+    : po.items
+      .map((it) => ({ ...it, open: it.qty - invoicedQtyOfPo(po.id, it.id, invoices) }))
+      .filter((l) => l.open > 0);
+
 // Penerimaan baru bisa difaktur setelah terkonfirmasi. Data lama tanpa kolom status
 // dianggap sudah terkonfirmasi.
 export const receiptConfirmed = (r) => (r?.status ?? 'dikonfirmasi') === 'dikonfirmasi';
@@ -101,6 +212,13 @@ export const uninvoicedLines = (receipt, invoices) =>
       .filter((l) => l.open > 0);
 
 // --- Faktur -----------------------------------------------------------------------------------
+// Faktur manual: ditagih vendor tanpa bersandar pada FPB/BAPP. Barisnya menyimpan deskripsi
+// sendiri (tanpa receiptId / itemId), jadi tidak mengurangi sisa penerimaan mana pun dan tidak
+// ikut pencocokan 3 arah. Dipakai untuk tagihan non-PO: listrik, sewa, jasa berulang.
+export const isManualInvoice = (inv) => !!inv && inv.lines.every((l) => !l.receiptId);
+// Nama baris faktur: dari item pesanan bila bersandar penerimaan, atau deskripsi yang diketik.
+export const invLineDesc = (l, item) => item?.desc ?? l.desc ?? '—';
+
 export const invDpp = (inv) => sum(inv.lines, (l) => l.qty * l.price);
 export const invPpn = (inv) => Math.round(sum(inv.lines, (l) => l.qty * l.price * lineRate(l)));
 export const invPph = (inv) => Math.round((invDpp(inv) * (inv.pphPct || 0)) / 100);
@@ -191,8 +309,7 @@ export const invOverdue = (inv, t) => t.balance > 0 && inv.dueDate < TODAY;
 export function invStatus(inv, t) {
   if (inv.cancelled) return 'dibatalkan';
   if (t.balance <= 0) return 'lunas';
-  if (t.paid > 0) return 'sebagian';
-  return 'belum';
+  return invOverdue(inv, t) ? 'tempo' : 'belum';
 }
 
 // Nilai retur per qty yang sudah dikembalikan untuk baris faktur.
@@ -297,7 +414,7 @@ export const advanceLabel = (t) => (advancePct(t) >= 100 ? 'bayar di muka' : 'DP
 
 // --- Jadwal termin / periode jasa -----------------------------------------------------------------
 // Termin progres dan layanan berkala dipecah jadi beberapa baris SPK: satu baris per termin/periode,
-// plus satu baris retensi kalau ada. Dengan begitu BAST, faktur, Payment Request, dan PV per termin
+// plus satu baris retensi kalau ada. Dengan begitu BAPP, faktur, Payment Request, dan PV per termin
 // memakai mesin yang sama dengan barang — tidak perlu entitas jadwal terpisah.
 export const scheduleCount = (t) => {
   if (!t) return 1;
@@ -333,7 +450,7 @@ export const scheduleBase = (gross, term) => {
   return gross - Math.round((gross * retPct) / 100) - Math.round((gross * dpPct) / 100);
 };
 
-export function expandSchedule(items, term) {
+export function expandSchedule(items, term, startIso) {
   const n = scheduleCount(term);
   const retPct = termMechanics(term).retention ? term.retentionPct ?? 0 : 0;
   if (n <= 1 && retPct === 0) return items;
@@ -348,12 +465,19 @@ export function expandSchedule(items, term) {
       // Baris terakhir menyerap pembulatan supaya jumlahnya persis sama dengan nilai jadwal.
       const price = k === n - 1 ? work - used : Math.round((work * pct) / 100);
       used += price;
+      // Termin berkala terikat kalender: rentangnya dihitung dari tanggal mulai kontrak,
+      // dan dipakai untuk label, kunci tanggal pencatatan, serta tanggal jurnal.
+      const range = periodic && startIso ? periodRange(startIso, term.period, k + 1) : null;
       return {
         ...it,
         id: `${it.id}-s${k + 1}`,
         desc: `${it.desc} — ${slotLabel(term, k + 1, n)}${periodic ? '' : ` · ${pct}%`}`,
         qty: 1,
         unit: periodic ? 'periode' : 'termin',
+        slot: k + 1,
+        slotOf: n,
+        pct: periodic ? undefined : pct,
+        ...(range && { periodFrom: range.from, periodTo: range.to }),
         price,
       };
     });
@@ -361,6 +485,8 @@ export function expandSchedule(items, term) {
       rows.push({
         ...it,
         id: `${it.id}-ret`,
+        slot: n + 1,
+        slotOf: n + 1,
         desc: `${it.desc} — Retensi ${retPct}% (ditagih setelah pemeliharaan ${term.retentionMonths ?? 0} bulan)`,
         qty: 1,
         unit: 'retensi',
@@ -409,6 +535,49 @@ export function termParts(t) {
   // Persentase uang muka menyatu dengan nama ("DP 30%"), bukan jadi rincian terpisah.
   const label = fields.includes('dp') ? `${name} ${t.dpPct ?? 0}%` : name;
   return { label, detail: parts.join(' · ') };
+}
+
+// Identitas termin, untuk membandingkan dua dokumen. Dua pesanan bertermin sama hanya bila
+// nama, mekanisme, dan seluruh parameternya sama.
+//
+// Dipakai saat menggabungkan beberapa FPB/BAPP ke dalam satu faktur: satu faktur hanya punya
+// satu jatuh tempo dan satu aturan potongan uang muka, jadi penerimaan bertermin berbeda tidak
+// boleh dicampur. Kalau dipaksa, salah satu vendor akan ditagih dengan syarat yang tidak pernah
+// disepakati untuk pesanannya.
+export function termKey(t) {
+  if (!t) return 'none';
+  const m = termMechanics(t);
+  return JSON.stringify([
+    m.label ?? t.type ?? '',
+    m.advance, m.split, m.dpOutOfSchedule, m.retention, m.due, m.dueFrom,
+    t.dpPct ?? null, t.terms ?? null, t.period ?? null, t.periods ?? null,
+    t.retentionPct ?? null, t.retentionMonths ?? null, dueDaysOf(t),
+  ]);
+}
+
+// Jatuh tempo satu penerimaan menurut termin pesanannya.
+// Titik hitung 'receipt' -> tanggalnya sudah pasti sekarang, jadi bisa ditampilkan.
+// Titik hitung 'invoice' -> belum bisa dihitung, karena tanggal fakturnya baru diisi nanti.
+export function receiptDue(po, receiptDate) {
+  const t = po?.term;
+  const m = termMechanics(t);
+  const days = dueDaysOf(t);
+  if (m.advance === 'full') return { date: null, text: 'Dibayar di muka' };
+  if (m.dueFrom === 'invoice') {
+    return { date: null, text: days > 0 ? `${days} hari sejak tgl faktur` : 'Saat faktur terbit' };
+  }
+  const date = days > 0 ? addDays(receiptDate, days) : receiptDate;
+  return { date, text: formatDate(date), exact: true };
+}
+
+// Jatuh tempo pesanan yang ditagih LANGSUNG, tanpa FPB/BAPP. Tidak ada tanggal penerimaan
+// untuk dijadikan acuan, jadi tempo apa pun yang disepakati dihitung dari tanggal faktur —
+// tanggal yang baru diisi di langkah berikutnya, maka yang ditampilkan rumusnya.
+export function poDue(po) {
+  const m = termMechanics(po?.term);
+  const days = dueDaysOf(po?.term);
+  if (m.advance === 'full') return { date: null, text: 'Dibayar di muka' };
+  return { date: null, text: days > 0 ? `${days} hari sejak tgl faktur` : 'Saat faktur terbit' };
 }
 
 // Teks termin satu baris, untuk PDF dan kolom informasi yang lebar.
@@ -614,6 +783,9 @@ export function buildPOs(f, pos, vendors) {
     items: g.items,
     note,
     lead: (finalTermOf(f, g.vendorId)?.lead ?? g.q?.lead) ?? 7,
+    // Ada serah terima atau tidak — disepakati di penawaran, lalu dibawa ke PO/SPK.
+    // Penawaran lama tanpa kolom ini dianggap memakai serah terima, seperti sebelumnya.
+    withReceipt: g.q?.withReceipt !== false,
   }));
 }
 
@@ -667,16 +839,42 @@ export const PO_STATUS = {
   dibatalkan: { label: 'Dibatalkan', color: 'slate' },
   ditutup: { label: 'Ditutup', color: 'slate' },
 };
+// Alur sesudah faktur: PR -> approval -> Payment Voucher -> pembayaran -> jurnal.
+// Dulu PV terbit bersamaan dengan transfer, jadi tidak ada dokumen perintah bayar yang
+// mendahului uang keluar. Sekarang PV diterbitkan lebih dulu sebagai perintah bayar, dan
+// transfernya dicatat terhadap PV itu.
 export const PR_STATUS = {
   diajukan: { label: 'Menunggu approval', color: 'orange' },
-  disetujui: { label: 'Siap dibayar', color: 'cyan' }, // sudah lolos approval, tinggal transfer
+  disetujui: { label: 'Siap diterbitkan PV', color: 'cyan' }, // lolos approval, menunggu PV
+  diproses: { label: 'PV terbit', color: 'blue' }, // perintah bayar ada, uang belum keluar
   dibayar: { label: 'Dibayar', color: 'green' },
   ditolak: { label: 'Ditolak', color: 'red' },
 };
+
+// Payment Voucher punya umurnya sendiri: terbit -> dibayar. Jurnal kas keluarnya ikut
+// terposting saat pembayaran dicatat, jadi tidak jadi tahap tersendiri: tidak ada keadaan
+// "uang sudah keluar tapi belum dijurnal" yang perlu dikejar orang.
+export const PV_STATUS = {
+  draf: { label: 'Belum dibayar', color: 'orange' },
+  dibayar: { label: 'Dibayar', color: 'green' },
+};
+// 'dijurnal' adalah nama lama dari keadaan yang sekarang cukup disebut 'dibayar'.
+// Voucher tanpa kolom status sama sekali berasal dari data lama yang memang sudah tuntas.
+export const pvStatus = (v) => (!v?.status || v.status === 'dijurnal' ? 'dibayar' : v.status);
+export const pvPaid = (v) => pvStatus(v) === 'dibayar';
+// Tanggal posting jurnal; voucher lama yang tidak menyimpannya dianggap terposting saat dibayar.
+export const pvJournalDate = (v) => (pvPaid(v) ? v?.journalPostedAt ?? v?.paidAt ?? v?.date ?? null : null);
+export const pvPosted = (v) => !!pvJournalDate(v);
+// Tiga keadaan yang dilihat orang keuangan: sudah lunas, belum dibayar, atau sudah lewat tempo.
+// "Dibayar sebagian" dihapus — yang penting dari faktur yang baru dibayar separuh adalah bahwa
+// ia MASIH punya sisa hutang, sama seperti yang belum dibayar sama sekali; nominal yang sudah
+// masuk tetap terbaca di kolom sisa hutang dan di halaman detailnya.
 export const INV_STATUS = {
-  belum: { label: 'Belum dibayar', color: 'orange' }, // hutang yang menunggu diajukan/dibayar
-  sebagian: { label: 'Dibayar sebagian', color: 'cyan' },
+  belum: { label: 'Belum dibayar', color: 'orange' },
+  tempo: { label: 'Jatuh tempo', color: 'red' }, // masih bersisa dan tanggalnya sudah lewat
   lunas: { label: 'Lunas', color: 'green' },
+  // Bukan tahap pembayaran, tapi faktur yang dibatalkan harus tetap bisa dibedakan: tanpa ini
+  // ia akan terbaca "Belum dibayar" padahal memang tidak akan pernah dibayar.
   dibatalkan: { label: 'Dibatalkan', color: 'slate' },
 };
 export const RECEIPT_STATUS = {
@@ -709,7 +907,8 @@ export function createPOs(f, pb) {
       warehouse: 'Gudang Utama',
       ppnIncluded: b.items.some((i) => i.ppnIncluded),
       // Termin progres / layanan berkala langsung dipecah jadi baris per termin di SPK.
-      items: expandSchedule(b.items, b.term),
+      items: expandSchedule(b.items, b.term, TODAY),
+      withReceipt: b.withReceipt,
       note: b.note,
     };
     list = [doc, ...list];

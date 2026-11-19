@@ -91,6 +91,16 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
     </Group>
   );
 
+  // Langkah "Bayar di muka" hanya ditampilkan kalau terminnya memang memuat pembayaran di
+  // muka. Pada CAD atau bayar penuh di akhir, langkah itu tidak akan pernah terjadi —
+  // menampilkannya sebagai "Tidak ada" hanya memanjangkan alur dan mengaburkan langkah yang
+  // benar-benar perlu dikerjakan.
+  //
+  // Terminnya dibaca dari pesanan. Selama pesanan belum terbit terminnya belum pasti, jadi
+  // langkahnya tetap ditampilkan; begitu PR uang muka sudah ada, ia selalu ditampilkan apa pun
+  // terminnya (dokumennya nyata, tidak boleh disembunyikan).
+  const showDp = dps.length > 0 || !pos.length || pos.some((p) => advancePct(p.term) > 0);
+
   const state = {
     fppbj: !fppbj ? 'pending' : pos.length || fppbj.status === 'selesai' ? 'done' : 'active',
     // PO langsung tidak lewat permintaan/pengadaan: dua langkah pertama dibiarkan abu.
@@ -126,11 +136,13 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
             : <Empty>Belum dibuat</Empty>}
         </FlowStep>
 
-        <FlowStep index={3} mark="DP" state={state.dp} title="Bayar di muka">
-          {dps.length
-            ? dps.map((p) => <Box key={p.id}>{docRow(p.id, 'pr', p.id, p.number, <StatusPill map={PR_STATUS} status={p.status} size="xs" />)}</Box>)
-            : <Empty>{pos.length && pos.every((p) => advancePct(p.term) === 0) ? 'Tidak ada (bayar setelah selesai)' : 'Belum diajukan'}</Empty>}
-        </FlowStep>
+        {showDp && (
+          <FlowStep index={3} mark="DP" state={state.dp} title="Bayar di muka">
+            {dps.length
+              ? dps.map((p) => <Box key={p.id}>{docRow(p.id, 'pr', p.id, p.number, <StatusPill map={PR_STATUS} status={p.status} size="xs" />)}</Box>)
+              : <Empty>Belum diajukan</Empty>}
+          </FlowStep>
+        )}
 
         <FlowStep index={3} state={state.receipt} title="Penerimaan">
           {receipts.length

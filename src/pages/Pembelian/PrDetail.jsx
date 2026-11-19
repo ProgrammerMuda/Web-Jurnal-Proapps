@@ -4,19 +4,24 @@ import { Calculator, Check, Info, Money, Paperclip, Receipt, X } from '@/compone
 import AttachmentList from './Attachments.jsx';
 import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section, StatusPill } from './components.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
+import { TODAY } from './data.js';
 import { advancePct, bankLine, formatDate, INV_STATUS, invStatus, invTotals, poDpAmount, poDocLabel, poTotal, PR_STATUS, proofFiles, rupiah, termText } from './utils.js';
-import { canApprove, canCreate, prBlockedBySoD } from './permissions.js';
+import { approvalState, canCreate, isApproverTurn, prBlockedBySoD, roleLabel, signApproval } from './permissions.js';
 import { toast } from './usePb.js';
 
 export default function PrDetail({ pr, pb, onBack, go, openDialog }) {
   const role = pb.role;
   const vendor = pb.vendorsById[pr.vendorId];
+  // Satu PR bisa menerbitkan beberapa PV bila fakturnya dari vendor berbeda.
+  const vouchers = pb.vouchers.filter((v) => v.prIds?.includes(pr.id));
   const po = pb.posById[pr.poId];
   const isDp = pr.kind === 'dp';
   const invoices = (pr.invoiceIds ?? []).map((id) => pb.invoicesById[id]).filter(Boolean);
   // Payment Voucher terbit saat Finance membayar; bukti transfernya menempel di sana.
   const voucher = pb.voucherOfPr(pr.id);
   const proofs = proofFiles(voucher ?? pr);
+  // Approval PR berjenjang dua: Chief Finance lalu Building Manager.
+  const ap = approvalState(pr, 'pr', { settled: pr.status !== 'diajukan' && pr.status !== 'ditolak' });
   const count = (n, unit) => <Badge size="sm" radius="sm" variant="light" color="slate" tt="none">{n} {unit}</Badge>;
 
   const cells = [
@@ -26,7 +31,10 @@ export default function PrDetail({ pr, pb, onBack, go, openDialog }) {
     [po ? poDocLabel(po) : 'Pesanan', po ? <DocNumber onClick={() => go({ name: 'po', id: po.id })}>{po.number}</DocNumber> : '—'],
     ['Rekening tujuan', bankLine(vendor)],
     ['Tanggal bayar', pr.paidAt ? formatDate(pr.paidAt) : 'Belum dibayar'],
-    ['Payment Voucher', voucher ? <DocNumber onClick={() => go({ name: 'voucher', id: voucher.id })}>{voucher.number}</DocNumber> : 'Belum terbit'],
+    ...ap.chain.map((r) => [`Approval ${roleLabel(r)}`, ap.got[r] ? `${ap.got[r].by}${ap.got[r].at ? ` · ${formatDate(ap.got[r].at)}` : ''}` : 'Menunggu']),
+    ['Payment Voucher', vouchers.length
+      ? <Group key="pv" gap={6} wrap="wrap">{vouchers.map((v) => <DocNumber key={v.id} onClick={() => go({ name: 'voucher', id: v.id })}>{v.number}</DocNumber>)}</Group>
+      : 'Belum terbit'],
   ];
 
   const lineRow = (label, value, extra) => (
@@ -51,32 +59,42 @@ export default function PrDetail({ pr, pb, onBack, go, openDialog }) {
                 <StatusPill map={PR_STATUS} status={pr.status} />
                 <Badge size="sm" radius="sm" variant="light" color="gray" c="slate.6" fw={700} tt="none">{isDp ? 'Di muka' : 'Pelunasan'}</Badge>
               </Group>
-              <Text fz="sm" c="slate.6">
-                {vendor?.name}
-                {po && <> · untuk <DocNumber onClick={() => go({ name: 'po', id: po.id })}>{po.number}</DocNumber></>}
-              </Text>
+              {/* Cukup tanggal pengajuannya; vendor dan pesanannya ada di kartu informasi. */}
+              <Text fz="sm" c="slate.6">{formatDate(pr.date)}</Text>
             </Box>
           </Group>
           <Group gap="xs">
-            {pr.status === 'diajukan' && (canApprove(role, 'pr') && !prBlockedBySoD(role, pr) ? (
+            {pr.status === 'diajukan' && (isApproverTurn(role, pr, 'pr') && !prBlockedBySoD(role, pr) ? (
               <>
                 <Button radius="md" variant="default" color="red" leftSection={<X size={16} />} onClick={() => openDialog({ type: 'pr-reject', prId: pr.id })}>Tolak</Button>
                 <Button
                   radius="md"
                   leftSection={<Check size={16} />}
-                  onClick={() => { pb.update('prs', pr.id, (d) => ({ ...d, status: 'disetujui' })); toast('Payment Request disetujui.'); }}
+                  onClick={() => {
+                    pb.update('prs', pr.id, (d) => {
+                      const { doc, complete } = signApproval(d, 'pr', role);
+                      return complete ? { ...doc, status: 'disetujui', approvedAt: TODAY } : doc;
+                    });
+                    toast(ap.done.length + 1 >= ap.total ? 'Payment Request disetujui penuh.' : `Approval ${ap.done.length + 1} dari ${ap.total} dicatat.`);
+                  }}
                 >
-                  Setujui
+                  Setujui{ap.total > 1 ? ` (${ap.done.length + 1}/${ap.total})` : ''}
                 </Button>
               </>
-            ) : <Group gap={6}><Text fz="xs" c="slate.7">Menunggu</Text><RoleChip role="finance_manager" /></Group>)}
+            ) : <Group gap={6}><Text fz="xs" c="slate.7">Menunggu</Text><RoleChip role={ap.next ?? 'cfo'} /></Group>)}
             {pr.status === 'disetujui' && (canCreate(role, 'pv') ? (
-              <Button radius="md" onClick={() => openDialog({ type: 'pay', prId: pr.id })}>Bayar</Button>
+              <Button radius="md" onClick={() => openDialog({ type: 'pv', prId: pr.id })}>Terbitkan Payment Voucher</Button>
             ) : <Group gap={6}><Text fz="xs" c="slate.7">Pembayaran oleh</Text><RoleChip role="kasir" /></Group>)}
           </Group>
         </Group>
       </Card>
 
+      {pr.status === 'diproses' && pb.voucherOfPr(pr.id) && (
+        <Callout title="Payment Voucher sudah terbit">
+          Perintah bayar <DocNumber onClick={() => go({ name: 'voucher', id: pb.voucherOfPr(pr.id).id })}>{pb.voucherOfPr(pr.id).number}</DocNumber> menunggu
+          pembayaran. Kas belum berkurang sampai transfernya dicatat di PV itu.
+        </Callout>
+      )}
       {pr.status === 'ditolak' && (
         <Callout tone="stop" title="Payment Request ditolak">{pr.note || 'Tanpa catatan.'}</Callout>
       )}

@@ -389,9 +389,10 @@ export default function SyaratPembayaran() {
       </Group>
 
       <Callout>
-        Tidak ada termin bawaan — semuanya dirakit sendiri di sini. Termin disimpan bersama penawaran beserta salinan
-        mekanismenya, jadi mengubah atau menonaktifkan termin tidak mengubah dokumen yang sudah terbit; yang berubah
-        hanya pilihan untuk penawaran berikutnya.
+        Daftar di bawah hanya isi awal, bukan termin bawaan — semuanya bisa diubah, dinonaktifkan, dan dihapus selama
+        belum dipakai dokumen. Termin disimpan bersama penawaran beserta salinan mekanismenya, jadi mengubah atau
+        menonaktifkan termin tidak mengubah dokumen yang sudah terbit; yang berubah hanya pilihan untuk penawaran
+        berikutnya.
       </Callout>
 
       <Card withBorder radius="lg" padding={0} bg="white">

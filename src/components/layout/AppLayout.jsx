@@ -5,13 +5,40 @@ import {
   Box,
   Group,
   Menu,
+  Select,
   Text,
   UnstyledButton,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { Bell, CalendarBlank, CaretDown, Plus } from '@/components/Icon.jsx';
+import { Bell, CalendarBlank, CaretDown, Plus, Scales } from '@/components/Icon.jsx';
 import Sidebar from './Sidebar.jsx';
 import { FOOTER_HEIGHT, HEADER_HEIGHT } from './constants.js';
+import { useData } from '@/lib/store.jsx';
+import { roles } from '@/pages/Pembelian/data.js';
+
+// Pengalih peran prototipe. Tempatnya di kaki aplikasi, bukan melayang di atas halaman:
+// perannya berlaku untuk seluruh aplikasi, dan di halaman panjang tombol melayang itu
+// menutupi isian terakhir. Peran disimpan di store, jadi pilihannya ikut ke semua modul.
+function RoleSwitch() {
+  const { pbRole, setPbRole } = useData();
+  return (
+    <Group gap="xs" wrap="nowrap">
+      <Text fz="xs" c="slate.6" visibleFrom="sm">Lihat sebagai</Text>
+      <Select
+        size="xs"
+        radius="md"
+        w={190}
+        allowDeselect={false}
+        aria-label="Lihat sebagai"
+        leftSection={<Scales size={14} />}
+        data={roles.map((r) => ({ value: r.value, label: r.label }))}
+        value={pbRole}
+        onChange={setPbRole}
+        comboboxProps={{ position: 'top' }}
+      />
+    </Group>
+  );
+}
 
 export default function AppLayout({ title, section, activeKey, onNavigate, children }) {
   const [collapsed, { toggle }] = useDisclosure(false);
@@ -112,7 +139,7 @@ export default function AppLayout({ title, section, activeKey, onNavigate, child
       <AppShell.Main>{children}</AppShell.Main>
 
       <AppShell.Footer withBorder bg="white">
-        <Group h="100%" px="lg">
+        <Group h="100%" px="lg" justify="space-between" wrap="nowrap">
           <Text fz="xs" c="slate.6">
             © 2026{' '}
             <Text span fw={700} inherit>
@@ -120,6 +147,7 @@ export default function AppLayout({ title, section, activeKey, onNavigate, child
             </Text>{' '}
             · Jurnal Accounting
           </Text>
+          <RoleSwitch />
         </Group>
       </AppShell.Footer>
     </AppShell>

@@ -2,7 +2,7 @@
 // matriks approval pengadaan, pemisahan tugas).
 // Semua pengecekan peran di layar memanggil fungsi di sini, bukan membandingkan string peran
 // langsung, supaya aturannya hanya ada di satu tempat dan gampang dicocokkan dengan spesifikasi.
-import { personLabel, roleOf } from './data.js';
+import { personLabel, roleOf, TODAY } from './data.js';
 
 // --- 2.2 Siapa yang MEMBUAT dokumen ---------------------------------------------------------------
 const CREATE = {
@@ -11,7 +11,7 @@ const CREATE = {
   procurement: ['accounting'], // pilih jalur, form bidding & vendor tunggal
   po: ['accounting'], // PO / SPK, kirim ke vendor, tutup / batalkan
   fpb: ['gudang'], // penerimaan barang
-  bast: ['gudang'], // serah terima jasa — peran yang sama dengan gudang
+  bapp: ['gudang'], // serah terima jasa — peran yang sama dengan gudang
   invoice: ['accounting'],
   pr: ['accounting'], // PR DP, pelunasan, retensi
   pv: ['finance'],
@@ -27,7 +27,7 @@ export const isSuperadmin = (role) => role === 'superadmin';
 // untuk menambah atau mengurangi peran yang boleh memverifikasi, ubah baris ini saja; seluruh layar
 // membaca lewat canVerify().
 const VERIFY = {
-  fppbj: ['accounting', 'finance'],
+  fppbj: ['accounting'],
 };
 export const canVerify = (role, doc = 'fppbj') => isSuperadmin(role) || (VERIFY[doc] ?? []).includes(role);
 // Peran yang ditunggu untuk verifikasi; dipakai pada chip "Menunggu <peran>".
@@ -35,22 +35,54 @@ export const verifierRole = (doc = 'fppbj') => (VERIFY[doc] ?? [])[0];
 export const verifierRoles = (doc = 'fppbj') => VERIFY[doc] ?? [];
 
 // --- Siapa yang MENYETUJUI ------------------------------------------------------------------------
-// Building Manager memegang semua keputusan: hasil pengadaan, serah terima pekerjaan,
-// dan permintaan pembayaran. Finance hanya mengeksekusi pembayarannya.
+// Setiap approval berjenjang DUA tanda tangan, berurutan: Chief Finance lebih dulu, lalu
+// Building Manager. Dua sudut pandang yang berbeda — Chief Finance menimbang anggaran dan
+// kasnya, Building Manager menimbang kebutuhan operasional gedungnya — jadi urutannya pun
+// bermakna, bukan sekadar dua orang menekan tombol yang sama.
+//
+// Verifikasi FPPBJ sengaja TIDAK berjenjang: itu pemeriksaan kelengkapan berkas, bukan
+// keputusan membelanjakan uang. Cukup Accounting.
 const APPROVE = {
-  procurement: ['bm'], // hasil bidding & vendor tunggal
-  bast: ['bm'],
-  pr: ['bm'], // PR DP, pelunasan, retensi
+  procurement: ['cfo', 'bm'], // hasil bidding & vendor tunggal
+  bapp: ['cfo', 'bm'],
+  pr: ['cfo', 'bm'], // PR DP, pelunasan, retensi
 };
+export const approvalChain = (doc) => APPROVE[doc] ?? [];
+
+// Keadaan approval satu dokumen: siapa saja yang sudah, giliran siapa, dan sudah genap belum.
+// Dokumen lama tanpa kolom `approvals` tapi statusnya sudah disetujui dianggap genap — kalau
+// tidak, semua dokumen lama akan terlihat mundur jadi menunggu approval lagi.
+export function approvalState(doc, kind, { settled = false } = {}) {
+  const chain = approvalChain(kind);
+  const got = doc?.approvals ?? (settled ? Object.fromEntries(chain.map((r) => [r, { by: '—', at: doc?.date }])) : {});
+  const done = chain.filter((r) => got[r]);
+  const next = chain.find((r) => !got[r]) ?? null;
+  return { chain, got, done, next, complete: !next, total: chain.length };
+}
+
+// Giliran peran ini atau tidak. Superadmin boleh mengisi slot mana pun yang kosong.
+export const isApproverTurn = (role, doc, kind) =>
+  isSuperadmin(role) ? !approvalState(doc, kind).complete : approvalState(doc, kind).next === role;
+
+// Satu tanda tangan dibubuhkan. Mengembalikan dokumen baru + apakah approval-nya sudah genap.
+export function signApproval(doc, kind, role) {
+  const { next } = approvalState(doc, kind);
+  const slot = isSuperadmin(role) ? next : role;
+  if (!slot) return { doc, complete: true };
+  const approvals = { ...(doc.approvals ?? {}), [slot]: { by: personLabel(role), at: TODAY } };
+  return { doc: { ...doc, approvals }, complete: approvalState({ approvals }, kind).complete };
+}
 
 export const canCreate = (role, doc) => isSuperadmin(role) || (CREATE[doc] ?? []).includes(role);
 export const canApprove = (role, doc) => isSuperadmin(role) || (APPROVE[doc] ?? []).includes(role);
 // Peran yang ditunggu untuk satu langkah; dipakai untuk menampilkan chip "Menunggu <peran>".
 export const creatorRole = (doc) => (CREATE[doc] ?? [])[0];
 export const approverRole = (doc) => (APPROVE[doc] ?? [])[0];
+// Peran yang sedang ditunggu untuk dokumen tertentu; dipakai chip "Menunggu <peran>".
+export const pendingApprover = (doc, kind) => approvalState(doc, kind).next;
 
-// Penerimaan: barang lewat FPB (Gudang), jasa lewat BAST (PIC jasa).
-export const receiptDoc = (isJasa) => (isJasa ? 'bast' : 'fpb');
+// Penerimaan: barang lewat FPB (Gudang), jasa lewat BAPP (PIC jasa).
+export const receiptDoc = (isJasa) => (isJasa ? 'bapp' : 'fpb');
 
 // Gudang melihat pesanan dan tanggal kirim, tanpa harga.
 export const hidesPrices = (role) => role === 'gudang';

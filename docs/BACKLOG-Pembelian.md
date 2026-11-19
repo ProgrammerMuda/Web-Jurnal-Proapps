@@ -67,9 +67,9 @@ seharusnya hanya ada satu pembayaran di depan.
 
 **Acceptance criteria**
 - [ ] `poDpAmount()` memakai `advancePct(term)`, bukan `term.dpPct` langsung
-- [ ] *Bayar penuh di muka*: PR DP = 100% nilai kontrak; faktur setelah BAST berstatus **Lunas**
+- [ ] *Bayar penuh di muka*: PR DP = 100% nilai kontrak; faktur setelah BAPP berstatus **Lunas**
       tanpa PR baru
-- [ ] *Berkala di muka* 12 periode: 1 PR + 1 PV, 12 BAST, 12 faktur yang semuanya **Lunas**
+- [ ] *Berkala di muka* 12 periode: 1 PR + 1 PV, 12 BAPP, 12 faktur yang semuanya **Lunas**
 
 **Berkas:** `src/pages/Pembelian/utils.js` baris 51
 
@@ -100,12 +100,12 @@ Salah ketika: penawaran bertanda *harga sudah termasuk PPN*, atau ada diskon has
 ### PB-010 · Retensi tidak boleh ditagih sebelum masa pemeliharaan selesai
 **Prioritas:** P1 · **Estimasi:** sedang
 
-Baris retensi di SPK saat ini bisa di-BAST dan ditagih kapan saja. Tidak ada penjaga tanggal,
+Baris retensi di SPK saat ini bisa di-BAPP dan ditagih kapan saja. Tidak ada penjaga tanggal,
 jadi uang jaminan bisa cair sebelum masa pemeliharaan lewat.
 
 **Acceptance criteria**
-- [ ] Tanggal mulai masa pemeliharaan tercatat (dari BAST termin terakhir)
-- [ ] BAST untuk baris retensi ditolak sebelum `tanggal BAST akhir + masa pemeliharaan`
+- [ ] Tanggal mulai masa pemeliharaan tercatat (dari BAPP termin terakhir)
+- [ ] BAPP untuk baris retensi ditolak sebelum `tanggal BAPP akhir + masa pemeliharaan`
 - [ ] Pesan jelas: "Retensi baru bisa ditagih setelah DD MMM YYYY"
 - [ ] Building Manager bisa melepas lebih awal, wajib isi alasan, tercatat di dokumen
 
@@ -153,7 +153,7 @@ Superadmin. Semua pengecekan ada di satu berkas: `src/pages/Pembelian/permission
 ### PB-030 · Chief per departemen
 **Prioritas:** P2
 
-Penyetuju BAST saat ini selalu Building Manager. Di gedung yang lebih besar, verifikasi teknis
+Penyetuju BAPP saat ini selalu Building Manager. Di gedung yang lebih besar, verifikasi teknis
 (lift, AC, genset, listrik, plumbing, sipil) ada di Chief Engineering, sedangkan layanan rutin
 (cleaning, security, pest control) di chief seksi yang memakainya.
 
@@ -162,19 +162,19 @@ Pernah dibuat lalu dicabut saat peran disederhanakan — lihat riwayat commit ka
 **Acceptance criteria**
 - [ ] Item punya bidang: teknis / layanan / umum
 - [ ] Pemetaan departemen → chief, diatur di Pengaturan (butuh PB-050)
-- [ ] BAST pekerjaan teknis diarahkan ke Chief Engineering, sisanya ke chief seksi peminta
-- [ ] Satu baris teknis sudah cukup mengarahkan seluruh BAST ke Engineering
+- [ ] BAPP pekerjaan teknis diarahkan ke Chief Engineering, sisanya ke chief seksi peminta
+- [ ] Satu baris teknis sudah cukup mengarahkan seluruh BAPP ke Engineering
 
 ---
 
-### PB-031 · Ambang nilai untuk persetujuan BAST
+### PB-031 · Ambang nilai untuk persetujuan BAPP
 **Prioritas:** P2
 
 Servis AC Rp 350.000 dan renovasi Rp 500 juta sama-sama menunggu tanda tangan. Persetujuan
-pengadaan sudah berjenjang menurut nilai; BAST belum.
+pengadaan sudah berjenjang menurut nilai; BAPP belum.
 
 **Acceptance criteria**
-- [ ] BAST di bawah ambang langsung terkonfirmasi tanpa persetujuan
+- [ ] BAPP di bawah ambang langsung terkonfirmasi tanpa persetujuan
 - [ ] Ambang diatur di Pengaturan (butuh PB-050)
 
 ---
@@ -260,7 +260,7 @@ Yang perlu bisa diatur: batas kenaikan pesan ulang tanpa alasan (5%), batas kena
 bidding (15%), umur harga acuan (12 bulan), minimal penawaran (2 / 3 dengan ambang Rp 10 juta),
 matriks persetujuan pengadaan, batas konfirmasi vendor, toleransi qty penerimaan, saklar skor
 bidding, saklar "PR otomatis membuat PV", pelonggaran pemisahan tugas, serta pemetaan
-departemen → chief (PB-030) dan ambang BAST (PB-031).
+departemen → chief (PB-030) dan ambang BAPP (PB-031).
 
 ---
 
@@ -274,7 +274,7 @@ Belum ada sama sekali. Acuan lengkap sudah ada di
 dan contoh angka per peristiwa.
 
 Dokumen yang membentuk jurnal: PV DP, PV bayar di muka jasa berkala, amortisasi bulanan, FPB,
-BAST, faktur, tagihan non-PO, PV pelunasan/retensi, dan retur. FPPBJ, penawaran, bidding,
+BAPP, faktur, tagihan non-PO, PV pelunasan/retensi, dan retur. FPPBJ, penawaran, bidding,
 pesan ulang, PO/SPK, dan PR **tidak** membentuk jurnal.
 
 **Syarat dari spesifikasi:** idempoten, tanpa hapus (koreksi lewat jurnal balik), selalu
