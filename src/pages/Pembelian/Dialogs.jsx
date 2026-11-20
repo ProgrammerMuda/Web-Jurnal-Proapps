@@ -67,6 +67,8 @@ import {
   vendorEmail,
 } from './utils.js';
 import { toast } from './usePb.js';
+import { useData } from '@/lib/store.jsx';
+import { buildMove } from '@/pages/Gudang/stock.js';
 import { DropField, MAX_UPLOAD_MB } from '@/components/DropField.jsx';
 
 export { DropField, MAX_UPLOAD_MB };
@@ -494,7 +496,42 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
 }
 
 // --- Penerimaan (FPB barang / BAPP jasa) ---------------------------------------------------------
+/**
+ * Mutasi stok dari penerimaan barang. Harga masuk = harga perolehan per satuan
+ * dasar (DPP setelah diskon, tanpa PPN Masukan) sesuai M5.
+ */
+function postReceiptStock({ receiptId, number, date, po, lines, postStock, products, by }) {
+  if (!po.warehouseId) return;
+  const moves = lines
+    .map((l) => {
+      const item = po.items.find((i) => i.id === l.itemId);
+      if (!item) return null;
+      // Baris PO lama belum menyimpan productId, jadi dicocokkan juga lewat namanya —
+      // cara yang sama dipakai form permintaan saat mengenali produk katalog.
+      const nama = (item.desc ?? '').trim().toLowerCase();
+      const product =
+        products.find((p) => p.id === item.productId) ??
+        products.find((p) => p.name.toLowerCase() === nama);
+      if (!product?.tracked || !(l.qty > 0)) return null;
+      return buildMove({
+        date,
+        type: 'receipt',
+        productId: product.id,
+        warehouseId: po.warehouseId,
+        qty: l.qty,
+        unitCost: Number(item.price) || 0,
+        sourceType: 'goods_receipt',
+        sourceId: receiptId,
+        sourceNo: number,
+        createdBy: by,
+      });
+    })
+    .filter(Boolean);
+  if (moves.length) postStock({ moves });
+}
+
 export function ReceiptModal({ opened, onClose, po, pb }) {
+  const { postStock, products } = useData();
   const [date, setDate] = useState(TODAY);
   const [doNo, setDoNo] = useState('');
   const [note, setNote] = useState('');
@@ -563,9 +600,11 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
           .map((i) => ({ itemId: i.id, qty: rows[i.id].qty || 0, rejected: rows[i.id].rejected || 0 }))
           .filter((l) => l.qty > 0 || l.rejected > 0);
     const prefix = lines.every((l) => itemKind(po, l.itemId) === 'jasa') ? 'BAPP' : 'FPB';
+    const receiptId = uid('fpb');
+    const number = nextNumber(prefix, pb.receipts);
     pb.add('receipts', {
-      id: uid('fpb'),
-      number: nextNumber(prefix, pb.receipts),
+      id: receiptId,
+      number,
       poId: po.id,
       vendorId: po.vendorId,
       date,
@@ -578,10 +617,14 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
       // Tanggal pengakuan beban. Berbeda dari tanggal dokumen pada termin berkala: bebannya
       // milik periode yang di-BAPP, bukan hari dokumennya diketik.
       journalDate: prefix === 'BAPP' ? journalDate : date,
+      warehouseId: po.warehouseId ?? null,
       file,
       lines,
       note,
     });
+    // Barang yang diterima langsung menambah stok di gudang tujuan PO. Hanya produk
+    // yang dilacak stoknya yang bergerak (M12); jasa tidak punya persediaan.
+    postReceiptStock({ receiptId, number, date, po, lines, postStock, products, by: personLabel(pb.role) });
     toast(
       prefix === 'BAPP'
         ? 'BAPP dicatat. Menunggu persetujuan atasan sebelum bisa difaktur.'
@@ -1243,20 +1286,20 @@ export function SendPoModal({ opened, onClose, po, pb, onConfirm }) {
       onClose={onClose}
       size={520}
       icon={PaperPlaneTilt}
-      title={`Kirim ${label} ke email vendor?`}
+      title={po.sent ? `Kirim ulang ${label} ke email vendor?` : `Kirim ${label} ke email vendor?`}
       subtitle={`${po.number} · ${vendor?.name ?? '—'}`}
       footer={
         <>
           <Cancel onClick={onClose} />
           <Button radius="md" leftSection={<PaperPlaneTilt size={16} />} disabled={!email} onClick={send}>
-            Kirim ke vendor
+            {po.sent ? 'Kirim ulang' : 'Kirim ke vendor'}
           </Button>
         </>
       }
     >
       <Box p="sm" bg="slate.0" style={{ borderRadius: 'var(--mantine-radius-md)' }}>
         <Stack gap={6}>
-          {row('Kepada', email ? <>{email}<Text fz={11} fw={400} c="slate.6">{vendor?.pic ? `u.p. ${vendor.pic}` : ''}</Text></> : 'Email vendor belum diisi')}
+          {row('Kepada', email ? <>{email}<Text fz={11} fw={400} c="slate.6" component="span" display="block">{vendor?.pic ? `u.p. ${vendor.pic}` : ''}</Text></> : 'Email vendor belum diisi')}
           {row('Lampiran', file)}
           {row('Nilai', rupiah(poTotal(po)))}
         </Stack>
@@ -1287,10 +1330,18 @@ export function SendPoModal({ opened, onClose, po, pb, onConfirm }) {
         onChange={(e) => setNote(e.currentTarget.value)}
       />
 
-      <Callout tone="warn" title="Setelah dikirim">
-        Status {label} berubah jadi &quot;Dikirim ke vendor&quot; dan isinya tidak bisa diubah lagi. Gudang baru bisa
-        mencatat penerimaan setelah langkah ini.
-      </Callout>
+      {po.sent ? (
+        <Callout title="Dokumen ini sudah pernah dikirim">
+          Isinya sama persis dengan yang dulu dikirim; yang berubah hanya tujuan, CC, dan pesannya. Tanggal
+          kirim pertama tetap dipakai sebagai acuan, pengiriman ulang dicatat terpisah di jejak dokumen.
+        </Callout>
+      ) : (
+        <Callout tone="warn" title="Setelah dikirim">
+          {label} tercatat sudah lepas ke vendor dan isinya tidak bisa diubah lagi. Penerimaan
+          tidak menunggu langkah ini — FPB / BAPP boleh dicatat lebih dulu kalau barang atau pekerjaannya
+          memang sudah datang.
+        </Callout>
+      )}
     </FormModal>
   );
 }

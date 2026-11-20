@@ -32,12 +32,14 @@ import {
   Notebook,
   Paperclip,
   Percent,
+  Prohibit,
 } from '@/components/Icon.jsx';
 import { useData } from '@/lib/store.jsx';
 import { downloadFile } from '@/lib/fileStore.js';
 import { toCustomer } from '@/pages/Kontak/utils.js';
 import { PageIntro } from './components.jsx';
-import { JournalModal } from './Dialogs.jsx';
+import { JournalModal, ReasonModal } from './Dialogs.jsx';
+import { notifications } from '@mantine/notifications';
 import { TODAY } from './data.js';
 import { withholdingType } from './journal.js';
 import {
@@ -47,10 +49,13 @@ import {
   cashReceived,
   methodOptions,
   monthOf,
+  PAYMENT_VOID_REASONS,
+  releaseCredit,
+  voidPayment,
   withheld,
 } from './payments.js';
 import { formatHash } from './routes.js';
-import { formatDate, rupiah, rupiahShort, useCustomer } from './utils.js';
+import { formatDate, logActivity, nowIso, rupiah, rupiahShort, useCustomer } from './utils.js';
 
 const pageSizes = ['10', '20', '50'].map((v) => ({ value: v, label: `${v} / hal` }));
 
@@ -82,15 +87,21 @@ function StatCard({ label, value, hint, icon: Icon, color }) {
   );
 }
 
-function PaymentRow({ payment, onJournal }) {
+function PaymentRow({ payment, onJournal, onVoid }) {
   const customer = useCustomer(payment.customerId);
   const pph = withholdingType(payment.withholdingType);
   const potongan = withheld(payment);
+  const batal = !!payment.cancelledAt;
 
   return (
-    <Table.Tr>
+    <Table.Tr style={batal ? { background: 'var(--mantine-color-slate-0)' } : undefined}>
       <Table.Td fz="sm" c="slate.8" style={{ whiteSpace: 'nowrap' }}>
         {formatDate(payment.date)}
+        {batal && (
+          <Badge size="xs" radius="sm" variant="light" color="red" mt={2} display="block" w="fit-content">
+            DIBATALKAN
+          </Badge>
+        )}
       </Table.Td>
       <Table.Td>
         <UnstyledButton onClick={() => goTo({ name: 'invoice', id: payment.saleId })}>
@@ -134,7 +145,12 @@ function PaymentRow({ payment, onJournal }) {
         </Group>
       </Table.Td>
       <Table.Td ta="right">
-        <Text fz="sm" fw={700} c="slate.9" style={{ whiteSpace: 'nowrap' }}>
+        <Text
+          fz="sm"
+          fw={700}
+          c={batal ? 'slate.5' : 'slate.9'}
+          style={{ whiteSpace: 'nowrap', textDecoration: batal ? 'line-through' : 'none' }}
+        >
           {rupiah(payment.amount)}
         </Text>
         {potongan > 0 && (
@@ -176,6 +192,19 @@ function PaymentRow({ payment, onJournal }) {
             <Menu.Item fz="xs" leftSection={<Notebook size={14} />} onClick={onJournal}>
               Lihat Jurnal
             </Menu.Item>
+            {!batal && (
+              <>
+                <Menu.Divider />
+                <Menu.Item
+                  fz="xs"
+                  color="red"
+                  leftSection={<Prohibit size={14} />}
+                  onClick={onVoid}
+                >
+                  Batalkan Pembayaran
+                </Menu.Item>
+              </>
+            )}
             {(payment.proofs ?? []).map((name) => (
               <Menu.Item
                 key={name}
@@ -194,7 +223,7 @@ function PaymentRow({ payment, onJournal }) {
 }
 
 export default function Payments() {
-  const { sales, contactsById } = useData();
+  const { sales, setSales, setSalesReturns, contactsById } = useData();
   const [query, setQuery] = useState('');
   const [account, setAccount] = useState('all');
   const [method, setMethod] = useState('all');
@@ -202,11 +231,16 @@ export default function Payments() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState('10');
   const [journalId, setJournalId] = useState(null);
+  // B3: pembayaran yang sedang dikonfirmasi pembatalannya — { saleId, index }.
+  const [voiding, setVoiding] = useState(null);
 
   const payments = useMemo(() => allPayments(sales), [sales]);
 
   const stats = useMemo(() => {
-    const bulanIni = payments.filter((p) => monthOf(p.date) === monthOf(TODAY));
+    // B3: pembayaran yang dibatalkan tetap tampil di daftar, tapi tidak ikut dihitung —
+    // termasuk jumlah barisnya, bukan hanya nilainya.
+    const berlaku = payments.filter((p) => !p.cancelledAt);
+    const bulanIni = berlaku.filter((p) => monthOf(p.date) === monthOf(TODAY));
     const sum = (list, f) => list.reduce((n, p) => n + f(p), 0);
     return [
       {
@@ -218,15 +252,17 @@ export default function Payments() {
       },
       {
         label: 'Total penerimaan',
-        value: rupiahShort(sum(payments, cashReceived)),
-        hint: `${payments.length} pembayaran tercatat`,
+        value: rupiahShort(sum(berlaku, cashReceived)),
+        hint: `${berlaku.length} pembayaran tercatat${
+          payments.length > berlaku.length ? ` · ${payments.length - berlaku.length} dibatalkan` : ''
+        }`,
         icon: Check,
         color: 'primary',
       },
       {
         // Berguna saat merekap bukti potong dari pelanggan.
         label: 'Pajak dipotong pelanggan',
-        value: rupiahShort(sum(payments, withheld)),
+        value: rupiahShort(sum(berlaku, withheld)),
         hint: 'PPh yang perlu bukti potong',
         icon: Percent,
         color: 'orange',
@@ -265,6 +301,44 @@ export default function Payments() {
   const rows = filtered.slice((current - 1) * size, current * size);
   const totalTampil = filtered.reduce((n, p) => n + cashReceived(p), 0);
   const jurnalSale = journalId && sales.find((s) => s.id === journalId);
+  const voidSale = voiding && sales.find((s) => s.id === voiding.saleId);
+  const voidTarget = voidSale?.payments?.[voiding.index] ?? null;
+
+  // B3: pembatalan tidak menghapus pembayaran — jurnalnya dibalik, sisa tagihan kembali,
+  // dan kredit pelanggan yang sempat terpakai dikembalikan ke returnya.
+  const confirmVoid = (reason) => {
+    const at = nowIso();
+    setSales((list) =>
+      list.map((s) =>
+        s.id !== voiding.saleId
+          ? s
+          : logActivity(
+              {
+                ...s,
+                payments: s.payments.map((p, i) =>
+                  i === voiding.index ? voidPayment(p, reason, at) : p,
+                ),
+                updatedAt: at,
+              },
+              'paymentVoided',
+              `${rupiah(voidTarget.amount)} · ${reason}`,
+            ),
+      ),
+    );
+    if (voidTarget.fromCredit) {
+      setSalesReturns((list) => releaseCredit(list, voidSale.customerId, voidTarget.amount, at));
+    }
+    setVoiding(null);
+    notifications.show({
+      color: 'red',
+      icon: <Prohibit size={18} />,
+      title: 'Pembayaran dibatalkan',
+      message: `${rupiah(voidTarget.amount)} pada ${voidSale.number} tidak lagi menutup tagihan.`,
+      autoClose: 5000,
+      withBorder: true,
+      radius: 'md',
+    });
+  };
 
   const reset = (fn) => (v) => {
     fn(v);
@@ -376,7 +450,12 @@ export default function Payments() {
               </Table.Thead>
               <Table.Tbody>
                 {rows.map((p) => (
-                  <PaymentRow key={p.key} payment={p} onJournal={() => setJournalId(p.saleId)} />
+                  <PaymentRow
+                    key={p.key}
+                    payment={p}
+                    onJournal={() => setJournalId(p.saleId)}
+                    onVoid={() => setVoiding({ saleId: p.saleId, index: p.index })}
+                  />
                 ))}
               </Table.Tbody>
             </Table>
@@ -416,6 +495,17 @@ export default function Payments() {
       </Card>
 
       {jurnalSale && <JournalModal sale={jurnalSale} onClose={() => setJournalId(null)} />}
+      {voidTarget && (
+        <ReasonModal
+          title="Batalkan Pembayaran"
+          subtitle={`${rupiah(voidTarget.amount)} pada ${voidSale.number} dibalik jurnalnya. Catatannya tetap tersimpan sebagai jejak.`}
+          label="Alasan pembatalan"
+          options={PAYMENT_VOID_REASONS}
+          confirmLabel="Batalkan pembayaran"
+          onClose={() => setVoiding(null)}
+          onConfirm={confirmVoid}
+        />
+      )}
 
       <Group justify="center">
         <Button

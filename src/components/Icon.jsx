@@ -101,4 +101,11 @@ export {
   UploadSimple,
   UserCheck,
   UserPlus,
+  Warehouse,
+  Garage,
+  Ruler,
+  Factory,
+  Handshake,
+  SelectionAll,
+  Printer,
 } from '@phosphor-icons/react';

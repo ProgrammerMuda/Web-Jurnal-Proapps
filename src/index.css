@@ -7,10 +7,38 @@
 }
 
 /* Tombol naik/turun NumberField (meniru gaya kontrol NumberInput Mantine). */
+/* Sisi kanan isian angka: satuan (opsional) lalu tombol naik/turun. */
+.number-field-right {
+  display: flex;
+  height: calc(var(--input-height) - 2px);
+  width: 100%;
+  margin-inline-start: auto;
+}
+
+/* Satuan ditempel di pojok kanan dengan latar abu muda, bukan diketik di dalam angka. */
+.number-field-unit {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  justify-content: center;
+  padding-inline: 8px;
+  white-space: nowrap;
+  background-color: var(--mantine-color-gray-1);
+  color: var(--mantine-color-slate-6);
+  font-size: var(--mantine-font-size-sm);
+  border-inline-start: 1px solid var(--input-bd);
+}
+
+.number-field-right > :last-child {
+  border-start-end-radius: calc(var(--input-radius) - 1px);
+  border-end-end-radius: calc(var(--input-radius) - 1px);
+}
+
 .number-field-controls {
   display: flex;
   flex-direction: column;
-  width: 100%;
+  width: var(--nf-controls, 100%);
+  flex: 0 0 var(--nf-controls, auto);
   height: calc(var(--input-height) - 2px);
   margin-inline-start: auto;
 }

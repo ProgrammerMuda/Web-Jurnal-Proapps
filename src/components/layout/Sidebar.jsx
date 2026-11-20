@@ -53,6 +53,12 @@ import {
   TreeStructure,
   Truck,
   ArrowsLeftRight,
+  Warehouse,
+  Garage,
+  Ruler,
+  Factory,
+  Handshake,
+  SelectionAll,
   UserCircle,
   UsersThree,
   Wallet,
@@ -112,9 +118,20 @@ const groups = [
   {
     label: 'Operasional',
     items: [
-      { label: 'Produk', icon: TreeStructure },
-      { label: 'Produksi', icon: Package },
-      { label: 'Pemenuhan', icon: Truck },
+      {
+        label: 'Persediaan',
+        icon: Warehouse,
+        children: [
+          { key: 'produk:items', label: 'Produk & Jasa', icon: SelectionAll },
+          { key: 'produk:categories', label: 'Kategori Produk', icon: Tag },
+          { key: 'produk:units', label: 'Satuan', icon: Ruler },
+          { key: 'gudang:warehouses', label: 'Gudang', icon: Garage },
+          { key: 'gudang:moves', label: 'Mutasi Stok', icon: ArrowsLeftRight },
+          { key: 'gudang:opname', label: 'Stok Opname', icon: ClipboardText },
+        ],
+      },
+      { label: 'Produksi', icon: Factory },
+      { label: 'Pemenuhan', icon: Handshake },
     ],
   },
   {

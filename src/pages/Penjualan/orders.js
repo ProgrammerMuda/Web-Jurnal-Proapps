@@ -183,6 +183,41 @@ export function invoicePrefillFromOrder(order, { billingAddress, dueDate }) {
   };
 }
 
+// B1: sisa yang boleh ditagih, dijumlahkan per produk. Dipakai form faktur sebagai
+// batas atas qty. Per produk, bukan per baris, karena applyInvoicedQty juga memotong
+// sisa per produk — kalau batasnya dihitung lain, keduanya bisa berselisih.
+export function remainingByProduct(order) {
+  const sisa = {};
+  order.items.forEach((it) => {
+    sisa[it.productId] = (sisa[it.productId] ?? 0) + remainingQty(it);
+  });
+  return sisa;
+}
+
+// B1: baris faktur yang menagih lebih dari sisa pesanannya. Mengembalikan pesan per
+// indeks baris; yang kosong berarti baris itu masih di dalam batas.
+// Tanpa pemeriksaan ini, qty berlebih tetap tersimpan di faktur sementara pesanannya
+// hanya menyerap sebanyak sisanya — pesanan lalu tampil "selesai" padahal fakturnya
+// lebih besar dari nilai yang pernah dipesan.
+export function overInvoicedLines(items, remaining) {
+  const sisa = { ...remaining };
+  const errors = {};
+  items.forEach((l, i) => {
+    if (!l.productId) return;
+    const qty = Number(l.qty) || 0;
+    if (!(l.productId in sisa)) {
+      errors[i] = 'Produk ini tidak ada di pesanan sumber';
+      return;
+    }
+    const tersedia = sisa[l.productId];
+    if (qty > tersedia) {
+      errors[i] = tersedia > 0 ? `Sisa pesanan tinggal ${tersedia}` : 'Sisa pesanan sudah habis';
+    }
+    sisa[l.productId] = Math.max(tersedia - qty, 0);
+  });
+  return errors;
+}
+
 // Jumlah yang difakturkan dikembalikan ke baris pesanan, dipakai saat faktur tersimpan.
 export function applyInvoicedQty(order, saleItems) {
   const dipakai = {};

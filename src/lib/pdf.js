@@ -28,17 +28,43 @@ const toRgb = (c) => {
 const fill = (c) => `${toRgb(c).map((n) => n.toFixed(3)).join(' ')} rg `;
 
 // Satu baris teks. align: 'left' (bawaan), 'right', atau 'center'.
-export function text(str, x, y, { size = 10, bold = false, align = 'left', gray = 0, color } = {}) {
+export function text(str, x, y, { size = 10, bold = false, italic = false, align = 'left', gray = 0, color } = {}) {
   const s = ascii(str);
   if (!s) return '';
   const w = textWidth(s, size);
   const left = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
-  return `${fill(color ?? gray)}BT /${bold ? 'F2' : 'F1'} ${size} Tf ${left.toFixed(2)} ${y.toFixed(2)} Td (${esc(s)}) Tj ET\n`;
+  const font = bold ? 'F2' : italic ? 'F3' : 'F1';
+  return `${fill(color ?? gray)}BT /${font} ${size} Tf ${left.toFixed(2)} ${y.toFixed(2)} Td (${esc(s)}) Tj ET\n`;
 }
 
 // Kotak terisi; dipakai untuk garis (tinggi tipis), latar baris tabel, dan band berwarna.
 export const rect = (x, y, w, h, color = 0.85) => `${fill(color)}${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f\n`;
 export const line = (x1, x2, y, color = 0.8) => rect(x1, y, x2 - x1, 0.6, color);
+
+// Kotak bersudut tumpul. Sudutnya dibentuk kurva bezier — PDF tidak punya primitif
+// sendiri untuk ini. k = 0.5523 adalah pendekatan baku seperempat lingkaran.
+export function roundRect(x, y, w, h, r = 6, color = 0.95) {
+  const j = Math.min(r, w / 2, h / 2);
+  const k = j * 0.5523;
+  const [x2, y2] = [x + w, y + h];
+  return (
+    `${fill(color)}${(x + j).toFixed(2)} ${y.toFixed(2)} m\n` +
+    `${(x2 - j).toFixed(2)} ${y.toFixed(2)} l\n` +
+    `${(x2 - j + k).toFixed(2)} ${y.toFixed(2)} ${x2.toFixed(2)} ${(y + j - k).toFixed(2)} ${x2.toFixed(2)} ${(y + j).toFixed(2)} c\n` +
+    `${x2.toFixed(2)} ${(y2 - j).toFixed(2)} l\n` +
+    `${x2.toFixed(2)} ${(y2 - j + k).toFixed(2)} ${(x2 - j + k).toFixed(2)} ${y2.toFixed(2)} ${(x2 - j).toFixed(2)} ${y2.toFixed(2)} c\n` +
+    `${(x + j).toFixed(2)} ${y2.toFixed(2)} l\n` +
+    `${(x + j - k).toFixed(2)} ${y2.toFixed(2)} ${x.toFixed(2)} ${(y2 - j + k).toFixed(2)} ${x.toFixed(2)} ${(y2 - j).toFixed(2)} c\n` +
+    `${x.toFixed(2)} ${(y + j).toFixed(2)} l\n` +
+    `${x.toFixed(2)} ${(y + j - k).toFixed(2)} ${(x + j - k).toFixed(2)} ${y.toFixed(2)} ${(x + j).toFixed(2)} ${y.toFixed(2)} c\n` +
+    'h f\n'
+  );
+}
+
+// Kotak bergaris tepi: kotak luar berwarna garis, lalu kotak dalam berwarna isi.
+export const framedRect = (x, y, w, h, { r = 6, border = '#e2e8f0', fill: isi = '#ffffff', width = 0.8 } = {}) =>
+  roundRect(x, y, w, h, r, border) +
+  roundRect(x + width, y + width, w - width * 2, h - width * 2, Math.max(r - width, 0), isi);
 
 // Bungkus teks panjang jadi beberapa baris agar tidak melewati lebar kolom.
 export function wrap(str, width, size) {
@@ -61,10 +87,11 @@ export function buildPdf(content, { title = 'Dokumen', page = A4 } = {}) {
   const objs = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.w} ${page.h}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>`,
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.w} ${page.h}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R /F3 7 0 R >> >> >>`,
     `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding >>',
     `<< /Title (${esc(title)}) /Producer (Dashboard Jurnal) >>`,
   ];
   let pdf = '%PDF-1.4\n';

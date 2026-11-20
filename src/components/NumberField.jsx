@@ -18,9 +18,12 @@ const MONEY = {
 };
 
 // money: pakai untuk kolom harga/nominal. Prop lain tetap bisa menimpa presetnya.
-export default function NumberField({ size = 'sm', money, disabled, readOnly, hideControls, ...props }) {
+// unit: satuan yang ditempel di sisi kanan isian (latar abu muda), bukan ikut diketik
+// di dalam angkanya — mis. "box", "rim", "kWh".
+export default function NumberField({ size = 'sm', money, unit, disabled, readOnly, hideControls, ...props }) {
   const handlers = useRef(null);
   const iconSize = iconSizes[size] ?? 14;
+  const controlsWidth = `var(--ni-right-section-width-${size})`;
   const off = disabled || readOnly;
 
   const control = (dir, Icon) => (
@@ -47,15 +50,25 @@ export default function NumberField({ size = 'sm', money, disabled, readOnly, hi
       hideControls
       handlersRef={handlers}
       rightSection={
-        hideControls ? null : (
-          <div className="number-field-controls">
-            {control('increment', CaretUp)}
-            {control('decrement', CaretDown)}
+        hideControls && !unit ? null : (
+          <div
+            className="number-field-right"
+            style={{ '--nf-controls': hideControls ? '0px' : controlsWidth }}
+          >
+            {unit && <span className="number-field-unit">{unit}</span>}
+            {!hideControls && (
+              <div className="number-field-controls">
+                {control('increment', CaretUp)}
+                {control('decrement', CaretDown)}
+              </div>
+            )}
           </div>
         )
       }
       rightSectionPointerEvents="auto"
-      rightSectionWidth={`var(--ni-right-section-width-${size})`}
+      rightSectionWidth={
+        unit ? `calc(${controlsWidth} + ${unit.length}ch + 20px)` : controlsWidth
+      }
     />
   );
 }

@@ -1,5 +1,6 @@
 // Perhitungan & aturan modul Pembelian (murni fungsi; state ada di store.jsx).
 import { periodOptions, personLabel, RULES, TODAY } from './data.js';
+import { defaultWarehouseId } from '@/pages/Gudang/data.js';
 import { dueFromLabel, termFields, termMechanics } from './paymentTerms.js';
 
 import { addDays, formatDate } from '@/pages/Penjualan/utils.js';
@@ -323,10 +324,13 @@ export const returnedQty = (invId, itemId, returns) =>
 export function poStatus(po, { receipts, invoices, prs, pos, returns }) {
   // PO yang dibatalkan atau ditutup berhenti di situ; sisa qty-nya tidak lagi ditunggu.
   if (po.closedAs) return po.closedAs;
-  if (!po.sent) return 'draft';
   const full = po.items.every((i) => remainingQty(po, i.id, receipts) === 0);
   const any = po.items.some((i) => receivedQty(po, i.id, receipts) > 0);
-  if (!any) return 'dikirim';
+  // Penerimaan boleh dicatat sebelum dokumennya dikirim ke vendor — barang sering datang
+  // duluan dengan surat jalan, pekerjaan sering jalan atas dasar kesepakatan lisan. Jadi
+  // "draft" hanya berlaku selama belum dikirim DAN belum ada yang diterima; begitu ada
+  // penerimaan, statusnya ikut penerimaannya supaya tidak terbaca seperti pesanan mati.
+  if (!any) return po.sent ? 'dikirim' : 'draft';
   if (!full) return 'sebagian';
   const invs = liveInvoices(invoices).filter((i) => i.poId === po.id);
   const allInvoiced = receiptsOf(po, receipts).every((r) => uninvoicedLines(r, invoices).length === 0);
@@ -904,7 +908,12 @@ export function createPOs(f, pb) {
       sent: false,
       term: b.term,
       expectedAt: new Date(Date.parse(TODAY) + b.lead * 864e5).toISOString().slice(0, 10),
-      warehouse: 'Gudang Utama',
+      // Gudang tujuan diwarisi dari lokasi kirim pada permintaannya; bila permintaan
+      // belum menyebutkannya, dipakai gudang utama. SPK (semua jasa) tidak mengirim
+      // barang ke gudang, jadi dikosongkan.
+      warehouseId: poAllJasa({ items: b.items })
+        ? null
+        : (f.warehouseId ?? defaultWarehouseId(pb.warehouses ?? [])),
       ppnIncluded: b.items.some((i) => i.ppnIncluded),
       // Termin progres / layanan berkala langsung dipecah jadi baris per termin di SPK.
       items: expandSchedule(b.items, b.term, TODAY),

@@ -31,19 +31,8 @@ import {
   PaperPlaneTilt,
   ShieldCheck,
 } from '@/components/Icon.jsx';
-import {
-  aging,
-  auditTrail,
-  billing,
-  cashAccounts,
-  financialPosition,
-  kpis,
-  priority,
-  quickActions,
-  recentInvoices,
-  rupiah,
-  workToday,
-} from './data.js';
+import { auditTrail, financialPosition, quickActions, rupiah } from './data.js';
+import { useSummary } from './summary.js';
 
 const workIcons = { shield: ShieldCheck, file: FileText, calendar: CalendarBlank };
 const actionIcons = {
@@ -109,7 +98,7 @@ function KpiCard({ kpi }) {
       </Group>
       <Group justify="space-between" align="flex-end" mt="sm" wrap="nowrap">
         <Box>
-          <Title order={3} fz={22} c="slate.9">
+          <Title order={3} fz={22} c="slate.9" style={{ whiteSpace: 'nowrap' }}>
             {kpi.value}
           </Title>
           <Text fz="xs" c="slate.6" mt={4}>
@@ -148,7 +137,7 @@ function KpiCard({ kpi }) {
   );
 }
 
-function BillingChart() {
+function BillingChart({ billing }) {
   const { months, max, ticks } = billing;
   const h = 150;
   return (
@@ -215,13 +204,13 @@ function BillingChart() {
   );
 }
 
-function BillingCard() {
+function BillingCard({ billing }) {
   return (
     <SectionCard
       title="Tagihan & penerimaan"
       description="Enam bulan berdasarkan bulan terbit faktur: nilai tagihan dan pembayaran yang telah diterima."
       action={
-        <Badge variant="light" radius="md" size="md">
+        <Badge variant="light" radius="md" size="md" style={{ flexShrink: 0 }}>
           Koleksi {billing.koleksi}%
         </Badge>
       }
@@ -252,12 +241,12 @@ function BillingCard() {
           </Text>
         </Group>
       </Group>
-      <BillingChart />
+      <BillingChart billing={billing} />
     </SectionCard>
   );
 }
 
-function WorkTodayCard() {
+function WorkTodayCard({ workToday }) {
   return (
     <Card radius="lg" p="lg" bg="primary.9" c="white" h="100%">
       <Title order={4} c="white" fz="lg">
@@ -329,7 +318,7 @@ function InvoiceRow({ row }) {
           </Text>
           <Group gap={6}>
             <Badge size="xs" variant="light" color="slate" radius="sm">
-              {row.count} faktur
+              {row.countLabel ?? `${row.count} faktur`}
             </Badge>
             <Text fz="xs" c="slate.6">
               Jatuh tempo: {row.due}
@@ -351,7 +340,7 @@ function InvoiceRow({ row }) {
   );
 }
 
-function CollectionCard() {
+function CollectionCard({ priority, recentInvoices }) {
   const [tab, setTab] = useState('priority');
   const rows = tab === 'priority' ? priority : recentInvoices;
   return (
@@ -372,15 +361,19 @@ function CollectionCard() {
         </Button>
       </Group>
       <Stack gap="md">
-        {rows.map((r) => (
-          <InvoiceRow key={r.name} row={r} />
-        ))}
+        {rows.length === 0 ? (
+          <Text fz="xs" c="slate.6">
+            Belum ada faktur yang perlu ditagih.
+          </Text>
+        ) : (
+          rows.map((r) => <InvoiceRow key={r.key} row={r} />)
+        )}
       </Stack>
     </Card>
   );
 }
 
-function AgingCard() {
+function AgingCard({ aging }) {
   return (
     <SectionCard
       title="Umur piutang"
@@ -422,7 +415,7 @@ function AgingCard() {
   );
 }
 
-function CashDistributionCard() {
+function CashDistributionCard({ cashAccounts }) {
   return (
     <SectionCard
       title="Distribusi kas & bank"
@@ -586,6 +579,9 @@ function AuditTrailCard() {
 }
 
 export default function Ringkasan() {
+  // B4: satu sumber angka untuk seluruh halaman, dihitung dari faktur di store —
+  // sama persis dengan yang dibaca halaman Faktur Penjualan.
+  const s = useSummary();
   return (
     <Stack gap="lg" p="lg">
       <Group justify="space-between">
@@ -604,35 +600,36 @@ export default function Ringkasan() {
 
       <Box>
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-          {kpis.map((k) => (
+          {s.kpis.map((k) => (
             <KpiCard key={k.key} kpi={k} />
           ))}
         </SimpleGrid>
         <Text fz="xs" c="slate.6" mt="xs">
-          Angka penjualan dan piutang mencakup 100 transaksi terakhir yang dimuat (maksimal 100).
+          Angka penjualan dan piutang dihitung dari seluruh faktur penjualan yang tercatat,
+          sumber yang sama dengan halaman Faktur Penjualan.
         </Text>
       </Box>
 
       <Grid gutter="md">
         <Grid.Col span={{ base: 12, lg: 8 }}>
-          <BillingCard />
+          <BillingCard billing={s.billing} />
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 4 }}>
-          <WorkTodayCard />
+          <WorkTodayCard workToday={s.workToday} />
         </Grid.Col>
       </Grid>
 
       <Grid gutter="md">
         <Grid.Col span={{ base: 12, lg: 8 }}>
-          <CollectionCard />
+          <CollectionCard priority={s.priority} recentInvoices={s.recentInvoices} />
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 4 }}>
-          <AgingCard />
+          <AgingCard aging={s.aging} />
         </Grid.Col>
       </Grid>
 
       <SimpleGrid cols={{ base: 1, lg: 2 }}>
-        <CashDistributionCard />
+        <CashDistributionCard cashAccounts={s.cashAccounts} />
         <FinancialPositionCard />
       </SimpleGrid>
 

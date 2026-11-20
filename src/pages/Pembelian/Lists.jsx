@@ -145,7 +145,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
               <Table.Td ta="right">
                 <RowMenu label={p.number} items={[
                   { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'po', id: p.id }) },
-                  canCreate(role, receiptDoc(poAllJasa(p))) && ['dikirim', 'sebagian'].includes(st) && { label: poAllJasa(p) ? 'Catat BAPP' : 'Catat Penerimaan', icon: Truck, onClick: () => openDialog({ type: 'receipt', poId: p.id }) },
+                  canCreate(role, receiptDoc(poAllJasa(p))) && ['draft', 'dikirim', 'sebagian'].includes(st) && { label: poAllJasa(p) ? 'Catat BAPP' : 'Catat Penerimaan', icon: Truck, onClick: () => openDialog({ type: 'receipt', poId: p.id }) },
                 ]} />
               </Table.Td>
             </Table.Tr>
@@ -164,7 +164,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
         placeholder="Cari nomor, vendor, atau surat jalan..."
         head={[{ label: 'Penerimaan & Tanggal' }, { label: 'Vendor' }, { label: 'Surat Jalan / BAPP' }, { label: 'Jumlah Diterima', align: 'right' }, { label: 'Faktur' }, { label: 'Aksi', align: 'right', w: 70 }]}
         minWidth={940}
-        empty={pb.receipts.length === 0 ? <EmptyState icon={Truck} title="Belum ada penerimaan" text="Penerimaan dicatat dari PO yang sudah dikirim ke vendor, saat barang atau jasa sudah sampai." /> : undefined}
+        empty={pb.receipts.length === 0 ? <EmptyState icon={Truck} title="Belum ada penerimaan" text="Penerimaan dicatat dari pesanan yang ada, saat barang sudah sampai atau pekerjaan sudah diserahterimakan." /> : undefined}
         rows={rows.map((r) => {
           const open = uninvoicedLines(r, pb.invoices).length > 0;
           return (

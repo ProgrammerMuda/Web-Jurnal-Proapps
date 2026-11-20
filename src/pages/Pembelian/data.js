@@ -43,38 +43,17 @@ export const personLabel = (role) => {
 };
 // Jabatan saja, mis. "Manager Keuangan".
 export const personTitle = (role) => roleOf(role)?.person?.title ?? '';
+// Nama saja, mis. "Maya Sari". Dipakai blok tanda tangan di PDF.
+export const personName = (role) => roleOf(role)?.person?.name ?? '';
 
-// Katalog produk contoh untuk memilih barang atau jasa di form permintaan (nantinya diambil dari modul Produk).
-export const productCatalog = [
-  { id: 'kertas-a4', name: 'Kertas A4 80 gsm', description: 'Kertas HVS A4 80 gsm, isi 500 lembar', kind: 'barang', unit: 'rim', price: 56000 },
-  { id: 'map-plastik', name: 'Map plastik', description: 'Map plastik folder arsip', kind: 'barang', unit: 'pcs', price: 3500 },
-  { id: 'tinta-printer', name: 'Tinta printer', description: 'Tinta refill printer, isi 4 warna', kind: 'barang', unit: 'box', price: 185000 },
-  { id: 'printer-laser', name: 'Printer laser A4', description: 'Printer laser monokrom A4', kind: 'barang', unit: 'unit', price: 4200000 },
-  { id: 'meja-lipat', name: 'Meja lipat 120x60', description: 'Meja lipat rangka besi, 120x60 cm', kind: 'barang', unit: 'pcs', price: 650000 },
-  { id: 'kursi-kantor', name: 'Kursi kantor ergonomis', description: 'Sandaran jaring, roda, ketinggian bisa diatur', kind: 'barang', unit: 'unit', price: 1450000 },
-  { id: 'lemari-arsip', name: 'Lemari arsip besi 4 laci', description: 'Lemari arsip besi 4 laci berkunci', kind: 'barang', unit: 'unit', price: 2500000 },
-  { id: 'pipa-pvc', name: 'Pipa PVC', description: 'Pipa PVC saluran air, panjang 4 m', kind: 'barang', unit: 'pcs', price: 65000 },
-  { id: 'elbow-pvc', name: 'Elbow PVC', description: 'Sambungan elbow PVC 90 derajat', kind: 'barang', unit: 'pcs', price: 6500 },
-  { id: 'pompa-air', name: 'Pompa air', description: 'Pompa air dorong untuk tandon gedung', kind: 'barang', unit: 'unit', price: 2500000 },
-  { id: 'cairan-lantai', name: 'Cairan pembersih lantai', description: 'Cairan pembersih lantai, isi 12 botol', kind: 'barang', unit: 'box', price: 85000 },
-  { id: 'kain-pel', name: 'Kain pel microfiber', description: 'Kain pel microfiber daya serap tinggi', kind: 'barang', unit: 'pcs', price: 22500 },
-  { id: 'radio-ht', name: 'Radio HT', description: 'Radio HT dua arah untuk petugas keamanan', kind: 'barang', unit: 'unit', price: 1250000 },
-  { id: 'seragam-satpam', name: 'Seragam satpam', description: 'Seragam satpam lengkap, satu set', kind: 'barang', unit: 'set', price: 450000 },
-  { id: 'jasa-servis-lift', name: 'Jasa servis berkala lift', description: 'Servis berkala lift termasuk sparepart habis pakai', kind: 'jasa', unit: 'paket', price: 8500000 },
-  { id: 'jasa-cctv', name: 'Jasa instalasi CCTV', description: 'Instalasi CCTV termasuk kabel dan konfigurasi', kind: 'jasa', unit: 'paket', price: 3500000 },
-  { id: 'jasa-ac', name: 'Jasa servis AC', description: 'Cuci evaporator dan isi freon bila perlu', kind: 'jasa', unit: 'unit', price: 350000 },
-  { id: 'jasa-pest', name: 'Jasa pest control', description: 'Pengendalian hama berkala seluruh area gedung', kind: 'jasa', unit: 'bulan', price: 1800000 },
-  // Tagihan rutin non-PO: tidak lewat permintaan maupun gudang, tapi tetap perlu ada di
-  // katalog supaya faktur manual bisa memilihnya, bukan mengetik namanya bebas.
-  { id: 'tagihan-listrik', name: 'Tagihan listrik', description: 'Pemakaian listrik gedung', kind: 'jasa', unit: 'bulan', price: 0 },
-  { id: 'tagihan-air', name: 'Tagihan air (PDAM)', description: 'Pemakaian air PDAM gedung', kind: 'jasa', unit: 'bulan', price: 0 },
-  { id: 'tagihan-internet', name: 'Tagihan internet & telepon', description: 'Langganan internet dan telepon gedung', kind: 'jasa', unit: 'bulan', price: 0 },
-  { id: 'sewa-ruang', name: 'Sewa ruang / lahan', description: 'Sewa ruang atau lahan per bulan', kind: 'jasa', unit: 'bulan', price: 0 },
-  { id: 'jasa-cleaning', name: 'Jasa cleaning service', description: 'Tenaga kebersihan harian gedung', kind: 'jasa', unit: 'bulan', price: 0 },
-  { id: 'jasa-security', name: 'Jasa security', description: 'Tenaga keamanan gedung per bulan', kind: 'jasa', unit: 'bulan', price: 0 },
-];
+// Katalog barang & jasa yang bisa dibeli. Ini "tampilan beli" dari master Produk & Jasa
+// (src/pages/Produk/catalog.js): isinya ditulis ulang di tempat setiap katalog berubah,
+// jadi produk baru yang ditandai "dibeli" langsung bisa dipilih di permintaan dan faktur.
+// Bentuk tiap baris tetap { id, name, description, kind, unit, price }.
+export { purchaseView as productCatalog } from '@/pages/Produk/catalog.js';
 
-export const units = ['pcs', 'unit', 'rim', 'box', 'set', 'paket', 'bulan', 'lot'];
+// Pilihan satuan pada baris dokumen — diambil dari master Satuan (Produk & Jasa).
+export { unitNames as units } from '@/pages/Produk/catalog.js';
 export const departments = ['Engineering', 'Housekeeping', 'Security', 'Management', 'Keuangan'];
 // Termin bayar barang (PO): patokannya pengiriman.
 // Katalog syarat pembayaran sudah pindah ke paymentTerms.js dan kini tersimpan di store,
@@ -199,6 +178,7 @@ const poOld = {
   term: TERM.cad(),
   expectedAt: '2026-09-21',
   warehouse: 'Gudang Utama',
+  warehouseId: 'wh-1',
   items: [
     poItem('i1', 'Kertas A4 80 gsm', 50, 'rim', 52000),
     poItem('i2', 'Map plastik', 200, 'pcs', 3500),
@@ -217,6 +197,7 @@ const poChair = {
   term: TERM.dp(30),
   expectedAt: '2026-11-12',
   warehouse: 'Gudang Utama',
+  warehouseId: 'wh-1',
   items: [
     poItem('c1', 'Kursi ergonomis meeting', 10, 'pcs', 1250000, {
       spec: 'Sandaran jaring, roda, adjustable',
@@ -240,6 +221,8 @@ const kasus = ({ no, purpose, dept, vendorId, termId, items, poItems, quotePrice
       dept,
       purpose,
       iom: { no: '', date: '', files: [] },
+      // Lokasi kirim permintaan; diwarisi PO saat pengadaan disetujui.
+      warehouseId: isJasa ? null : 'wh-1',
       items,
       status: 'dalam_pengadaan',
       note: '',
@@ -279,6 +262,7 @@ const kasus = ({ no, purpose, dept, vendorId, termId, items, poItems, quotePrice
       term: t,
       expectedAt: '2026-12-15',
       warehouse: isJasa ? '-' : 'Gudang Utama',
+      warehouseId: isJasa ? null : 'wh-1',
       ppnIncluded: false,
       items: poItems,
       note: '',
@@ -426,6 +410,7 @@ export const fppbjSeed = [
     dept: 'Housekeeping',
     purpose: 'Meja lipat untuk ruang pameran',
     iom: { no: 'IOM/OPS/11/021', date: '2026-11-02', file: 'iom-meja-lipat.pdf' },
+    warehouseId: 'wh-1',
     items: [item('a1', 'Meja lipat 120x60', 8, 'pcs')],
     status: 'diajukan',
     note: '',
@@ -444,6 +429,7 @@ export const fppbjSeed = [
     dept: 'Keuangan',
     purpose: 'Kertas A4 dan printer laser untuk lantai 3',
     iom: { no: 'IOM/KEU/11/008', date: '2026-11-01', file: 'iom-atk-lt3.pdf' },
+    warehouseId: 'wh-1',
     items: [
       item('b1', 'Kertas A4 80 gsm', 50, 'rim'),
       item('b2', 'Printer laser A4', 2, 'unit'),
@@ -465,6 +451,7 @@ export const fppbjSeed = [
     dept: 'Engineering',
     purpose: 'Lemari arsip besi untuk ruang dokumen',
     iom: { no: 'IOM/PRP/10/044', date: '2026-10-25', file: 'iom-lemari.pdf' },
+    warehouseId: 'wh-1',
     items: [item('d1', 'Lemari arsip besi 4 laci', 6, 'unit')],
     status: 'dalam_pengadaan',
     note: '',
@@ -530,6 +517,7 @@ export const fppbjSeed = [
     dept: 'Keuangan',
     purpose: 'Kertas A4 dan map plastik untuk lantai 2',
     iom: { no: 'IOM/KEU/11/006', date: '2026-10-31', file: 'iom-atk.pdf' },
+    warehouseId: 'wh-1',
     items: [
       item('e1', 'Kertas A4 80 gsm', 40, 'rim'),
       item('e2', 'Map plastik', 100, 'pcs'),
@@ -575,6 +563,7 @@ export const fppbjSeed = [
     dept: 'Housekeeping',
     purpose: '10 kursi ergonomis untuk ruang meeting baru',
     iom: { no: 'IOM/OPS/10/038', date: '2026-10-19', file: 'iom-kursi.pdf' },
+    warehouseId: 'wh-1',
     items: [
       item('c1', 'Kursi ergonomis meeting', 10, 'pcs', {
         spec: 'Sandaran jaring, roda, adjustable',
@@ -648,6 +637,7 @@ export const fppbjSeed = [
     dept: 'Security',
     purpose: 'Radio HT dan seragam untuk tim security',
     iom: { no: '', date: '', file: '' },
+    warehouseId: 'wh-1',
     items: [
       item('s1', 'Radio HT', 10, 'unit', { spec: 'Dua arah, baterai cadangan, jangkauan seluruh gedung' }),
       item('s2', 'Seragam satpam', 15, 'set', { spec: 'Lengkap dengan atribut dan sepatu' }),
@@ -687,6 +677,7 @@ const spkLift = {
   term: TERM.postpaid(30),
   expectedAt: '2026-10-15',
   warehouse: '-',
+  warehouseId: null,
   items: [poItem('s1', 'Servis berkala lift gedung A', 1, 'paket', 8500000, { kind: 'jasa' })],
   note: '',
 };
@@ -703,6 +694,7 @@ const histPo = (id, number, date, vendorId, items, term = TERM.cad()) => ({
   term,
   expectedAt: date,
   warehouse: 'Gudang Utama',
+  warehouseId: 'wh-1',
   items,
   note: '',
 });

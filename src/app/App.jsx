@@ -16,6 +16,18 @@ import {
   penjualanNavKey,
   penjualanTitle,
 } from '@/pages/Penjualan/routes.js';
+import Produk from '@/pages/Produk/Produk.jsx';
+import {
+  formatHash as formatProdukHash,
+  produkNavKey,
+  produkTitle,
+} from '@/pages/Produk/routes.js';
+import Gudang from '@/pages/Gudang/Gudang.jsx';
+import {
+  formatHash as formatGudangHash,
+  gudangNavKey,
+  gudangTitle,
+} from '@/pages/Gudang/routes.js';
 import Kontak from '@/pages/Kontak/Kontak.jsx';
 import SyaratPembayaran from '@/pages/Pengaturan/SyaratPembayaran.jsx';
 import PublicInvoice from '@/pages/Penjualan/PublicInvoice.jsx';
@@ -26,6 +38,8 @@ const pages = {
   laporan: { section: 'Utama', title: 'Laporan Keuangan', Component: LaporanKeuangan },
   penjualan: { section: 'Transaksi', title: 'Penjualan', Component: Penjualan },
   pembelian: { section: 'Transaksi', title: 'Pembelian', Component: Pembelian },
+  produk: { section: 'Operasional', title: 'Produk & Jasa', Component: Produk },
+  gudang: { section: 'Operasional', title: 'Gudang', Component: Gudang },
   'daftar-akun': { section: 'Master Data', title: 'Daftar Akun', Component: DaftarAkun },
   kontak: { section: 'Master Data', title: 'Kontak', Component: Kontak },
   'syarat-pembayaran': { section: 'Pengaturan', title: 'Syarat Pembayaran', Component: SyaratPembayaran },
@@ -68,16 +82,26 @@ export default function App() {
   // Pembelian dan Penjualan punya submenu sidebar; menu & judul header mengikuti rute di hash.
   const isPembelian = nav.page === 'pembelian';
   const isPenjualan = nav.page === 'penjualan';
+  const isProduk = nav.page === 'produk';
+  const isGudang = nav.page === 'gudang';
   const activeKey = isPembelian
     ? pembelianNavKey(hash)
     : isPenjualan
       ? penjualanNavKey(hash)
-      : nav.page;
+      : isProduk
+        ? produkNavKey(hash)
+        : isGudang
+          ? gudangNavKey(hash)
+          : nav.page;
   const title = isPembelian
     ? pembelianTitle(hash)
     : isPenjualan
       ? penjualanTitle(hash)
-      : pageTitle;
+      : isProduk
+        ? produkTitle(hash)
+        : isGudang
+          ? gudangTitle(hash)
+          : pageTitle;
 
   // Menu yang belum punya halaman diabaikan.
   const navigate = (key, params = null) => {
@@ -88,6 +112,22 @@ export default function App() {
     }
     if (key.startsWith('penjualan:')) {
       window.location.hash = formatPenjualanHash({ name: 'tab', tab: key.split(':')[1] });
+      window.scrollTo({ top: 0 });
+      return;
+    }
+    if (key.startsWith('produk:')) {
+      window.location.hash = formatProdukHash({ name: 'tab', tab: key.split(':')[1] });
+      // Pindah antar tab Persediaan tidak lewat setNav: halaman Produk sendiri yang
+      // mendengarkan hashchange. Tapi dari halaman lain, halamannya harus dipasang dulu.
+      if (pageFromHash() === 'produk' && nav.page === 'produk') return;
+      setNav((n) => ({ page: 'produk', params: null, seq: n.seq + 1 }));
+      window.scrollTo({ top: 0 });
+      return;
+    }
+    if (key.startsWith('gudang:')) {
+      window.location.hash = formatGudangHash({ name: 'tab', tab: key.split(':')[1] });
+      if (pageFromHash() === 'gudang' && nav.page === 'gudang') return;
+      setNav((n) => ({ page: 'gudang', params: null, seq: n.seq + 1 }));
       window.scrollTo({ top: 0 });
       return;
     }

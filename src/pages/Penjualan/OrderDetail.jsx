@@ -35,6 +35,8 @@ import {
 } from '@/components/Icon.jsx';
 import { BackLink, CopyIcon, Field, PageIntro, StatusBadge } from './components.jsx';
 import { paymentTerms, products } from './data.js';
+import { useData } from '@/lib/store.jsx';
+import { warehouseText } from '@/pages/Gudang/data.js';
 import { DOC } from './docTypes.js';
 import { downloadInvoice } from './invoicePdf.js';
 import { formatHash } from './routes.js';
@@ -112,6 +114,7 @@ function SummaryRow({ label, value, strong, color }) {
 }
 
 export default function OrderDetail({ order, invoices = [], quote, onBack, actions }) {
+  const { warehouses } = useData();
   const t = computeTotals(order);
   const status = orderStatus(order);
   const customer = useCustomer(order.customerId);
@@ -428,6 +431,9 @@ export default function OrderDetail({ order, invoices = [], quote, onBack, actio
                 <Field label="Email">{customer?.email || '—'}</Field>
                 <Field label="Alamat pengiriman">{order.billingAddress || '—'}</Field>
                 <Field label="Termin pembayaran">{term}</Field>
+                <Field label="Gudang asal">
+                  {warehouseText(warehouses, order.warehouseId, 'Belum ditentukan')}
+                </Field>
               </Stack>
             </SideCard>
 

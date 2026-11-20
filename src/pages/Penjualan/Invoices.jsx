@@ -59,6 +59,7 @@ import { downloadInvoice } from './invoicePdf.js';
 import { formatHash, invoiceLinkFor } from './routes.js';
 import { initialSale, paymentTerms, products } from './data.js';
 import { canReturnInvoice, creditPart, customerCredit, returnStatus } from './returns.js';
+import { PAYMENT_VOID_REASONS, releaseCredit, voidPayment } from './payments.js';
 import { saleJournals } from './journal.js';
 import {
   badgeOf,
@@ -448,6 +449,30 @@ export default function Invoices({ params }) {
     setPayId(null);
   };
 
+  // B3: pembayaran yang salah input dibatalkan, bukan dihapus — jurnalnya dibalik dan
+  // sisa tagihannya kembali. Kredit pelanggan yang sempat terpakai ikut dikembalikan.
+  const voidPaymentAt = (saleId, index, reason) => {
+    const sale = sales.find((s) => s.id === saleId);
+    const payment = sale?.payments?.[index];
+    if (!payment || payment.cancelledAt) return setDialog(null);
+    const at = nowIso();
+    updateSale(saleId, (s) =>
+      logActivity(
+        { ...s, payments: s.payments.map((p, i) => (i === index ? voidPayment(p, reason, at) : p)) },
+        'paymentVoided',
+        `${rupiah(payment.amount)} · ${reason}`,
+      ),
+    );
+    if (payment.fromCredit) {
+      setSalesReturns((list) => releaseCredit(list, sale.customerId, payment.amount, at));
+    }
+    setDialog(null);
+    toast(
+      'Pembayaran dibatalkan',
+      `${rupiah(payment.amount)} pada ${sale.number} tidak lagi menutup tagihan.`,
+    );
+  };
+
   // --- aksi faktur ---------------------------------------------------------------
   const closeDialog = () => setDialog(null);
 
@@ -570,6 +595,8 @@ export default function Invoices({ params }) {
     lateFee: toLateFeeInvoice,
     // Retur punya formnya sendiri; fakturnya dibawa lewat rute, bukan state lokal.
     makeReturn: (sale) => goForm({ name: 'return-new', from: `invoice:${sale.id}` }),
+    // B3: index pembayaran dipakai sebagai kuncinya, karena pembayaran tidak punya id.
+    voidPayment: (sale, index) => setDialog({ type: 'void-payment', id: sale.id, index }),
   };
 
   const stats = useMemo(() => {
@@ -673,6 +700,17 @@ export default function Invoices({ params }) {
           confirmLabel="Batalkan faktur"
           onClose={closeDialog}
           onConfirm={(reason) => voidSale(dialogSale, reason)}
+        />
+      )}
+      {dialogSale && dialog.type === 'void-payment' && (
+        <ReasonModal
+          title="Batalkan Pembayaran"
+          subtitle={`${rupiah(dialogSale.payments[dialog.index].amount)} pada ${dialogSale.number} dibalik jurnalnya. Catatannya tetap tersimpan sebagai jejak.`}
+          label="Alasan pembatalan"
+          options={PAYMENT_VOID_REASONS}
+          confirmLabel="Batalkan pembayaran"
+          onClose={closeDialog}
+          onConfirm={(reason) => voidPaymentAt(dialogSale.id, dialog.index, reason)}
         />
       )}
       {dialogSale && dialog.type === 'journal' && (

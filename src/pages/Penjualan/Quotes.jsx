@@ -485,6 +485,8 @@ export default function Quotes({ params }) {
           subtitle={`${dialogQuote.number} ditutup dan tidak bisa dilanjutkan.`}
           label="Alasan penolakan"
           options={REJECT_REASONS}
+          notePlaceholder="Opsional, misalnya nama kompetitor atau selisih harganya..."
+
           confirmLabel="Tandai ditolak"
           onClose={closeDialog}
           onConfirm={(reason) => reject(dialogQuote, reason)}

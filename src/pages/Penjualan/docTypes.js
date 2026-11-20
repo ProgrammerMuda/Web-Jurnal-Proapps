@@ -92,6 +92,9 @@ export const DOC = {
       terms: 'Syarat & Ketentuan',
       linesTitle: 'Baris pesanan',
       sourceLabel: 'Ambil dari Penawaran',
+      // Pesanan sudah menyebut barang yang akan dikirim, jadi gudang asalnya
+      // ditentukan di sini. Penawaran dan faktur tidak memakainya.
+      warehouse: 'Gudang Asal',
       termDrivesDue: false,
     },
   },

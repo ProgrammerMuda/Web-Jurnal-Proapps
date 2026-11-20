@@ -9,9 +9,13 @@ export const rupiah = (n) => `${n < 0 ? '-' : ''}Rp ${number.format(Math.abs(n))
 // Ringkas untuk kartu statistik: Rp 14,4 jt / Rp 1,2 M.
 const short = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
 export function rupiahShort(n) {
-  if (n >= 1e9) return `Rp ${short.format(n / 1e9)} M`;
-  if (n >= 1e6) return `Rp ${short.format(n / 1e6)} jt`;
-  if (n >= 1e3) return `Rp ${short.format(n / 1e3)} rb`;
+  // Besarannya diukur dari nilai mutlak, tandanya dipasang kembali di depan — kalau
+  // tidak, angka negatif lolos semua perbandingan dan tercetak panjang.
+  const tanda = n < 0 ? '-' : '';
+  const x = Math.abs(n);
+  if (x >= 1e9) return `${tanda}Rp ${short.format(x / 1e9)} M`;
+  if (x >= 1e6) return `${tanda}Rp ${short.format(x / 1e6)} jt`;
+  if (x >= 1e3) return `${tanda}Rp ${short.format(x / 1e3)} rb`;
   return rupiah(n);
 }
 
@@ -84,7 +88,9 @@ export function computeTotals(sale) {
   const total = Math.round(afterDiscount + tax - withholding);
   // Penawaran dan pesanan tidak punya pembayaran sama sekali, jadi kolomnya memang
   // tidak ada di dokumen itu — bukan berarti datanya rusak.
-  const paid = (sale.payments ?? []).reduce((s, p) => s + p.amount, 0);
+  // B3: pembayaran yang dibatalkan tetap tersimpan sebagai jejak, tapi berhenti
+  // menutup tagihan — sisa tagihannya kembali seperti sebelum uang itu dicatat.
+  const paid = activePayments(sale).reduce((s, p) => s + p.amount, 0);
   // Satu retur bisa terbagi: sebagian memotong tagihan, sisanya jadi kredit pelanggan.
   // Yang mengurangi piutang hanya porsi yang memotong tagihan.
   const daftarRetur = sale.returns ?? [];
@@ -110,6 +116,11 @@ export function computeTotals(sale) {
     balance: cancelled ? 0 : Math.max(total - paid - returned, 0),
   };
 }
+
+// B3: pembayaran yang masih berlaku. Yang dibatalkan tidak dihapus — ia tetap terbaca
+// di riwayat dan jurnalnya ikut dibalik — tapi tidak dihitung lagi di mana pun.
+export const paymentVoided = (p) => !!p.cancelledAt;
+export const activePayments = (sale) => (sale.payments ?? []).filter((p) => !paymentVoided(p));
 
 // Status faktur: Draf → Terbit → Dibayar Sebagian → Lunas (Dibatalkan menyusul di Tahap 2).
 // Jatuh tempo BUKAN status, melainkan penanda tambahan — lihat isOverdue.
@@ -176,6 +187,7 @@ export const ACTIVITY = {
   sent: 'Dikirim ke pelanggan',
   resent: 'Dikirim ulang',
   paid: 'Pembayaran dicatat',
+  paymentVoided: 'Pembayaran dibatalkan',
   cancelled: 'Dibatalkan',
   converted: 'Jadi dokumen lanjutan',
   accepted: 'Diterima pelanggan',

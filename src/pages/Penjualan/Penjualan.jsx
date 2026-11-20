@@ -30,6 +30,7 @@ import {
   canInvoiceOrder,
   invoicePrefillFromOrder,
   nextOrderNumber,
+  remainingByProduct,
 } from './orders.js';
 import {
   canConvertQuote,
@@ -205,11 +206,19 @@ function SalePage({ view }) {
     );
   };
 
+  // B1: batas qty faktur mengikuti sisa pesanan sumbernya, dibaca saat form dirender
+  // supaya ikut berubah bila sumbernya diganti di langkah 1.
+  const batasSumber = (orderId) => {
+    const o = orderId && orders.find((x) => x.id === orderId);
+    return o ? { number: o.number, remaining: remainingByProduct(o) } : null;
+  };
+
   return (
     <SaleForm
       key={editing?.id ?? 'new'}
       sourcesFor={editing ? null : sumberFaktur}
       loadSource={ambilSumber}
+      sourceLimits={batasSumber}
       nextNumber={() => nextInvoiceNumber(sales)}
       numberTaken={(n, id) => numberTaken(sales, n, id)}
       prefill={prefill}

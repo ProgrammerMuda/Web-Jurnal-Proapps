@@ -193,6 +193,20 @@ export function reversalJournal(sale) {
   };
 }
 
+// B3: pembatalan pembayaran juga tidak menghapus jurnalnya, melainkan membalikkannya
+// pada tanggal pembatalan — pola yang sama dengan pembatalan faktur di atas.
+export function paymentReversalJournal(sale, payment, index = 0) {
+  if (!payment.cancelledAt) return null;
+  const asli = paymentJournal(sale, payment, index);
+  return {
+    id: `void-pay-${sale.id}-${index}`,
+    title: `Pembatalan pembayaran ${formatDate(payment.date)}`,
+    date: payment.cancelledAt.slice(0, 10),
+    source: payment.cancelReason ? `Alasan: ${payment.cancelReason}` : `Faktur ${sale.number}`,
+    lines: asli.lines.map((l) => ({ ...l, debit: l.credit, credit: l.debit, note: `Balik: ${l.note}` })),
+  };
+}
+
 // Jurnal retur (bagian 5). Akun debitnya mengikuti akun baris faktur: produk yang
 // akunnya liabilitas (mis. Deposit Fit Out) didebit ke akun itu, bukan ke Retur Penjualan.
 export function returnJournal(ret, sale) {
@@ -292,7 +306,11 @@ export function saleJournals(sale, returns = []) {
   const jurnal = [];
   const faktur = invoiceJournal(sale);
   if (faktur) jurnal.push(faktur);
-  (sale.payments ?? []).forEach((p, i) => jurnal.push(paymentJournal(sale, p, i)));
+  (sale.payments ?? []).forEach((p, i) => {
+    jurnal.push(paymentJournal(sale, p, i));
+    const balikBayar = paymentReversalJournal(sale, p, i);
+    if (balikBayar) jurnal.push(balikBayar);
+  });
   returns
     .filter((r) => r.invoiceId === sale.id && !r.draft)
     .forEach((r) => jurnal.push(...returnJournals(r, sale)));

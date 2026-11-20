@@ -38,7 +38,9 @@ import {
 } from '@/components/Icon.jsx';
 import { BackLink, blockedProps, PageIntro } from './components.jsx';
 import { DOC } from './docTypes.js';
+import { overInvoicedLines } from './orders.js';
 import { useData } from '@/lib/store.jsx';
+import { defaultWarehouseId, warehouseOptions } from '@/pages/Gudang/data.js';
 import { canBeInvoiced, formatAddress } from '@/pages/Kontak/utils.js';
 import {
   lockedMessage,
@@ -86,10 +88,14 @@ const initialForm = () => ({
   terms: '',
   // Catatan alamat pengiriman yang terbawa dari pesanan (S11).
   shippingNote: '',
+  // Gudang asal barang; hanya dipakai pesanan penjualan.
+  warehouseId: null,
   payments: [],
 });
 
-const productOptions = products.map((p) => ({ value: p.id, label: p.name }));
+// Katalog produk bisa berubah saat aplikasi berjalan (master Produk & Jasa), jadi
+// pilihannya dihitung ulang tiap render — bukan sekali saat modul dimuat.
+const productOptions = () => products.map((p) => ({ value: p.id, label: p.name }));
 const typeOptions = [
   { value: 'percent', label: 'Persentase (%)' },
   { value: 'nominal', label: 'Nominal (Rp)' },
@@ -109,7 +115,7 @@ function customerPatch(contact, date, termDrivesDue) {
 }
 
 function GeneralStep({ form, set, errors, doc, sources, onPickSource }) {
-  const { contacts, contactsById } = useData();
+  const { contacts, contactsById, warehouses } = useData();
   const customerOptions = contacts
     .filter(canBeInvoiced)
     .map((c) => ({ value: c.id, label: c.displayName }));
@@ -178,6 +184,19 @@ function GeneralStep({ form, set, errors, doc, sources, onPickSource }) {
           value={form.term}
           onChange={pickTerm}
         />
+        {doc.fields.warehouse && (
+          <Select
+            label={doc.fields.warehouse}
+            description="Gudang tempat barang dikeluarkan"
+            placeholder="Pilih gudang..."
+            radius="md"
+            searchable
+            clearable
+            data={warehouseOptions(warehouses, form.warehouseId)}
+            value={form.warehouseId ?? null}
+            onChange={(v) => set({ warehouseId: v })}
+          />
+        )}
         {doc.fields.unit && (
           <TextInput
             label={doc.fields.unit}
@@ -234,7 +253,7 @@ function GeneralStep({ form, set, errors, doc, sources, onPickSource }) {
   );
 }
 
-function ItemsStep({ form, set, errors, doc }) {
+function ItemsStep({ form, set, errors, lineErrors = {}, limitNote, doc }) {
   const update = (i, patch) =>
     set({ items: form.items.map((l, idx) => (idx === i ? { ...l, ...patch } : l)) });
   const pickProduct = (i, id) => {
@@ -262,7 +281,7 @@ function ItemsStep({ form, set, errors, doc }) {
             {doc.fields.linesTitle}
           </Text>
           <Text fz={11} c="slate.6">
-            {form.items.length} baris
+            {form.items.length} baris{limitNote ? ` · ${limitNote}` : ''}
           </Text>
         </Box>
         <Switch
@@ -323,7 +342,7 @@ function ItemsStep({ form, set, errors, doc }) {
                       radius="md"
                       placeholder="Pilih produk atau jasa..."
                       searchable
-                      data={productOptions}
+                      data={productOptions()}
                       value={line.productId}
                       onChange={(id) => pickProduct(i, id)}
                       error={!!errors.items && !line.productId}
@@ -347,6 +366,7 @@ function ItemsStep({ form, set, errors, doc }) {
                     ta="right"
                     value={line.qty}
                     onChange={(v) => update(i, { qty: Number(v) || 0 })}
+                    error={lineErrors[i]}
                   />
                 </Table.Td>
                 <Table.Td>
@@ -592,17 +612,22 @@ export default function SaleForm({
   // bukan dari alamat halaman — pelanggannya baru diketahui setelah dipilih.
   sourcesFor = null,
   loadSource = null,
+  // B1: batas qty dari dokumen sumber — { number, remaining: { produk: sisa } }.
+  // Dihitung pemanggil karena hanya ia yang memegang daftar pesanan.
+  sourceLimits = null,
   defaultDueDays = null,
   editing,
   initialCustomerId,
   onCancel,
   onSave,
 }) {
-  const { contactsById } = useData();
+  const { contactsById, warehouses } = useData();
   const [active, setActive] = useState(0);
   const [reached, setReached] = useState(0); // langkah terjauh yang pernah dibuka
   const [form, setForm] = useState(() => ({
     ...initialForm(),
+    // Bawaan gudang asal = gudang utama (hanya dipakai pesanan penjualan).
+    ...(doc.fields.warehouse ? { warehouseId: defaultWarehouseId(warehouses) } : {}),
     // Dokumen bermasa berlaku (penawaran) mulai dengan tenggat bawaannya sendiri.
     ...(defaultDueDays != null && { dueDate: addDays(TODAY, defaultDueDays) }),
     ...(editing ?? {}),
@@ -641,6 +666,10 @@ export default function SaleForm({
 
   const filledItems = form.items.filter((l) => l.productId);
   const totals = computeTotals({ ...form, items: filledItems });
+  // B1: faktur dari pesanan tidak boleh menagih lebih dari sisa pesanannya.
+  const limits = sourceLimits?.(form.fromOrder) ?? null;
+  const lineErrors = limits ? overInvoicedLines(form.items, limits.remaining) : {};
+  const overCount = Object.keys(lineErrors).length;
   const hasTax = filledItems.some((l) => l.tax);
 
   // Kolom wajib per langkah. Langkah 3 tidak punya kolom wajib.
@@ -663,6 +692,10 @@ export default function SaleForm({
       items:
         (!filledItems.length && 'Tambahkan minimal satu produk/jasa') ||
         (totals.total <= 0 && 'Total faktur masih Rp 0. Isi harga pada minimal satu baris.'),
+      // B1: angkanya sudah pasti salah saat itu juga, jadi ikut menghalangi seketika.
+      overInvoiced:
+        overCount > 0 &&
+        `${overCount} baris melebihi sisa pesanan ${limits.number}. Turunkan qty-nya dulu.`,
     },
     extras: {},
   };
@@ -816,7 +849,16 @@ export default function SaleForm({
               onPickSource={pickSource}
             />
           )}
-          {step.value === 'items' && <ItemsStep form={form} set={set} errors={errors} doc={doc} />}
+          {step.value === 'items' && (
+            <ItemsStep
+              form={form}
+              set={set}
+              errors={errors}
+              lineErrors={lineErrors}
+              limitNote={limits ? `batas sisa pesanan ${limits.number}` : null}
+              doc={doc}
+            />
+          )}
           {step.value === 'extras' && <ExtrasStep form={form} set={set} doc={doc} />}
         </Box>
 

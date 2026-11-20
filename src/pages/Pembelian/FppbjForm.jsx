@@ -23,6 +23,8 @@ import NumberField from '@/components/NumberField.jsx';
 import { BackLink, FormModal, PageIntro, Section } from './components.jsx';
 import { DropField } from './Dialogs.jsx';
 import { departments, personLabel, productCatalog, TODAY, units } from './data.js';
+import { useData } from '@/lib/store.jsx';
+import { defaultWarehouseId, warehouseOptions } from '@/pages/Gudang/data.js';
 import { formatDate, iomFiles, nextNumber, uid } from './utils.js';
 import { toast } from './usePb.js';
 
@@ -37,6 +39,10 @@ const blank = (extra = {}) => ({
 });
 
 export default function FppbjForm({ pb, editing, onBack, onSaved }) {
+  const { warehouses } = useData();
+  // Lokasi kirim = gudang tujuan barang. Bawaannya gudang utama; hanya gudang aktif
+  // yang bisa dipilih, tapi gudang lama pada permintaan yang sudah ada tetap tampil.
+  const gudangOptions = warehouseOptions(warehouses, editing?.warehouseId);
   const [f, setF] = useState(() =>
     editing
       ? {
@@ -48,6 +54,7 @@ export default function FppbjForm({ pb, editing, onBack, onSaved }) {
           iomNo: editing.iom.no,
           iomDate: editing.iom.date,
           iomFile: iomFiles(editing.iom),
+          warehouseId: editing.warehouseId ?? null,
         }
       : {
           date: TODAY,
@@ -58,6 +65,7 @@ export default function FppbjForm({ pb, editing, onBack, onSaved }) {
           iomNo: '',
           iomDate: '',
           iomFile: [],
+          warehouseId: defaultWarehouseId(warehouses),
         },
   );
   const [items, setItems] = useState(() => (editing ? editing.items : [blank()]));
@@ -109,6 +117,7 @@ export default function FppbjForm({ pb, editing, onBack, onSaved }) {
         dept: f.dept,
         purpose: f.purpose,
         note: f.note,
+        warehouseId: f.warehouseId,
         iom: { no: f.iomNo, date: f.iomDate, files: f.iomFile },
         items,
         status: submit ? 'diajukan' : d.status,
@@ -125,6 +134,7 @@ export default function FppbjForm({ pb, editing, onBack, onSaved }) {
       date: f.date,
       neededBy: f.neededBy,
       dept: f.dept,
+      warehouseId: f.warehouseId,
       purpose: f.purpose,
       iom: { no: f.iomNo, date: f.iomDate, files: f.iomFile },
       items,
@@ -159,6 +169,7 @@ export default function FppbjForm({ pb, editing, onBack, onSaved }) {
                 <DateField label="Tanggal permintaan" withAsterisk size="sm" radius="md" min={f.iomDate || undefined} max={TODAY} value={f.date} error={errors.date} onChange={(e) => { const date = e.currentTarget.value; set(f.neededBy && date > f.neededBy ? { date, neededBy: '' } : { date }); }} />
                 <DateField label="Dibutuhkan pada" withAsterisk size="sm" radius="md" min={f.date} value={f.neededBy} error={f.neededBy && errors.neededBy} onChange={(e) => set({ neededBy: e.currentTarget.value })} />
                 <Select label="Departemen" withAsterisk size="sm" radius="md" data={departments} value={f.dept || null} error={sub && errors.dept} placeholder="Pilih departemen" onChange={(v) => set({ dept: v })} />
+                <Select label="Lokasi kirim" description="Gudang tujuan barang" size="sm" radius="md" searchable clearable data={gudangOptions} value={f.warehouseId} placeholder="Pilih gudang" onChange={(v) => set({ warehouseId: v })} />
                 <TextInput label="Keperluan" withAsterisk size="sm" radius="md" placeholder="Contoh: Pengadaan ATK bulanan" value={f.purpose} error={sub && errors.purpose} onChange={(e) => set({ purpose: e.currentTarget.value })} />
                 <Textarea label="Catatan" size="sm" radius="md" minRows={4} rows={4} placeholder="Contoh: Mohon diprioritaskan karena stok hampir habis" value={f.note} onChange={(e) => set({ note: e.currentTarget.value })} style={{ gridColumn: '1 / -1' }} />
               </SimpleGrid>

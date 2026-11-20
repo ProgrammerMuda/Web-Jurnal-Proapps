@@ -17,14 +17,16 @@ import {
   Title,
 } from '@mantine/core';
 import { useState } from 'react';
-import { ArrowCounterClockwise, Briefcase, Info, Paperclip, Buildings, DotsThreeVertical, CalendarBlank, Check, ClipboardText, ListBullets, Package, Scales, ShoppingCart, User, X } from '@/components/Icon.jsx';
+import { ArrowCounterClockwise, Briefcase, Info, Paperclip, Buildings, DotsThreeVertical, CalendarBlank, Check, ClipboardText, DownloadSimple, ListBullets, Package, Scales, ShoppingCart, User, X } from '@/components/Icon.jsx';
 import { BackLink, CardHead, Callout, StatCell, CopyIcon, DataTable, DocNumber, Section, StatusPill } from './components.jsx';
 import { Hint } from './procurement.jsx';
 import ProcurementPanel from './ProcurementPanel.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
 import AttachmentList from './Attachments.jsx';
 import { ReasonModal } from './Dialogs.jsx';
+import { downloadFppbj } from './fppbjPdf.js';
 import { personLabel, TODAY } from './data.js';
+import { warehouseText } from '@/pages/Gudang/data.js';
 import { canCreate, canVerify, verifierRole } from './permissions.js';
 import {
   buildPOs,
@@ -108,6 +110,16 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
             </Box>
           </Group>
           <Group gap="xs">
+            {/* Dokumen yang sudah ada selalu bisa diunduh, oleh peran mana pun —
+                aturan yang sama dengan PO dan FPB/BAPP. */}
+            <Button
+              radius="md"
+              variant="default"
+              leftSection={<DownloadSimple size={16} />}
+              onClick={() => { downloadFppbj(f, { pos }); toast(`${f.number} diunduh sebagai PDF.`); }}
+            >
+              Unduh PDF
+            </Button>
             {['draft', 'dikembalikan'].includes(f.status) && canCreate(role, 'fppbj') && (
               <Button radius="md" variant="default" onClick={() => go({ name: 'fppbj-edit', id: f.id })}>Ubah permintaan</Button>
             )}
@@ -230,7 +242,12 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
                 <InfoCell label="Cara pengadaan">
                   {f.route ? routeLabel(f) : <Text span fz="sm" c="slate.6">Belum ditentukan</Text>}
                 </InfoCell>
-                <InfoCell label="Catatan peminta" divider>
+                <InfoCell label="Lokasi kirim" divider>
+                  {f.warehouseId
+                    ? warehouseText(pb.warehouses, f.warehouseId)
+                    : <Text span fz="sm" c="slate.6">Belum ditentukan</Text>}
+                </InfoCell>
+                <InfoCell label="Catatan peminta">
                   {f.note ? <Text fz="sm" fw={500} c="slate.8" style={{ whiteSpace: 'pre-wrap' }}>{f.note}</Text> : '—'}
                 </InfoCell>
               </SimpleGrid>

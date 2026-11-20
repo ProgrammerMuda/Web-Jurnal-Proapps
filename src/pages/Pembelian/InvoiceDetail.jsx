@@ -1,12 +1,13 @@
 // Detail faktur pembelian: baris yang ditagih, pembayaran, retur, dan rincian nilai.
 import { useState } from 'react';
 import { ActionIcon, Badge, Box, Button, Card, Grid, Group, Menu, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core';
-import { ArrowCounterClockwise, Calculator, CurrencyCircleDollar, DotsThreeVertical, Info, Money, Package, Paperclip, Receipt, X } from '@/components/Icon.jsx';
+import { ArrowCounterClockwise, Calculator, CurrencyCircleDollar, DotsThreeVertical, DownloadSimple, Info, Money, Package, Paperclip, Receipt, X } from '@/components/Icon.jsx';
 import AttachmentList from './Attachments.jsx';
 import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section, StatusPill } from './components.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
 import { personLabel } from './data.js';
 import { ReasonModal } from './Dialogs.jsx';
+import { downloadInvoice } from './invoicePdf.js';
 import { PrActions } from './PoDetail.jsx';
 import { canCreate } from './permissions.js';
 import { toast } from './usePb.js';
@@ -92,6 +93,18 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
           </Group>
           {/* Aksi utama satu tombol; sisanya masuk menu titik tiga. */}
           <Group gap="xs">
+            {/* Dokumen yang sudah terbuat selalu bisa diunduh, oleh peran mana pun. */}
+            <Button
+              radius="md"
+              variant="default"
+              leftSection={<DownloadSimple size={16} />}
+              onClick={() => {
+                downloadInvoice(inv, { vendor, po, posById: pb.posById, receiptsById: pb.receiptsById, prs, totals: t });
+                toast('Faktur diunduh sebagai PDF.');
+              }}
+            >
+              Unduh PDF
+            </Button>
             {!cancelled && canCreate(role, 'invoice') ? (
               <>
                 {/* Tombol ini membuat Payment Request, bukan mengeluarkan uang — kasnya baru

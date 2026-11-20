@@ -56,6 +56,7 @@ import {
   canResend,
   canSend,
   canVoid,
+  activePayments,
   computeTotals,
   formatDate,
   formatDateTime,
@@ -98,9 +99,10 @@ function SummaryRow({ label, value, strong, color }) {
 }
 
 // Satu penerimaan pembayaran, lengkap dengan bukti transfer yang diunggah.
-function PaymentRow({ payment }) {
+function PaymentRow({ payment, onVoid }) {
   const account = depositAccounts.find((a) => a.value === payment.account)?.label ?? payment.account;
   const proofs = payment.proofs ?? [];
+  const batal = !!payment.cancelledAt;
   return (
     <Box
       p="sm"
@@ -111,9 +113,16 @@ function PaymentRow({ payment }) {
     >
       <Group justify="space-between" align="flex-start" gap="sm" wrap="nowrap">
         <Box style={{ minWidth: 0 }}>
-          <Text fz="sm" fw={600} c="slate.9">
-            {formatDate(payment.date)} · {payment.method}
-          </Text>
+          <Group gap={6} wrap="nowrap">
+            <Text fz="sm" fw={600} c={batal ? 'slate.5' : 'slate.9'}>
+              {formatDate(payment.date)} · {payment.method}
+            </Text>
+            {batal && (
+              <Badge size="xs" radius="sm" variant="light" color="red">
+                DIBATALKAN
+              </Badge>
+            )}
+          </Group>
           <Text fz={11} c="slate.6">
             Disetor ke {account}
           </Text>
@@ -122,10 +131,36 @@ function PaymentRow({ payment }) {
               {payment.memo}
             </Text>
           )}
+          {/* B3: alasan dan waktu pembatalan ikut terbaca, supaya koreksinya bisa ditelusuri. */}
+          {batal && (
+            <Text fz={11} c="red.7">
+              Dibatalkan {formatDateTime(payment.cancelledAt)}
+              {payment.cancelReason ? ` — ${payment.cancelReason}` : ''}
+            </Text>
+          )}
         </Box>
-        <Text fz="sm" fw={700} c="green.8" style={{ whiteSpace: 'nowrap' }}>
-          {rupiah(payment.amount)}
-        </Text>
+        <Stack gap={4} align="flex-end">
+          <Text
+            fz="sm"
+            fw={700}
+            c={batal ? 'slate.5' : 'green.8'}
+            style={{ whiteSpace: 'nowrap', textDecoration: batal ? 'line-through' : 'none' }}
+          >
+            {rupiah(payment.amount)}
+          </Text>
+          {!batal && onVoid && (
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              color="red"
+              radius="md"
+              leftSection={<Prohibit size={13} />}
+              onClick={onVoid}
+            >
+              Batalkan
+            </Button>
+          )}
+        </Stack>
       </Group>
       {payment.tags?.length > 0 && (
         <Group gap={6} mt="xs">
@@ -167,6 +202,9 @@ export default function SaleDetail({ sale, source, onBack, onPay, onCreateLink, 
   const hasTax = sale.items.some((l) => l.tax);
   // B7: dasar progres adalah tagihan setelah retur, bukan nilai faktur mula-mula.
   const paidPct = t.billed > 0 ? Math.min(100, Math.round((t.paid / t.billed) * 100)) : 100;
+  // B3: pembayaran batal tetap tampil di riwayat, tapi tidak ikut dihitung.
+  const berlaku = activePayments(sale);
+  const dibatalkan = (sale.payments ?? []).length - berlaku.length;
   const docReturns = sale.returns ?? [];
   const returnsDeducted = docReturns
     .filter((r) => r.settlement === 'deduct')
@@ -526,13 +564,18 @@ export default function SaleDetail({ sale, source, onBack, onPay, onCreateLink, 
                     Riwayat pembayaran
                   </Text>
                   <Text fz={11} c="slate.6">
-                    {sale.payments.length} penerimaan · {rupiah(t.paid)} diterima
+                    {berlaku.length} penerimaan · {rupiah(t.paid)} diterima
+                    {dibatalkan > 0 ? ` · ${dibatalkan} dibatalkan` : ''}
                   </Text>
                 </Box>
               </Group>
               <Stack gap="xs">
                 {sale.payments.map((p, i) => (
-                  <PaymentRow key={i} payment={p} />
+                  <PaymentRow
+                    key={i}
+                    payment={p}
+                    onVoid={actions?.voidPayment && (() => actions.voidPayment(sale, i))}
+                  />
                 ))}
               </Stack>
             </Card>

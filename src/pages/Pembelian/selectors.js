@@ -22,6 +22,9 @@ export function readiness(pb) {
   const c = pb.calc;
   // PO yang dibatalkan atau ditutup tidak lagi menunggu penerimaan maupun DP.
   const sentPos = pb.pos.filter((p) => p.sent && !p.closedAs);
+  // Penerimaan tidak menunggu dokumen terkirim: barang bisa datang lebih dulu. Uang muka
+  // tetap menunggu, karena menagih DP atas pesanan yang belum dikirim itu tidak berdasar.
+  const livePos = pb.pos.filter((p) => !p.closedAs);
   const r = {
     // Penawaran: permintaan terverifikasi / dalam pengadaan jalur bidding yang belum disetujui.
     quotes: pb.fppbj.filter(
@@ -34,7 +37,7 @@ export function readiness(pb) {
       (f) => f.status !== 'dibatalkan' && f.procurement?.status === 'disetujui' && !pb.pos.some((p) => p.fppbjId === f.id),
     ),
     // Pesanan tanpa serah terima tidak pernah menghasilkan FPB/BAPP: fakturnya langsung dari PO/SPK.
-    receipt: sentPos.filter((p) => poHasReceipt(p) && p.items.some((i) => remainingQty(p, i.id, pb.receipts) > 0)),
+    receipt: livePos.filter((p) => poHasReceipt(p) && p.items.some((i) => remainingQty(p, i.id, pb.receipts) > 0)),
     invoice: pb.receipts.filter((r) => uninvoicedLines(r, pb.invoices).length > 0),
     prDp: sentPos.filter(
       (p) => advancePct(p.term) > 0 && !pb.prs.some((x) => x.kind === 'dp' && x.poId === p.id && x.status !== 'ditolak'),

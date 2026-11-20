@@ -1,11 +1,13 @@
 // Detail PO: penerimaan, faktur, payment request, dan retur yang turun dari dokumen ini.
 import { useState } from 'react';
-import { ActionIcon, Badge, Box, Button, Card, Divider, Grid, Group, Menu, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core';
+import { ActionIcon, Badge, Box, Button, Card, Divider, Grid, Group, Menu, Select, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core';
 import { ArrowCounterClockwise, Calculator, Check, DotsThreeVertical, DownloadSimple, Info, Money, Package, PaperPlaneTilt, Prohibit, Receipt, ShoppingCart, Truck, X } from '@/components/Icon.jsx';
 import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section, StatusPill } from './components.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
 import { ReasonModal, SendPoModal } from './Dialogs.jsx';
 import { personLabel, TODAY } from './data.js';
+import { useData } from '@/lib/store.jsx';
+import { picName, warehouseById, warehouseOptions } from '@/pages/Gudang/data.js';
 import { approvalState, isApproverTurn, signApproval, canCreate, hidesPrices, prBlockedBySoD, receiptDoc } from './permissions.js';
 import {
   formatDate,
@@ -85,6 +87,14 @@ export function PrActions({ pr, pb, openDialog }) {
 
 export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const role = pb.role;
+  const { warehouses } = useData();
+  // Gudang tujuan masih boleh diubah selama pesanan belum dikirim ke vendor —
+  // sesudah terkirim, alamatnya sudah tercetak di dokumen yang dipegang vendor.
+  const gudang = warehouseById(warehouses, po.warehouseId);
+  // Gudang tujuan boleh diubah selama pesanan belum dikirim ke vendor. Pesanan lama
+  // yang gudangnya masih kosong tetap bisa dilengkapi, supaya penerimaan barang dan
+  // pemeriksaan "PO belum diterima ke gudang ini" punya lokasi yang jelas.
+  const canSetWarehouse = canCreate(role, 'po') && (!po.sent || !po.warehouseId);
   const label = poDocLabel(po);
   const isJasa = poAllJasa(po);
   // Spesifikasi 2.1: Gudang melihat pesanan dan tanggal kirim, tanpa harga.
@@ -112,10 +122,21 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const [closing, setClosing] = useState(null);
   const [sendOpen, setSendOpen] = useState(false);
   // Kirim ke vendor = dokumen lepas ke luar, jadi dikonfirmasi dulu lewat modal.
+  // Tombolnya tidak hilang sesudah terkirim: vendor sering minta dokumennya dikirim ulang
+  // (salah alamat, email hilang, ganti PIC). Tanggal kirim pertama dipertahankan — itu
+  // yang jadi dasar SLA — dan pengiriman ulang dicatat terpisah.
   const sendPo = ({ cc, note }) => {
-    pb.update('pos', po.id, (d) => ({ ...d, sent: true, sentAt: TODAY, sentBy: personLabel(role), sentCc: cc, sentNote: note }));
+    pb.update('pos', po.id, (d) => ({
+      ...d,
+      sent: true,
+      sentAt: d.sentAt ?? TODAY,
+      sentBy: d.sentBy ?? personLabel(role),
+      sentCc: cc,
+      sentNote: note,
+      ...(d.sent ? { resentAt: TODAY, resentBy: personLabel(role) } : {}),
+    }));
     setSendOpen(false);
-    toast(`${label} dikirim ke ${vendorEmail(vendor) || 'vendor'}.`);
+    toast(`${label} ${po.sent ? 'dikirim ulang' : 'dikirim'} ke ${vendorEmail(vendor) || 'vendor'}.`);
   };
   const dpPaid = prs.some((p) => p.kind === 'dp' && p.status === 'dibayar');
   const closePo = (as) => (note) => {
@@ -157,17 +178,26 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               radius="md"
               variant="default"
               leftSection={<DownloadSimple size={16} />}
-              onClick={() => { downloadPo(po, { vendor, fppbj }); toast(`${label} diunduh sebagai PDF.`); }}
+              onClick={() => { downloadPo(po, { vendor, fppbj, warehouse: gudang && { ...gudang, picName: picName(gudang.picUserId) } }); toast(`${label} diunduh sebagai PDF.`); }}
             >
               Unduh PDF
             </Button>
-            {!closed && !po.sent && (canCreate(role, 'po') ? (
-              <Button radius="md" leftSection={<PaperPlaneTilt size={16} />} onClick={() => setSendOpen(true)}>Kirim ke vendor</Button>
-            ) : <RoleChip role="accounting" />)}
+            {!closed && (canCreate(role, 'po') ? (
+              <Button
+                radius="md"
+                variant="default"
+                leftSection={<PaperPlaneTilt size={16} />}
+                onClick={() => setSendOpen(true)}
+              >
+                {po.sent ? 'Kirim ulang' : 'Kirim ke vendor'}
+              </Button>
+            ) : !po.sent && <RoleChip role="accounting" />)}
             {!closed && po.sent && hasDp && !dpPr && canCreate(role, 'pr') && (
               <Button radius="md" variant="light" onClick={() => go({ name: 'pr-new', poId: po.id })}>Buat Payment Request {advanceLabel(po.term)}</Button>
             )}
-            {!closed && po.sent && pakaiTerima && anyRemaining && canCreate(role, receiptDoc(isJasa)) && (
+            {/* Tidak menunggu dokumen terkirim: barang sering datang duluan dan pekerjaan
+                sering sudah jalan sebelum PO/SPK-nya sempat dikirim. */}
+            {!closed && pakaiTerima && anyRemaining && canCreate(role, receiptDoc(isJasa)) && (
               <Button radius="md" onClick={() => openDialog({ type: 'receipt', poId: po.id })}>{poAllJasa(po) ? 'Catat BAPP' : 'Catat penerimaan'}</Button>
             )}
             {openLines.length > 0 && canCreate(role, 'invoice') && (
@@ -242,7 +272,30 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                     ? ['Jadwal tagihan', scheduleCount(po.term) > 1
                       ? `${scheduleCount(po.term)} ${po.items.some((i) => i.unit === 'periode') ? 'periode' : 'termin'}`
                       : 'Sekali tagih']
-                    : ['Gudang tujuan', po.warehouse],
+                    : [
+                      'Kirim ke gudang',
+                      !canSetWarehouse ? (
+                        <>
+                          {gudang ? `${gudang.name}${gudang.status === 'inactive' ? ' (nonaktif)' : ''}` : 'Belum ditentukan'}
+                          {gudang?.address && (
+                            <Text fz={11} fw={400} c="slate.6">
+                              {[gudang.address, gudang.city, gudang.postalCode].filter(Boolean).join(', ')}
+                            </Text>
+                          )}
+                        </>
+                      ) : (
+                        <Select
+                          size="xs"
+                          radius="md"
+                          searchable
+                          clearable
+                          placeholder="Pilih gudang"
+                          data={warehouseOptions(warehouses, po.warehouseId)}
+                          value={po.warehouseId ?? null}
+                          onChange={(v) => pb.update('pos', po.id, (d) => ({ ...d, warehouseId: v }))}
+                        />
+                      ),
+                    ],
                   ['Dari permintaan', fppbj ? <DocNumber onClick={() => go({ name: 'fppbj', id: fppbj.id })}>{fppbj.number}</DocNumber> : '—'],
                   ['Termin bayar', termText(po.term)],
                   // Selalu ditampilkan: belum terkirim justru keadaan yang perlu terlihat.
@@ -255,6 +308,11 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                           {[po.sentAt && formatDate(po.sentAt), po.sentBy].filter(Boolean).join(' · ') || 'Tanggal tidak tercatat'}
                           {po.sentCc ? ` · cc ${po.sentCc}` : ''}
                         </Text>
+                        {po.resentAt && (
+                          <Text fz={11} fw={400} c="slate.6">
+                            Dikirim ulang {formatDate(po.resentAt)}{po.resentBy ? ` · ${po.resentBy}` : ''}
+                          </Text>
+                        )}
                       </>
                     ) : (
                       <Text fz="sm" fw={700} c="orange.8" component="span">Belum dikirim</Text>
@@ -318,7 +376,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
             {pakaiTerima && (
             <Section divided flush icon={Truck} title={poAllJasa(po) ? 'Serah terima (BAPP)' : poAllBarang(po) ? 'Penerimaan barang (FPB)' : 'Penerimaan (FPB / BAPP)'} description="Surat jalan dan serah terima yang dicatat gudang" right={count(receipts.length, 'dokumen')}>
               {receipts.length === 0 ? (
-                <Text fz="xs" c="slate.6" p="lg">Belum ada penerimaan. {po.sent ? '' : `Kirim ${label} ke vendor lebih dulu.`}</Text>
+                <Text fz="xs" c="slate.6" p="lg">Belum ada penerimaan dicatat untuk {label} ini.</Text>
               ) : (
                 <DataTable bare head={[{ label: 'Nomor' }, { label: 'Tanggal' }, { label: poAllJasa(po) ? 'No. BAPP' : poAllBarang(po) ? 'No. surat jalan' : 'No. surat jalan / BAPP' }, { label: 'Diterima', align: 'right' }, { label: 'Faktur' }]} minWidth={520}>
                   {receipts.map((r) => {

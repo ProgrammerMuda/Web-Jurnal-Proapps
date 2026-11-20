@@ -1,58 +1,17 @@
 // Data contoh halaman Penjualan — meniru jurnal.proapps.id/sales (dilihat 4 Nov 2026).
 // Semua angka/tanggal disimpan mentah; total & status dihitung di utils.js.
 import { accounts } from '@/pages/DaftarAkun/accounts.js';
+import { salesView as products } from '@/pages/Produk/catalog.js';
 
 // Tanggal "hari ini" prototype mengikuti tanggal di header aplikasi.
 export const TODAY = '2026-11-04';
 
+// Daftar produk yang dijual. Isinya BUKAN lagi daftar tetap: ini "tampilan jual" dari
+// master Produk & Jasa (src/pages/Produk/catalog.js) yang ditulis ulang di tempat setiap
+// katalog berubah. Bentuk tiap baris tetap { id, name, description, price, tax } supaya
+// seluruh modul Penjualan tidak perlu diubah.
 // tax: pajak bawaan yang terisi otomatis saat produk dipilih (P10). null = tanpa pajak.
-// Listrik dan air dibiarkan kosong karena sifatnya penerusan tagihan, bukan penyerahan jasa.
-export const products = [
-  {
-    id: 'drain-ac',
-    name: 'PEMBERSIHAN DRAIN AC',
-    description: 'PEMBERSIHAN DRAIN AC',
-    price: 320000,
-    tax: 'ppn11',
-  },
-  { id: 'pameran', name: 'Pameran', description: 'Pameran', price: 1000000,
-    tax: 'ppn11',
-  },
-  {
-    id: 'ipl',
-    name: 'Iuran Pengelolaan Lingkungan',
-    description: 'IPL bulanan unit',
-    price: 300000,
-    tax: 'ppn11',
-  },
-  {
-    id: 'sewa',
-    name: 'Sewa Ruang Usaha',
-    description: 'Sewa ruang usaha per bulan',
-    price: 2000000,
-    tax: 'ppn11',
-  },
-  { id: 'listrik', name: 'Tagihan Listrik', description: 'Pemakaian listrik unit', price: 200000,
-    tax: null,
-  },
-  { id: 'air', name: 'Tagihan Air', description: 'Pemakaian air unit', price: 50000,
-    tax: null,
-  },
-  { id: 'fitout', name: 'Deposit Fit Out', description: 'Deposit renovasi unit', price: 10000000,
-    tax: null,
-  },
-  { id: 'parkir', name: 'Sewa Parkir', description: 'Sewa parkir kendaraan', price: 222000,
-    tax: 'ppn11',
-  },
-  // #29: dipakai faktur denda. Tanpa PPN karena sifatnya ganti rugi keterlambatan.
-  {
-    id: 'denda',
-    name: 'Denda Keterlambatan',
-    description: 'Denda atas keterlambatan pembayaran',
-    price: 0,
-    tax: null,
-  },
-];
+export { products };
 
 // #26: periode yang sudah tutup buku. Dokumen dan pembayaran tidak boleh bertanggal
 // di dalamnya. Nantinya diambil dari menu Tutup Buku; sementara dikunci di sini.
@@ -97,8 +56,15 @@ export const paymentMethods = [
 
 // Akun setor pembayaran & akun potongan diambil dari COA (Daftar Akun).
 const toOption = (a) => ({ value: a.code, label: `${a.code} - ${a.name}` });
-export const depositAccounts = accounts.filter((a) => a.bankCash).map(toOption);
-export const allAccounts = accounts.map(toOption);
+
+// B5: akun induk hanya menjumlahkan anaknya, tidak pernah menampung transaksi sendiri.
+// Mis. "1-10000 Kas dan Setara Kas" adalah induk dari kas kecil dan rekening bank, jadi
+// yang boleh dipilih sebagai akun setor adalah anaknya, bukan induknya.
+const parentCodes = new Set(accounts.map((a) => a.parent).filter(Boolean));
+export const isPostable = (a) => !parentCodes.has(a.code);
+
+export const depositAccounts = accounts.filter((a) => a.bankCash && isPostable(a)).map(toOption);
+export const allAccounts = accounts.filter(isPostable).map(toOption);
 
 const item = (productId, qty = 1, price, tax = null) => {
   const p = products.find((x) => x.id === productId);
@@ -199,7 +165,7 @@ export const seedSales = [
       {
         date: '2026-11-03',
         amount: 1110000,
-        account: '1-10000',
+        account: '1-10003',
         method: 'Company Bank Account',
         memo: 'Pembayaran faktur INV-1793676682381-B33B04',
       },
@@ -246,7 +212,7 @@ export const seedSales = [
       {
         date: '2026-10-23',
         amount: 50000,
-        account: '1-10000',
+        account: '1-10004',
         method: 'BCA Virtual Account (API)',
         memo: '',
       },
@@ -267,7 +233,7 @@ export const seedSales = [
       {
         date: '2026-10-23',
         amount: 50000,
-        account: '1-10000',
+        account: '1-10004',
         method: 'BCA Virtual Account (API)',
         memo: '',
       },
@@ -298,7 +264,7 @@ export const seedSales = [
     term: 'net15',
     items: [item('ipl', 2)],
     payments: [
-      { date: '2026-10-20', amount: 250000, account: '1-10000', method: 'Installment', memo: '' },
+      { date: '2026-10-20', amount: 250000, account: '1-10004', method: 'Installment', memo: '' },
     ],
     createdAt: '2026-10-15T10:00',
     updatedAt: '2026-10-20T15:21',

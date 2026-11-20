@@ -238,6 +238,9 @@ export function ReasonModal({
   subtitle,
   label,
   options,
+  // Dialog ini dipakai beberapa aksi (tolak penawaran, batalkan faktur, batalkan
+  // pembayaran), jadi contoh catatannya ikut jenis aksinya.
+  notePlaceholder = 'Opsional, keterangan tambahan untuk jejak audit...',
   confirmLabel,
   color = 'red',
   onClose,
@@ -295,7 +298,7 @@ export function ReasonModal({
       )}
       <Textarea
         label="Catatan tambahan"
-        placeholder="Opsional, misalnya nama kompetitor atau selisih harganya..."
+        placeholder={notePlaceholder}
         radius="md"
         autosize
         minRows={2}

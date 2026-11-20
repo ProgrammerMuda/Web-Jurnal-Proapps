@@ -4,12 +4,15 @@ import { useData } from '@/lib/store.jsx';
 
 // Akses state Pembelian + aksi sederhana (tambah / ubah dokumen).
 export function usePb() {
-  const { pb, setPb, pbRole, setPbRole, resetPb } = useData();
+  const { pb, setPb, pbRole, setPbRole, resetPb, warehouses } = useData();
   return useMemo(() => {
     const vendorsById = Object.fromEntries(pb.vendors.map((v) => [v.id, v]));
     const byId = (kind) => Object.fromEntries(pb[kind].map((d) => [d.id, d]));
     return {
       ...pb,
+      // Master gudang dipakai saat PO dibuat (gudang tujuan bawaan) dan saat dokumen
+      // menampilkan nama gudangnya.
+      warehouses,
       reset: resetPb,
       role: pbRole,
       setRole: setPbRole,
@@ -34,7 +37,7 @@ export function usePb() {
         returns: pb.returns,
       },
     };
-  }, [pb, pbRole, setPb, setPbRole, resetPb]);
+  }, [pb, pbRole, setPb, setPbRole, resetPb, warehouses]);
 }
 
 export const toast = (message, title = 'Berhasil') =>

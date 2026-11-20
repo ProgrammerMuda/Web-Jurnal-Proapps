@@ -25,14 +25,16 @@ import {
   transactionTags,
 } from './data.js';
 import { accountLabel, WITHHOLDING_TYPES, withholdingType } from './journal.js';
-import { computeTotals, rupiah, useCustomer } from './utils.js';
+import { computeTotals, formatDate, rupiah, useCustomer } from './utils.js';
 
 function PaymentForm({ sale, credit = 0, onCancel, onSave }) {
   const { total, balance } = computeTotals(sale);
   const customer = useCustomer(sale.customerId);
   const [account, setAccount] = useState(null);
   const [method, setMethod] = useState(null);
-  const [date, setDate] = useState(TODAY);
+  // Hari ini, kecuali fakturnya sendiri bertanggal lebih maju — form tidak boleh
+  // terbuka dalam keadaan sudah salah (B2).
+  const [date, setDate] = useState(sale.date > TODAY ? sale.date : TODAY);
   // B3: saldo kredit dari retur bisa dipakai menutup tagihan, bukan hanya mengendap.
   const [fromCredit, setFromCredit] = useState(false);
   const maksimal = fromCredit ? Math.min(balance, credit) : balance;
@@ -52,11 +54,18 @@ function PaymentForm({ sale, credit = 0, onCancel, onSave }) {
         : fromCredit && amount > credit
           ? `Melebihi saldo kredit pelanggan (${rupiah(credit)})`
           : null;
+  // B2: pembayaran tidak boleh mendahului fakturnya — uangnya belum ditagih saat itu.
+  const dateError =
+    (!date && 'Tanggal wajib diisi') ||
+    (date < sale.date &&
+      `Tidak boleh sebelum tanggal faktur (${formatDate(sale.date)})`) ||
+    (periodLocked(date) && lockedMessage(date)) ||
+    null;
   const errors = {
     // Pemakaian kredit tidak menyentuh kas, jadi akun setor dan cara bayarnya kosong.
     account: !fromCredit && !account && 'Akun setor wajib dipilih',
     method: !fromCredit && !method && 'Cara pembayaran wajib dipilih',
-    date: (!date && 'Tanggal wajib diisi') || (periodLocked(date) && lockedMessage(date)),
+    date: dateError,
     amount: amountError,
   };
 
@@ -89,7 +98,7 @@ function PaymentForm({ sale, credit = 0, onCancel, onSave }) {
   // salah saat itu juga, beda dengan kolom yang memang belum sempat diisi.
   const err = (k) =>
     (k === 'amount' && amountError) ||
-    (k === 'date' && periodLocked(date) && lockedMessage(date)) ||
+    (k === 'date' && date && dateError) ||
     (submitted && errors[k]);
   const blocked = Object.values(errors).find(Boolean) ?? null;
 
@@ -206,6 +215,7 @@ function PaymentForm({ sale, credit = 0, onCancel, onSave }) {
           withAsterisk
           radius="md"
           value={date}
+          min={sale.date}
           onChange={(e) => setDate(e.currentTarget.value)}
           leftSection={<CalendarBlank size={14} />}
           error={err('date')}

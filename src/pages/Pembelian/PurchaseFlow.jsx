@@ -107,7 +107,8 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
     proc: !fppbj ? 'pending' : proc?.status === 'disetujui' || pos.length ? 'done' : fppbj.route ? 'active' : 'pending',
     po: !pos.length ? 'pending' : pos.every((p) => p.sent) ? 'done' : 'active',
     dp: dps.some((p) => p.status === 'dibayar') ? 'done' : dps.length ? 'active' : 'pending',
-    receipt: receipts.length ? 'done' : pos.some((p) => p.sent) ? 'active' : 'pending',
+    // Penerimaan sudah bisa dicatat sejak pesanannya ada, tidak menunggu dokumennya terkirim.
+    receipt: receipts.length ? 'done' : pos.length ? 'active' : 'pending',
     invoice: invoices.length ? 'done' : receipts.length ? 'active' : 'pending',
     pay: pays.length && pays.every((p) => p.status === 'dibayar') ? 'done' : pays.length ? 'active' : 'pending',
     pv: vouchers.length ? 'done' : 'pending',
