@@ -197,6 +197,11 @@ export function journalPreview(opname, accountMap, products) {
   const rows = new Map();
   (opname?.lines ?? [])
     .filter((l) => isCounted(l) && diffQty(l) !== 0)
+    // Baris yang alasannya belum dipilih belum punya akun, jadi belum bisa
+    // dijurnal. Ia dilewati seluruhnya — termasuk lawan persediaannya — supaya
+    // pratinjaunya tetap seimbang, bukan setengah jadi. `submitBlockers` yang
+    // mengingatkan bahwa alasannya masih kosong.
+    .filter((l) => !!accountOfLine(l, opname, accountMap))
     .forEach((l) => {
       const akun = accountOfLine(l, opname, accountMap);
       const nilai = Math.round(Math.abs(diffValue(l)));
@@ -222,7 +227,7 @@ export function journalPreview(opname, accountMap, products) {
       else pr.credit += nilai;
       rows.set(pk, pr);
     });
-  return [...rows.values()].sort((a, b) => a.account.localeCompare(b.account));
+  return [...rows.values()].sort((a, b) => String(a.account).localeCompare(String(b.account)));
 }
 
 /** Akun selisih satu baris: yang terkunci di dokumen, atau pemetaan yang berlaku. */
