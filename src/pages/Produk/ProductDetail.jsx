@@ -28,6 +28,7 @@ import {
 import { accounts } from '@/pages/DaftarAkun/accounts.js';
 import { rupiah } from '@/pages/Penjualan/utils.js';
 import { formatDate } from '@/pages/Pembelian/utils.js';
+import { lastPostedOpname, runningOpnameOf } from '@/pages/Gudang/opname.js';
 import { InfoItem, ProductAvatar, SectionCard, stockBadgeOf } from './components.jsx';
 import { baseUnitOf, buyTaxOptions, categoryName, saleTaxOptions, unitName } from './catalog.js';
 import { USAGE_LABEL, USAGE_NAV, productUsage } from './usage.js';
@@ -161,9 +162,10 @@ function WarehouseStockRows({ product, stockData, units, onOpenStockCard }) {
           { label: 'Satuan' },
           { label: 'Stok min.', align: 'right' },
           { label: 'Status' },
+          { label: 'Terakhir diopname' },
           { label: 'Nilai', align: 'right' },
         ]}
-        minWidth={680}
+        minWidth={820}
       >
         {rows.map((r) => (
           <Table.Tr key={r.warehouse.id}>
@@ -193,6 +195,19 @@ function WarehouseStockRows({ product, stockData, units, onOpenStockCard }) {
             </Table.Td>
             <Table.Td>
               <StatusPill map={STOCK_STATUS} status={stockStatusOf(r)} />
+            </Table.Td>
+            <Table.Td>
+              {/* Kapan qty gudang ini terakhir dibuktikan secara fisik. */}
+              <Text fz="sm" c="slate.7">
+                {lastPostedOpname(stockData.opnames, r.warehouse.id)
+                  ? formatDate(lastPostedOpname(stockData.opnames, r.warehouse.id).date)
+                  : '—'}
+              </Text>
+              {runningOpnameOf(stockData.opnames, r.warehouse.id) && (
+                <Text fz={10} c="orange.7">
+                  Sedang diopname
+                </Text>
+              )}
             </Table.Td>
             <Table.Td ta="right">
               <Text fz="sm" fw={600} c="slate.9">

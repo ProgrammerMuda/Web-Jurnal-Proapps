@@ -360,6 +360,7 @@ export default function Produk({ onNavigate }) {
     pb,
     stockMoves,
     stockMinimums,
+    stockOpnames,
     warehouses,
   } = useData();
 
@@ -387,6 +388,7 @@ export default function Produk({ onNavigate }) {
   const stockData = {
     moves: stockMoves,
     minimums: stockMinimums,
+    opnames: stockOpnames,
     products,
     categories: productCategories,
     units: productUnits,
@@ -463,6 +465,7 @@ export default function Produk({ onNavigate }) {
         onSave={saveProduct}
         onAddCategory={addCategory}
         onAddUnit={addUnit}
+        opnames={stockOpnames}
       />
       <FormModal
         opened={!!confirm}

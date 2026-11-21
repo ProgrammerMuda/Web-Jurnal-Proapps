@@ -1,7 +1,8 @@
 // Aturan turunan menu Gudang: apakah gudang pernah dipakai, dan apa yang
 // menghalangi gudang dinonaktifkan.
 import { remainingQty } from '@/pages/Pembelian/utils.js';
-import { balanceRows, distinctItemCount, runningOpnameOf, sumValue } from './stock.js';
+import { balanceRows, distinctItemCount, sumValue } from './stock.js';
+import { runningOpnameOf } from './opname.js';
 
 /** Peran yang boleh melihat nilai persediaan (R9). Staf gudang cukup tahu qty. */
 const VALUE_ROLES = ['accounting', 'cfo', 'finance', 'superadmin'];

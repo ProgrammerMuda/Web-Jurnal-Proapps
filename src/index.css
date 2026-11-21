@@ -170,3 +170,76 @@
   color: var(--mantine-color-slate-5);
   border: 1px solid var(--mantine-color-slate-2);
 }
+
+/* --- Lembar cetak dokumen -------------------------------------------------
+   Lembar hitung dan berita acara stok opname punya isi sendiri yang berbeda
+   dari layar: lembar hitung sengaja TIDAK memuat saldo buku. Jadi yang dicetak
+   bukan halaman apa adanya, melainkan blok .print-sheet di bawah ini. */
+.print-sheet {
+  display: none;
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  .print-sheet,
+  .print-sheet * {
+    visibility: visible !important;
+  }
+  .print-sheet {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    color: #000;
+    font-size: 11pt;
+  }
+  .print-sheet table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+  }
+  .print-sheet th,
+  .print-sheet td {
+    border: 1px solid #999;
+    padding: 6px 8px;
+    text-align: left;
+    font-size: 10pt;
+  }
+  .print-sheet th {
+    background: #f1f1f1;
+  }
+  .print-sheet .num {
+    text-align: right;
+  }
+  .print-sheet .blank {
+    height: 26px;
+  }
+  .print-sheet h1 {
+    font-size: 15pt;
+    margin: 0 0 2px;
+  }
+  .print-sheet .meta {
+    font-size: 10pt;
+    margin: 0;
+  }
+  .print-sheet .sign {
+    display: flex;
+    gap: 24px;
+    margin-top: 36px;
+  }
+  .print-sheet .sign > div {
+    flex: 1;
+    text-align: center;
+    font-size: 10pt;
+  }
+  .print-sheet .sign .line {
+    margin-top: 56px;
+    border-top: 1px solid #000;
+    padding-top: 4px;
+  }
+}

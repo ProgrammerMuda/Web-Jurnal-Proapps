@@ -728,6 +728,69 @@ const poBintangStaged = histPo('po-0042', 'PO/2026/09/0042', '2026-09-05', 'v-bi
 const poMitra1 = histPo('po-0025', 'SPK/2026/08/0025', '2026-08-18', 'v-mitra', [
   poItem('m1', 'Jasa servis AC', 20, 'unit', 330000, { kind: 'jasa' }),
 ], TERM.postpaid(30));
+// --- Contoh kebijakan harga perolehan ------------------------------------------------------
+// Satu rangkaian dokumen yang memperlihatkan ketiga aturan sekaligus: vendor
+// menagih ongkir terpisah (ongkir masuk harga barang), lalu sebagian barangnya
+// diretur setelah difaktur (retur dinilai pada harga perolehan aslinya, dan
+// porsi ongkir yang tidak dikembalikan vendor menjadi beban).
+//
+// Ongkir Rp 91.000 dibagi menurut DPP: Map plastik Rp 350.000 dari Rp 910.000
+// → Rp 35.000 (Rp 350/pcs), Kertas A4 Rp 56.000 (Rp 5.600/rim). Harga
+// perolehannya menjadi Rp 3.850/pcs dan Rp 61.600/rim.
+const poOngkir = {
+  ...histPo('po-0045', 'PO/2026/11/0045', '2026-10-30', 'v-alfa', [
+    poItem('o1', 'Map plastik', 100, 'pcs', 3500, { ppnRate: RULES.ppn }),
+    poItem('o2', 'Kertas A4 80 gsm', 10, 'rim', 56000, { ppnRate: RULES.ppn }),
+  ]),
+  shipping: 91_000,
+};
+const rcOngkir = {
+  id: 'fpb-0045',
+  number: 'FPB/2026/11/0003',
+  poId: 'po-0045',
+  vendorId: 'v-alfa',
+  date: '2026-11-03',
+  doNumber: 'SJ-ALF-7781',
+  kind: 'barang',
+  // Faktur pajaknya utuh, jadi PPN-nya dikreditkan dan tidak menempel ke barang.
+  vatNotCreditable: false,
+  createdBy: 'Rudi Hermawan · Kepala Gudang',
+  lines: [
+    { itemId: 'o1', qty: 100, rejected: 0 },
+    { itemId: 'o2', qty: 10, rejected: 0 },
+  ],
+  note: 'Ongkir ditagih terpisah pada faktur yang sama.',
+};
+const invOngkir = {
+  id: 'fkt-0045',
+  number: 'FKT/2026/11/0003',
+  vendorNo: 'INV-ALF-10452',
+  poId: 'po-0045',
+  vendorId: 'v-alfa',
+  date: '2026-11-03',
+  dueDate: '2026-12-03',
+  lines: [
+    { receiptId: 'fpb-0045', itemId: 'o1', qty: 100, price: 3500 },
+    { receiptId: 'fpb-0045', itemId: 'o2', qty: 10, price: 56000 },
+  ],
+  pphPct: 0,
+  files: ['invoice-fkt-0045.pdf'],
+};
+// Vendor hanya memotong tagihan sebesar barangnya; ongkir 20 pcs (Rp 7.000)
+// tidak dikembalikan sehingga jatuh ke Pengiriman & Pengangkutan.
+const rtrOngkir = {
+  id: 'rtr-0001',
+  number: 'RTR/2026/11/0001',
+  invoiceId: 'fkt-0045',
+  vendorId: 'v-alfa',
+  date: '2026-11-04',
+  reason: 'Map plastik sobek pada 20 pcs.',
+  settlement: 'potong',
+  freightRefunded: false,
+  status: 'selesai',
+  lines: [{ itemId: 'o1', qty: 20, price: 3500 }],
+};
+
 const histDocs = [
   { po: poAlfa1, rc: ['fpb-0005', 'FPB/2026/07/0005', '2026-07-12', 'SJ-ALF-6120'], inv: ['fkt-0014', 'FKT/2026/07/0014', 'INV-ALF-70231', '2026-07-14', '2026-08-13'], pr: ['pr-0010', 'PR/2026/08/0010', '2026-08-10'] },
   { po: poAlfa2, rc: ['fpb-0006', 'FPB/2026/08/0006', '2026-08-09', 'SJ-ALF-6544'], inv: ['fkt-0017', 'FKT/2026/08/0017', 'INV-ALF-80377', '2026-08-11', '2026-09-10'], pr: ['pr-0013', 'PR/2026/09/0013', '2026-09-08'] },
@@ -777,10 +840,11 @@ const histPrs = histDocs.map(({ po, inv, pr }) => {
 
 
 
-export const posSeed = [...uji.map((u) => u.po), poOld, poChair, spkLift, poAlfaStaged, poBintangStaged, poAlfa2, poAlfa1, poBintang1, poMitra1];
+export const posSeed = [...uji.map((u) => u.po), poOngkir, poOld, poChair, spkLift, poAlfaStaged, poBintangStaged, poAlfa2, poAlfa1, poBintang1, poMitra1];
 
 // poOld: selesai (diterima penuh, difaktur, lunas). poChair: diterima sebagian, DP disetujui.
 export const receiptsSeed = [
+  rcOngkir,
   ...histReceipts,
   {
     id: 'bapp-0003',
@@ -1003,6 +1067,7 @@ const fakturRutin = [
 ];
 
 export const invoicesSeed = [
+  invOngkir,
   ...histInvoices,
   ...fakturRutin,
   {
@@ -1063,7 +1128,7 @@ export const prsSeed = [
   },
 ];
 
-export const returnsSeed = [];
+export const returnsSeed = [rtrOngkir];
 
 // Payment Voucher (PV): terbit saat kas benar-benar keluar, satu per pembayaran.
 // Nomornya dipakai jurnal kas keluar; Payment Request tetap jadi dokumen permintaannya.

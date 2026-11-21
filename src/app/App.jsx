@@ -30,6 +30,8 @@ import {
 } from '@/pages/Gudang/routes.js';
 import Kontak from '@/pages/Kontak/Kontak.jsx';
 import SyaratPembayaran from '@/pages/Pengaturan/SyaratPembayaran.jsx';
+import PajakBiaya from '@/pages/Pengaturan/PajakBiaya.jsx';
+import AkunOpname from '@/pages/Pengaturan/AkunOpname.jsx';
 import PublicInvoice from '@/pages/Penjualan/PublicInvoice.jsx';
 
 // Registry halaman prototype (belum memakai router; navigasi lewat state).
@@ -43,6 +45,8 @@ const pages = {
   'daftar-akun': { section: 'Master Data', title: 'Daftar Akun', Component: DaftarAkun },
   kontak: { section: 'Master Data', title: 'Kontak', Component: Kontak },
   'syarat-pembayaran': { section: 'Pengaturan', title: 'Syarat Pembayaran', Component: SyaratPembayaran },
+  'pajak-biaya': { section: 'Pengaturan', title: 'Pajak & Biaya Perolehan', Component: PajakBiaya },
+  'akun-opname': { section: 'Pengaturan', title: 'Akun Selisih Opname', Component: AkunOpname },
 };
 
 export default function App() {

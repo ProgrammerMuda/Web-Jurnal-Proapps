@@ -1,7 +1,20 @@
 // Kartu stok satu produk: saldo awal periode, mutasi berjalan, saldo akhir.
 // Urutannya mengikuti M7 (tanggal dokumen lalu waktu posting).
 import { useMemo, useState } from 'react';
-import { Badge, Box, Button, Card, Grid, Group, Select, Stack, Table, Text, Title } from '@mantine/core';
+import {
+  Badge,
+  Box,
+  Button,
+  Card,
+  Grid,
+  Group,
+  Select,
+  Stack,
+  Table,
+  Text,
+  Title,
+  Tooltip,
+} from '@mantine/core';
 import { ArrowsLeftRight, DownloadSimple, Package, Printer } from '@/components/Icon.jsx';
 import {
   BackLink,
@@ -16,7 +29,7 @@ import { rupiah } from '@/pages/Penjualan/utils.js';
 import { downloadCsv } from '@/pages/Kontak/utils.js';
 import { categoryName, unitName } from '@/pages/Produk/catalog.js';
 import DateField from '@/components/DateField.jsx';
-import { MOVE_TYPE, getStockCard } from './stock.js';
+import { MOVE_TYPE, costBreakdownLabel, getStockCard } from './stock.js';
 
 const number = new Intl.NumberFormat('id-ID');
 
@@ -285,9 +298,21 @@ export default function StockCard({
                 {showValue && (
                   <>
                     <Table.Td ta="right">
-                      <Text fz="sm" c="slate.7">
-                        {rupiah(Math.round(r.unitCost))}
-                      </Text>
+                      {/* Mutasi masuk dinilai pada harga perolehan; rinciannya di tooltip. */}
+                      <Tooltip
+                        label={costBreakdownLabel(r, rupiah)}
+                        disabled={!costBreakdownLabel(r, rupiah)}
+                        withArrow
+                        fz="xs"
+                      >
+                        <Text
+                          fz="sm"
+                          c="slate.7"
+                          style={costBreakdownLabel(r, rupiah) ? { cursor: 'help' } : undefined}
+                        >
+                          {rupiah(Math.round(r.unitCost))}
+                        </Text>
+                      </Tooltip>
                     </Table.Td>
                     <Table.Td ta="right">
                       <Text fz="sm" c="slate.7">

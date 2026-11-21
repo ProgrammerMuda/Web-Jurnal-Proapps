@@ -29,7 +29,7 @@ import {
 import DateField from '@/components/DateField.jsx';
 import NumberField from '@/components/NumberField.jsx';
 import AttachmentList from './Attachments.jsx';
-import { Callout, CopyIcon, Field, FormModal } from './components.jsx';
+import { Callout, CopyIcon, Field, FormModal, blockedProps } from './components.jsx';
 import { periodOptions, personLabel, TODAY } from './data.js';
 import { snapshotTerm, termFields } from './paymentTerms.js';
 import {
@@ -68,7 +68,10 @@ import {
 } from './utils.js';
 import { toast } from './usePb.js';
 import { useData } from '@/lib/store.jsx';
-import { buildMove } from '@/pages/Gudang/stock.js';
+import { buildMove, canIssue, getBalance } from '@/pages/Gudang/stock.js';
+import { frozenMessage } from '@/pages/Gudang/opname.js';
+import { freightShare, landedUnitCost } from './landedCost.js';
+import { freightCapitalized } from '@/pages/Pengaturan/settings.js';
 import { DropField, MAX_UPLOAD_MB } from '@/components/DropField.jsx';
 
 export { DropField, MAX_UPLOAD_MB };
@@ -500,38 +503,129 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
  * Mutasi stok dari penerimaan barang. Harga masuk = harga perolehan per satuan
  * dasar (DPP setelah diskon, tanpa PPN Masukan) sesuai M5.
  */
-function postReceiptStock({ receiptId, number, date, po, lines, postStock, products, by }) {
+// Baris PO lama belum menyimpan productId, jadi dicocokkan juga lewat namanya —
+// cara yang sama dipakai form permintaan saat mengenali produk katalog.
+const productOfItem = (products, item) => {
+  const nama = (item?.desc ?? '').trim().toLowerCase();
+  return (
+    products.find((p) => p.id === item?.productId) ??
+    products.find((p) => p.name.toLowerCase() === nama)
+  );
+};
+
+function postReceiptStock({ receiptId, number, date, po, lines, postStock, products, by, settings, doc }) {
   if (!po.warehouseId) return;
   const moves = lines
     .map((l) => {
       const item = po.items.find((i) => i.id === l.itemId);
       if (!item) return null;
-      // Baris PO lama belum menyimpan productId, jadi dicocokkan juga lewat namanya —
-      // cara yang sama dipakai form permintaan saat mengenali produk katalog.
-      const nama = (item.desc ?? '').trim().toLowerCase();
-      const product =
-        products.find((p) => p.id === item.productId) ??
-        products.find((p) => p.name.toLowerCase() === nama);
+      const product = productOfItem(products, item);
       if (!product?.tracked || !(l.qty > 0)) return null;
+      // Harga masuk = harga perolehan per unit (DPP + ongkir + PPN bila tidak bisa
+      // dikreditkan). Rinciannya ikut disimpan supaya jurnal dan tooltip membaca
+      // angka yang sama, bukan menghitung ulang dari dokumen.
+      const c = landedUnitCost(po, item.id, settings, doc);
       return buildMove({
         date,
         type: 'receipt',
         productId: product.id,
         warehouseId: po.warehouseId,
         qty: l.qty,
-        unitCost: Number(item.price) || 0,
+        unitCost: c.total,
         sourceType: 'goods_receipt',
         sourceId: receiptId,
         sourceNo: number,
         createdBy: by,
+        costBreakdown: {
+          dpp: c.dpp,
+          freight: freightCapitalized(settings) ? c.freight : freightShare(po, item.id) / (item.qty || 1),
+          vat: c.vat,
+          vatRate: item.ppnRate ?? 0,
+          freightCapitalized: freightCapitalized(settings),
+        },
       });
     })
     .filter(Boolean);
   if (moves.length) postStock({ moves });
 }
 
+/**
+ * Mutasi keluar dari retur pembelian. Dinilai dengan harga perolehan mutasi
+ * penerimaan aslinya (H11), bukan harga rata-rata, supaya nilai persediaan yang
+ * dikurangi sama dengan tagihan yang dikurangi.
+ */
+/**
+ * Mutasi penerimaan yang diretur. Yang dicari adalah penerimaan pada FPB yang
+ * difakturkan di baris itu (`receiptId`), bukan penerimaan terakhir atas barang
+ * yang sama: produk yang sama bisa diterima lagi dari PO lain dengan harga
+ * berbeda, dan retur harus memakai harga perolehan FPB-nya sendiri.
+ *
+ * Tanpa receiptId tidak ada tebakan yang aman, jadi hasilnya null dan
+ * pemanggilnya yang menahan dokumen.
+ */
+function sourceReceiptMove(moves, product, warehouseId, receiptId, asOf) {
+  if (!product || !warehouseId) return null;
+  const milik = (moves ?? []).filter(
+    (m) => m.type === 'receipt' && m.productId === product.id && m.warehouseId === warehouseId,
+  );
+  const tepat = receiptId ? milik.find((m) => m.sourceId === receiptId) : null;
+  if (tepat) return tepat;
+  // Dokumen lama bisa saja tidak menyimpan kaitan ke mutasinya. Pilihan paling
+  // aman adalah penerimaan terakhir SEBELUM tanggal FPB itu — bukan penerimaan
+  // terbaru, yang bisa berasal dari PO lain dengan harga berbeda.
+  if (!asOf) return null;
+  return (
+    milik
+      .filter((m) => m.date <= asOf)
+      .sort((a, b) => (a.date < b.date ? 1 : -1))[0] ?? null
+  );
+}
+
+function postReturnStock({ returnId, number, date, po, lines, postStock, products, moves, receipts, by, billed, freightRefunded }) {
+  if (!po?.warehouseId) return;
+  const out = lines
+    .map((l) => {
+      const item = po.items.find((i) => i.id === l.itemId);
+      const product = productOfItem(products, item);
+      if (!product?.tracked || !(l.qty > 0)) return null;
+      const rc = (receipts ?? []).find((x) => x.id === l.receiptId);
+      const asal = sourceReceiptMove(moves, product, po.warehouseId, l.receiptId, rc?.date ?? date);
+      // Baris tanpa penerimaan asal sudah ditahan di form; kalau toh lolos,
+      // lebih baik tidak membuat mutasi berharga tebakan.
+      if (!asal) return null;
+      return buildMove({
+        date,
+        type: 'purchase_return',
+        productId: product.id,
+        warehouseId: po.warehouseId,
+        qty: l.qty,
+        unitCost: asal.unitCost,
+        sourceType: 'purchase_return',
+        sourceId: returnId,
+        sourceNo: number,
+        createdBy: by,
+        costBreakdown: asal.costBreakdown,
+        sourceReceiptMoveId: asal.id,
+        billed,
+        freightRefunded,
+      });
+    })
+    .filter(Boolean);
+  if (out.length) postStock({ moves: out });
+}
+
 export function ReceiptModal({ opened, onClose, po, pb }) {
-  const { postStock, products } = useData();
+  const { postStock, products, companySettings, stockOpnames, warehouses } = useData();
+  // O4: gudang yang sedang diopname tidak boleh menerima barang — saldo bukunya
+  // sudah dibekukan, jadi penerimaan di tengah hitungan membuat angkanya meleset.
+  const beku = frozenMessage(
+    stockOpnames,
+    po?.warehouseId,
+    warehouses.find((w) => w.id === po?.warehouseId)?.name ?? 'Gudang tujuan',
+  );
+  // Perusahaan PKP sesekali menerima faktur pajak yang tidak bisa dikreditkan;
+  // untuk dokumen itu PPN-nya ikut jadi harga barang.
+  const [vatNotCreditable, setVatNotCreditable] = useState(false);
   const [date, setDate] = useState(TODAY);
   const [doNo, setDoNo] = useState('');
   const [note, setNote] = useState('');
@@ -586,6 +680,8 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
           ? 'Centang minimal satu pekerjaan yang sudah diterima'
           : 'Isi minimal satu qty diterima'),
     file: isJasa && !file && 'BAPP bertanda tangan wajib diunggah',
+    // Jasa tidak membentuk persediaan, jadi BAPP tidak ikut terhalang pembekuan.
+    beku: !isJasa && beku,
   };
   const invalid = Object.values(err).some(Boolean);
   const submit = () => {
@@ -618,13 +714,27 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
       // milik periode yang di-BAPP, bukan hari dokumennya diketik.
       journalDate: prefix === 'BAPP' ? journalDate : date,
       warehouseId: po.warehouseId ?? null,
+      // Disimpan di dokumen: harga perolehan baris FPB dibaca ulang dari sini,
+      // bukan dari pengaturan yang mungkin sudah berubah setelahnya.
+      vatNotCreditable,
       file,
       lines,
       note,
     });
     // Barang yang diterima langsung menambah stok di gudang tujuan PO. Hanya produk
     // yang dilacak stoknya yang bergerak (M12); jasa tidak punya persediaan.
-    postReceiptStock({ receiptId, number, date, po, lines, postStock, products, by: personLabel(pb.role) });
+    postReceiptStock({
+      receiptId,
+      number,
+      date,
+      po,
+      lines,
+      postStock,
+      products,
+      by: personLabel(pb.role),
+      settings: companySettings,
+      doc: { vatNotCreditable },
+    });
     toast(
       prefix === 'BAPP'
         ? 'BAPP dicatat. Menunggu persetujuan atasan sebelum bisa difaktur.'
@@ -649,6 +759,12 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
         </>
       }
     >
+      {err.beku && (
+        <Callout tone="warn" title="Gudang sedang diopname">
+          {err.beku}. Penerimaan ke gudang ini ditahan sampai opname-nya diposting atau
+          dibatalkan, supaya saldo buku yang dibekukan tidak bergeser di tengah hitungan.
+        </Callout>
+      )}
       <SimpleGrid cols={{ base: 1, sm: 2 }}>
         <TextInput label={isJasa ? 'No. BAPP' : mixed ? 'No. surat jalan / BAPP' : 'No. surat jalan'} placeholder={isJasa ? 'Contoh: BAPP/2026/11/0007' : 'Contoh: SJ-20261104-01'} withAsterisk size="sm" radius="md" value={doNo} error={sub && err.doNo} onChange={(e) => { setSub(true); setDoNo(e.currentTarget.value); }} />
         <DateField
@@ -877,6 +993,15 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
           value={file}
           error={sub && err.file}
           onChange={touch(setFile)}
+        />
+      )}
+      {!isJasa && companySettings.isPkp && (
+        <Checkbox
+          size="sm"
+          label="PPN tidak dapat dikreditkan"
+          description="Misalnya faktur pajak cacat atau pembelian untuk penyerahan yang dibebaskan. PPN-nya ikut masuk harga barang, bukan dicatat sebagai PPN Masukan."
+          checked={vatNotCreditable}
+          onChange={(e) => setVatNotCreditable(e.currentTarget.checked)}
         />
       )}
       <Textarea label={isJasa ? 'Catatan pemeriksaan' : 'Catatan kondisi'} placeholder={isJasa ? 'Contoh: Pekerjaan sesuai lingkup, tidak ada temuan' : 'Contoh: Dus penyok, isi dalam kondisi baik'} size="sm" radius="md" autosize minRows={2} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
@@ -1150,26 +1275,79 @@ export function PayModal({ opened, onClose, voucher: v, pb }) {
 }
 
 export function ReturnModal({ opened, onClose, invoice, pb }) {
+  const { postStock, products, stockMoves, stockOpnames, warehouses } = useData();
   const po = pb.posById[invoice.poId];
+  // O4: retur mengeluarkan barang dari gudang, jadi ia ikut ditahan selama
+  // gudang itu diopname — sama seperti penerimaan dan pindah barang.
+  const beku = frozenMessage(
+    stockOpnames,
+    po?.warehouseId,
+    warehouses.find((w) => w.id === po?.warehouseId)?.name ?? 'Gudang',
+  );
   const [date, setDate] = useState(TODAY);
   const [reason, setReason] = useState('');
   const [settlement, setSettlement] = useState('potong');
+  // Vendor biasanya hanya mengurangi tagihan sebesar barangnya; ongkirnya sudah
+  // terlanjur dibayar. Dicentang bila vendor ikut mengembalikan ongkir.
+  const [freightRefunded, setFreightRefunded] = useState(false);
+  const [qtys, setQtys] = useState({});
+  const [sub, setSub] = useState(false);
+
   const rows = invoice.lines.map((l, idx) => ({ l, idx })).filter(({ l }) => itemKind(po, l.itemId) === 'barang').map(({ l, idx }) => {
     const item = po.items.find((i) => i.id === l.itemId);
+    const product = productOfItem(products, item);
+    // Penerimaan asalnya dicari lewat FPB yang difakturkan di baris ini, supaya
+    // harga perolehannya milik FPB itu — bukan penerimaan terakhir produk yang sama.
+    const rcDate = pb.receipts.find((x) => x.id === l.receiptId)?.date ?? invoice.date;
+    const asal = sourceReceiptMove(stockMoves, product, po?.warehouseId, l.receiptId, rcDate);
+    const dilacak = !!product?.tracked;
+    // Batas qty: sisa yang belum diretur dari faktur, DAN stok yang benar-benar
+    // masih ada di gudang (M3/H16) — barang yang sudah dipakai tidak bisa diretur.
+    const sisaFaktur = Math.max(l.qty - returnedQty(invoice.id, l.itemId, pb.returns), 0);
+    const stok = dilacak && po?.warehouseId ? getBalance(stockMoves, product.id, po.warehouseId, date) : Infinity;
     return {
       key: `${l.itemId}:${idx}`,
       itemId: l.itemId,
+      receiptId: l.receiptId ?? null,
+      productId: product?.id ?? null,
+      tracked: dilacak,
       desc: item.desc,
       unit: item.unit,
       price: l.price,
       rate: lineRate(l),
-      max: Math.max(l.qty - returnedQty(invoice.id, l.itemId, pb.returns), 0),
+      // Harga perolehan asli — dipakai menilai barang keluar, tidak bisa diubah.
+      cost: asal ? asal.unitCost : l.price,
+      costFrom: asal?.sourceNo ?? null,
+      // Ongkir ikut harga barang hanya bila penerimaannya dulu memang begitu;
+      // kebijakan yang berlaku sekarang tidak mengubah dokumen yang sudah lewat.
+      ongkirDiHarga: !!asal?.costBreakdown?.freightCapitalized && (asal.costBreakdown.freight || 0) > 0,
+      noSource: dilacak && !asal,
+      sisaFaktur,
+      stok,
+      max: Math.max(0, Math.min(sisaFaktur, stok === Infinity ? sisaFaktur : stok)),
     };
   });
-  const [qtys, setQtys] = useState({});
-  const [sub, setSub] = useState(false);
+
   const picked = rows.filter((r) => (qtys[r.key] || 0) > 0);
-  const errors = { reason: !reason.trim() && 'Alasan retur wajib diisi', qty: !picked.length && 'Isi qty retur minimal satu item' };
+  const adaOngkir = rows.some((r) => r.ongkirDiHarga);
+  // Stok hari ini cukup belum tentu cukup pada hari-hari sesudahnya bila ada
+  // dokumen bertanggal mundur, jadi dicek dengan canIssue, bukan sekadar saldo.
+  const stokKurang = (r) => {
+    const q = qtys[r.key] || 0;
+    if (!r.tracked || q <= 0) return null;
+    const cek = canIssue(stockMoves, r.productId, po.warehouseId, date, q);
+    return cek.ok ? null : Math.max(0, cek.available);
+  };
+  const errors = {
+    reason: !reason.trim() && 'Alasan retur wajib diisi',
+    qty: !picked.length && 'Isi qty retur minimal satu item',
+    beku,
+    source:
+      picked.some((r) => r.noSource) &&
+      'Penerimaan asal tidak ditemukan untuk salah satu barang — harga perolehannya tidak bisa dipastikan',
+    stock: picked.some((r) => stokKurang(r) !== null) && 'Qty retur melebihi stok yang masih ada di gudang',
+  };
+  const blocked = errors.beku || errors.reason || errors.qty || errors.source || errors.stock;
   return (
     <FormModal
       opened={opened}
@@ -1183,19 +1361,46 @@ export function ReturnModal({ opened, onClose, invoice, pb }) {
           <Cancel onClick={onClose} />
           <Button
             radius="md"
+            {...blockedProps(blocked, () => setSub(true))}
             onClick={() => {
               setSub(true);
-              if (errors.reason || errors.qty) return;
+              if (blocked) return;
+              const returnId = uid('rtr');
+              const number = nextNumber('RTR', pb.returns);
+              // receiptId ikut disimpan: dialah yang menentukan harga perolehan
+              // mana yang dipakai, sekarang maupun saat dokumen dibaca lagi.
+              const lines = picked.map((r) => ({
+                itemId: r.itemId,
+                receiptId: r.receiptId,
+                qty: qtys[r.key],
+                price: r.price,
+              }));
               pb.add('returns', {
-                id: uid('rtr'),
-                number: nextNumber('RTR', pb.returns),
+                id: returnId,
+                number,
                 invoiceId: invoice.id,
                 vendorId: invoice.vendorId,
                 date,
                 reason,
                 settlement,
+                freightRefunded: adaOngkir ? freightRefunded : false,
                 status: 'selesai',
-                lines: picked.map((r) => ({ itemId: r.itemId, qty: qtys[r.key], price: r.price })),
+                lines,
+              });
+              // Barang keluar dari gudang dengan harga perolehan aslinya.
+              postReturnStock({
+                returnId,
+                number,
+                date,
+                po,
+                lines,
+                postStock,
+                products,
+                moves: stockMoves,
+                receipts: pb.receipts,
+                by: personLabel(pb.role),
+                billed: true,
+                freightRefunded: adaOngkir ? freightRefunded : false,
               });
               toast('Retur dicatat dan hutang disesuaikan.');
               onClose();
@@ -1222,12 +1427,28 @@ export function ReturnModal({ opened, onClose, invoice, pb }) {
           ]}
         />
       </SimpleGrid>
+      {errors.beku && (
+        <Callout tone="warn" title="Gudang sedang diopname">
+          {errors.beku}. Retur ditahan sampai opname-nya diposting atau dibatalkan, supaya saldo
+          buku yang dibekukan tidak bergeser di tengah hitungan.
+        </Callout>
+      )}
       <TextInput label="Alasan retur" placeholder="Contoh: Barang rusak saat diterima" withAsterisk size="sm" radius="md" value={reason} error={sub && errors.reason} onChange={(e) => setReason(e.currentTarget.value)} />
+      {adaOngkir && (
+        <Checkbox
+          size="sm"
+          label="Ongkir ikut dikembalikan vendor"
+          description="Ongkir barang ini dulu masuk harga perolehan. Bila tidak dicentang, porsi ongkir yang diretur dibebankan ke Pengiriman & Pengangkutan."
+          checked={freightRefunded}
+          onChange={(e) => setFreightRefunded(e.currentTarget.checked)}
+        />
+      )}
       <Box style={tableFrame}>
         <Table verticalSpacing="xs" horizontalSpacing="sm" styles={th}>
           <Table.Thead bg="slate.0">
             <Table.Tr>
               <Table.Th>Item</Table.Th>
+              <Table.Th ta="right">Stok di gudang</Table.Th>
               <Table.Th ta="right">Bisa diretur</Table.Th>
               <Table.Th w={120}>Qty retur</Table.Th>
               <Table.Th ta="right">Nilai</Table.Th>
@@ -1236,10 +1457,46 @@ export function ReturnModal({ opened, onClose, invoice, pb }) {
           <Table.Tbody>
             {rows.map((r) => (
               <Table.Tr key={r.key}>
-                <Table.Td fz="sm" fw={600}>{r.desc}</Table.Td>
-                <Table.Td ta="right" fz="sm">{r.max} {r.unit}</Table.Td>
+                <Table.Td fz="sm" fw={600}>
+                  {r.desc}
+                  {r.noSource ? (
+                    <Text fz={11} fw={600} c="red.7">
+                      Penerimaan asal tidak ditemukan — harga perolehannya tidak bisa dipastikan
+                    </Text>
+                  ) : (
+                    <Text fz={11} fw={500} c="slate.6">
+                      Harga perolehan {rupiah(Math.round(r.cost))}/{r.unit}
+                      {r.costFrom ? ` (dari ${r.costFrom})` : ''}
+                    </Text>
+                  )}
+                </Table.Td>
+                <Table.Td ta="right" fz="sm" c={r.tracked ? undefined : 'slate.5'}>
+                  {r.tracked ? `${r.stok} ${r.unit}` : '—'}
+                </Table.Td>
+                <Table.Td ta="right" fz="sm">
+                  {r.max} {r.unit}
+                  {r.tracked && r.stok < r.sisaFaktur && (
+                    <Text fz={11} c="orange.7">
+                      Dibatasi stok (faktur {r.sisaFaktur})
+                    </Text>
+                  )}
+                </Table.Td>
                 <Table.Td>
-                  <NumberField size="xs" radius="md" min={0} max={r.max} disabled={r.max === 0} value={qtys[r.key] ?? 0} onChange={(v) => setQtys((q) => ({ ...q, [r.key]: Math.min(Number(v) || 0, r.max) }))} />
+                  <NumberField
+                    size="xs"
+                    radius="md"
+                    min={0}
+                    max={r.max}
+                    disabled={r.max === 0 || r.noSource}
+                    value={qtys[r.key] ?? 0}
+                    error={sub && stokKurang(r) !== null}
+                    onChange={(v) => setQtys((q) => ({ ...q, [r.key]: Math.min(Number(v) || 0, r.max) }))}
+                  />
+                  {sub && stokKurang(r) !== null && (
+                    <Text fz={11} c="red.7">
+                      Tersedia {stokKurang(r)} {r.unit}
+                    </Text>
+                  )}
                 </Table.Td>
                 <Table.Td ta="right" fz="sm">{rupiah((qtys[r.key] || 0) * r.price)}</Table.Td>
               </Table.Tr>
@@ -1247,7 +1504,7 @@ export function ReturnModal({ opened, onClose, invoice, pb }) {
           </Table.Tbody>
         </Table>
       </Box>
-      {sub && errors.qty && <Text fz="xs" c="red.7">{errors.qty}</Text>}
+      {sub && blocked && blocked !== errors.reason && <Text fz="xs" c="red.7">{blocked}</Text>}
       <Group justify="space-between">
         <Text fz="sm" fw={700}>Nilai retur (termasuk PPN)</Text>
         <Text fz="md" fw={700}>{rupiah(Math.round(picked.reduce((n, r) => n + qtys[r.key] * r.price * (1 + r.rate), 0)))}</Text>

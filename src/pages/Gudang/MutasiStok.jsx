@@ -124,7 +124,7 @@ function TransferList({ data, warehouseName, onOpen }) {
 function ledgerBalance(moves, products, asOf) {
   const byId = Object.fromEntries(products.map((p) => [p.id, p]));
   return listMoves(moves, { to: asOf }).reduce((total, m) => {
-    const lines = moveJournal(m, byId[m.productId], m.amount);
+    const lines = moveJournal(m, byId[m.productId], m.amount, { residual: m.residual });
     const persediaan = byId[m.productId]?.inventoryAccount || AKUN.persediaan;
     return (
       total +

@@ -14,6 +14,7 @@ import { formatDate } from '@/pages/Pembelian/utils.js';
 import { rupiah } from '@/pages/Penjualan/utils.js';
 import { unitName } from '@/pages/Produk/catalog.js';
 import { MOVE_TYPE, TRANSFER_STATUS, getAverageCost } from './stock.js';
+import { frozenMessage } from './opname.js';
 
 const number = new Intl.NumberFormat('id-ID');
 
@@ -56,6 +57,11 @@ export default function TransferDetail({
   // Pengajuan yang masih menunggu boleh ditarik; yang sudah disetujui dibatalkan
   // dengan mutasi pembalik.
   const bisaDibatalkan = menunggu || disetujui;
+  // O4: selama salah satu gudangnya diopname, dokumen ini tidak boleh menyentuh
+  // stok — baik lewat persetujuan maupun pembatalan.
+  const beku = [transfer.fromWarehouseId, transfer.toWarehouseId]
+    .map((id) => frozenMessage(data.opnames, id, warehouseName(id)))
+    .filter(Boolean);
 
   return (
     <Stack gap="lg" p="lg" maw={1440} mx="auto">
@@ -93,7 +99,7 @@ export default function TransferDetail({
             >
               Cetak
             </Button>
-            {menunggu && canApprove && (
+            {menunggu && canApprove && !beku.length && (
               <>
                 <Button
                   variant="default"
@@ -110,7 +116,7 @@ export default function TransferDetail({
                 </Button>
               </>
             )}
-            {bisaDibatalkan && (
+            {bisaDibatalkan && !(disetujui && beku.length) && (
               <RowMenu
                 label={transfer.no}
                 items={[
@@ -161,6 +167,14 @@ export default function TransferDetail({
           <InfoCell label="Jumlah produk" value={`${transfer.lines.length} produk`} divider />
         </SimpleGrid>
       </Section>
+
+      {beku.length > 0 && bisaDibatalkan && (
+        <Callout tone="warn" title="Gudang sedang diopname">
+          {beku.join('. ')}. {menunggu ? 'Persetujuan' : 'Pembatalan'} dokumen ini ditahan sampai
+          opname-nya diposting atau dibatalkan, supaya saldo buku yang sudah dibekukan tidak
+          bergeser dan selisihnya tidak salah dijurnal sebagai penyesuaian opname.
+        </Callout>
+      )}
 
       {menunggu && (
         <Callout tone="wait" title={`Menunggu persetujuan ${approverLabel}`}>

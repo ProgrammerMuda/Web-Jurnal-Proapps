@@ -19,6 +19,7 @@ import {
   ArrowsLeftRight,
   Clock,
   Info,
+  ListChecks,
   PencilSimple,
   Package,
   Prohibit,
@@ -26,8 +27,10 @@ import {
   Trash,
   Warehouse,
 } from '@/components/Icon.jsx';
+import { lastPostedOpname, runningOpnameOf } from './opname.js';
 import {
   BackLink,
+  Callout,
   CardHead,
   DataTable,
   EmptyState,
@@ -164,6 +167,8 @@ export default function WarehouseDetail({
   onActivate,
   onDelete,
   onTransfer,
+  onNewOpname,
+  onOpenOpname,
   onOpenCard,
   onSetMin,
   onOpenMoves,
@@ -185,6 +190,10 @@ export default function WarehouseDetail({
     [logs, warehouse.id],
   );
   const nonaktif = warehouse.status === 'inactive';
+  // Opname yang sedang berjalan membekukan gudang ini (O4); yang terakhir
+  // diposting hanya keterangan kapan terakhir dihitung.
+  const berjalan = runningOpnameOf(data.opnames, warehouse.id);
+  const terakhir = lastPostedOpname(data.opnames, warehouse.id);
 
   return (
     <Stack gap="lg" p="lg" maw={1440} mx="auto">
@@ -227,6 +236,15 @@ export default function WarehouseDetail({
           </Group>
           <Group gap="xs">
             <Button
+              variant="default"
+              radius="md"
+              leftSection={<ListChecks size={16} />}
+              disabled={nonaktif || !!berjalan}
+              onClick={onNewOpname}
+            >
+              Buat opname
+            </Button>
+            <Button
               radius="md"
               leftSection={<ArrowsLeftRight size={16} />}
               onClick={onTransfer}
@@ -249,6 +267,20 @@ export default function WarehouseDetail({
           </Group>
         </Group>
       </Card>
+
+      {berjalan && (
+        <Callout tone="warn" title={`Stok opname ${berjalan.number} masih berjalan`}>
+          <Group justify="space-between" align="center" gap="md" wrap="wrap">
+            <Text fz="xs" c="slate.7" style={{ flex: 1, minWidth: 240 }}>
+              Selama opname berjalan, gudang ini tidak bisa menerima atau mengeluarkan barang, dan
+              tidak bisa dinonaktifkan.
+            </Text>
+            <Button variant="default" size="xs" radius="md" onClick={() => onOpenOpname?.(berjalan)}>
+              Buka opname
+            </Button>
+          </Group>
+        </Callout>
+      )}
 
       {/* Kartu info */}
       <Section
@@ -281,6 +313,19 @@ export default function WarehouseDetail({
           <InfoCell
             label="Dibuat"
             value={`${warehouse.createdBy} · ${formatDate(warehouse.createdAt.slice(0, 10))}`}
+            divider
+          />
+        </SimpleGrid>
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={0} style={rowDivider}>
+          <InfoCell
+            label="Opname terakhir"
+            value={terakhir ? `${formatDate(terakhir.date)} · ${terakhir.number}` : null}
+            empty="Belum pernah diopname"
+          />
+          <InfoCell
+            label="Opname berjalan"
+            value={berjalan?.number ?? null}
+            empty="Tidak ada"
             divider
           />
         </SimpleGrid>

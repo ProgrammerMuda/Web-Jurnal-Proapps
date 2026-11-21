@@ -18,7 +18,7 @@ import { DataTable, DocNumber, EmptyState, StatusPill } from '@/pages/Pembelian/
 import { formatDate } from '@/pages/Pembelian/utils.js';
 import { rupiah } from '@/pages/Penjualan/utils.js';
 import DateField from '@/components/DateField.jsx';
-import { MOVE_TYPE, listMoves, moveTypeOptions } from './stock.js';
+import { MOVE_TYPE, costBreakdownLabel, listMoves, moveTypeOptions } from './stock.js';
 import { hasJournal } from './journal.js';
 
 const number = new Intl.NumberFormat('id-ID');
@@ -42,6 +42,10 @@ export default function MoveHistory({
   }, [data.moves, filter, types, query, limit]);
 
   const productName = (id) => data.products.find((p) => p.id === id)?.name ?? id;
+  // Retur dinilai pada harga perolehan FPB tertentu — FPB itu ikut ditautkan
+  // supaya angkanya bisa ditelusuri tanpa membuka kartu stok.
+  const sourceReceipt = (m) =>
+    m.sourceReceiptMoveId ? data.moves.find((x) => x.id === m.sourceReceiptMoveId) : null;
   const warehouseName = (id) => data.warehouses.find((w) => w.id === id)?.name ?? id;
 
   const head = [
@@ -166,6 +170,21 @@ export default function MoveHistory({
               </Table.Td>
               <Table.Td>
                 <DocNumber onClick={() => onOpenSource?.(m)}>{m.sourceNo}</DocNumber>
+                {sourceReceipt(m) && (
+                  <Text fz={11} c="slate.6">
+                    dari{' '}
+                    <Text
+                      component="span"
+                      fz={11}
+                      fw={700}
+                      c="primary.9"
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => onOpenSource?.(sourceReceipt(m))}
+                    >
+                      {sourceReceipt(m).sourceNo}
+                    </Text>
+                  </Text>
+                )}
                 {m.reversalOfId && (
                   <Badge size="xs" radius="sm" variant="light" color="red" tt="none" mt={2}>
                     Pembatalan
@@ -200,9 +219,22 @@ export default function MoveHistory({
               {showValue && (
                 <>
                   <Table.Td ta="right">
-                    <Text fz="sm" c="slate.7">
-                      {rupiah(Math.round(m.unit))}
-                    </Text>
+                    {/* Harga satuan mutasi masuk adalah harga perolehan; tooltipnya
+                        memecah kembali jadi DPP, PPN, dan ongkir seperti di FPB. */}
+                    <Tooltip
+                      label={costBreakdownLabel(m, rupiah)}
+                      disabled={!costBreakdownLabel(m, rupiah)}
+                      withArrow
+                      fz="xs"
+                    >
+                      <Text
+                        fz="sm"
+                        c="slate.7"
+                        style={costBreakdownLabel(m, rupiah) ? { cursor: 'help' } : undefined}
+                      >
+                        {rupiah(Math.round(m.unit))}
+                      </Text>
+                    </Tooltip>
                   </Table.Td>
                   <Table.Td ta="right">
                     <Text fz="sm" fw={600} c="slate.9">

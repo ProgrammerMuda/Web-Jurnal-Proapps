@@ -29,7 +29,7 @@ import {
 import { formatDate } from '@/pages/Pembelian/utils.js';
 import { rupiah } from '@/pages/Penjualan/utils.js';
 import { unitName } from '@/pages/Produk/catalog.js';
-import { MOVE_TYPE } from './stock.js';
+import { MOVE_TYPE, costBreakdownLabel } from './stock.js';
 import { accountLabel, moveJournal } from './journal.js';
 
 const number = new Intl.NumberFormat('id-ID');
@@ -83,7 +83,7 @@ function InfoCell({ label, value, divider }) {
 export default function MoveJournal({ move, data, onBack, onOpenSource, onOpenCard }) {
   const product = data.products.find((p) => p.id === move.productId);
   const warehouse = data.warehouses.find((w) => w.id === move.warehouseId);
-  const jurnal = moveJournal(move, product, move.amount);
+  const jurnal = moveJournal(move, product, move.amount, { residual: move.residual });
   const debit = jurnal.reduce((n, l) => n + l.debit, 0);
   const credit = jurnal.reduce((n, l) => n + l.credit, 0);
   const selisih = debit - credit;
@@ -108,7 +108,17 @@ export default function MoveJournal({ move, data, onBack, onOpenSource, onOpenCa
     ],
     ['Gudang', warehouse?.name ?? move.warehouseId],
     ['Qty', `${masuk ? '+' : '−'}${number.format(qty)} ${satuan}`],
-    ['Harga satuan', rupiah(Math.round(move.unit ?? move.unitCost ?? 0))],
+    [
+      'Harga satuan',
+      <Box key="hs">
+        {rupiah(Math.round(move.unit ?? move.unitCost ?? 0))}
+        {costBreakdownLabel(move, rupiah) && (
+          <Text fz={11} fw={500} c="slate.6">
+            {costBreakdownLabel(move, rupiah)}
+          </Text>
+        )}
+      </Box>,
+    ],
     ['Dibukukan oleh', move.createdBy || '—'],
     [
       'ID sistem',

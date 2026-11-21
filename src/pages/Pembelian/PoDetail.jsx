@@ -6,6 +6,8 @@ import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, 
 import PurchaseFlow from './PurchaseFlow.jsx';
 import { ReasonModal, SendPoModal } from './Dialogs.jsx';
 import { personLabel, TODAY } from './data.js';
+import { freightShare } from './landedCost.js';
+import { freightCapitalized } from '@/pages/Pengaturan/settings.js';
 import { useData } from '@/lib/store.jsx';
 import { picName, warehouseById, warehouseOptions } from '@/pages/Gudang/data.js';
 import { approvalState, isApproverTurn, signApproval, canCreate, hidesPrices, prBlockedBySoD, receiptDoc } from './permissions.js';
@@ -87,7 +89,7 @@ export function PrActions({ pr, pb, openDialog }) {
 
 export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const role = pb.role;
-  const { warehouses } = useData();
+  const { warehouses, companySettings } = useData();
   // Gudang tujuan masih boleh diubah selama pesanan belum dikirim ke vendor —
   // sesudah terkirim, alamatnya sudah tercetak di dokumen yang dipegang vendor.
   const gudang = warehouseById(warehouses, po.warehouseId);
@@ -99,6 +101,13 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const isJasa = poAllJasa(po);
   // Spesifikasi 2.1: Gudang melihat pesanan dan tanggal kirim, tanpa harga.
   const noPrice = hidesPrices(role);
+  // Ongkir yang dikapitalisasi ikut jadi harga barang, jadi harga baris di PO
+  // bukan lagi harga yang nanti masuk persediaan — dijelaskan per baris.
+  const ongkirMasuk = freightCapitalized(companySettings) && (Number(po.shipping) || 0) > 0;
+  const ongkirPerUnit = (i) =>
+    ongkirMasuk && (i.kind ?? 'barang') === 'barang' && i.qty > 0
+      ? freightShare(po, i.id) / i.qty
+      : 0;
   const pphCut = Math.round(po.items.reduce((n, i) => n + i.qty * i.price * (i.pphRate ?? 0), 0));
   const vendor = pb.vendorsById[po.vendorId];
   const status = poStatus(po, pb.calc);
@@ -360,7 +369,16 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                         <Table.Td ta="right" fz="sm">{pakaiTerima
                           ? receipts.reduce((n, r) => n + invoicedQty(r.id, i.id, pb.invoices), 0)
                           : invoicedQtyOfPo(po.id, i.id, pb.invoices)}</Table.Td>
-                        {!noPrice && <Table.Td ta="right" fz="sm">{rupiah(i.price)}</Table.Td>}
+                        {!noPrice && (
+                          <Table.Td ta="right" fz="sm">
+                            {rupiah(i.price)}
+                            {ongkirPerUnit(i) > 0 && (
+                              <Text fz={11} c="slate.6" fw={400}>
+                                Termasuk ongkir {rupiah(Math.round(ongkirPerUnit(i)))}/{i.unit}
+                              </Text>
+                            )}
+                          </Table.Td>
+                        )}
                         {!noPrice && <Table.Td ta="right" fz="sm" fw={700}>{rupiah(i.qty * i.price)}</Table.Td>}
                       </Table.Tr>
                     ))}

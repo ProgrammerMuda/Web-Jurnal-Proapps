@@ -8,12 +8,13 @@ import { seedQuotes } from '@/pages/Penjualan/quotes.js';
 import { seedReturns } from '@/pages/Penjualan/returns.js';
 import { paymentTermsSeed } from '@/pages/Pembelian/paymentTerms.js';
 import { warehouseLogsSeed, warehousesSeed } from '@/pages/Gudang/data.js';
+import { defaultCompanySettings } from '@/pages/Pengaturan/settings.js';
 import {
   stockMinimumsSeed,
   stockMovesSeed,
-  stockOpnamesSeed,
   stockTransfersSeed,
 } from '@/pages/Gudang/stock.js';
+import { stockOpnamesSeed } from '@/pages/Gudang/opname.js';
 import {
   productCategoriesSeed,
   productUnitsSeed,
@@ -44,7 +45,19 @@ const produkSeed = {
 
 // Master Gudang + saldo/riwayat stok. Saldo stok sengaja disimpan terpisah dari master
 // produk maupun master gudang: ia milik Mutasi Stok, dan dua menu itu membacanya.
-const GUDANG_KEY = 'proapps.gudang.v3';
+const SETTINGS_KEY = 'proapps.settings.v1';
+
+function loadSettings() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+    if (raw && typeof raw === 'object') return { ...defaultCompanySettings, ...raw };
+  } catch {
+    /* abaikan: pakai kebijakan bawaan */
+  }
+  return defaultCompanySettings;
+}
+
+const GUDANG_KEY = 'proapps.gudang.v6';
 const gudangSeed = {
   warehouses: warehousesSeed,
   logs: warehouseLogsSeed,
@@ -81,7 +94,7 @@ function loadProduk() {
 }
 
 // Data Pembelian disimpan di localStorage agar tidak hilang saat halaman dimuat ulang.
-const PB_KEY = 'proapps.pembelian.v20';
+const PB_KEY = 'proapps.pembelian.v21';
 const pbSeed = {
   vendors: vendorsSeed,
   paymentTerms: paymentTermsSeed,
@@ -127,6 +140,8 @@ export function DataProvider({ children }) {
   const [pb, setPb] = useState(loadPb);
   const [produk, setProduk] = useState(loadProduk);
   const [gudang, setGudang] = useState(loadGudang);
+  // Kebijakan perusahaan: status PKP dan perlakuan ongkir pembelian.
+  const [companySettings, setCompanySettings] = useState(loadSettings);
   const [pbRole, setPbRole] = useState('accounting');
 
   useEffect(() => {
@@ -152,6 +167,13 @@ export function DataProvider({ children }) {
   }, [gudang]);
   const resetPb = () => setPb(pbSeed);
   const resetProduk = () => setProduk(produkSeed);
+  useEffect(() => {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(companySettings));
+    } catch {
+      /* penyimpanan penuh / diblokir: abaikan */
+    }
+  }, [companySettings]);
   const resetGudang = () => setGudang(gudangSeed);
 
   const value = useMemo(() => {
@@ -209,9 +231,11 @@ export function DataProvider({ children }) {
         setGudang((s2) => ({ ...s2, moves: typeof fn === 'function' ? fn(s2.moves) : fn })),
       setStockTransfers: (fn) =>
         setGudang((s2) => ({ ...s2, transfers: typeof fn === 'function' ? fn(s2.transfers) : fn })),
+      setStockOpnames: (fn) =>
+        setGudang((s2) => ({ ...s2, opnames: typeof fn === 'function' ? fn(s2.opnames) : fn })),
       // Mencatat dokumen persediaan sekaligus mutasinya dalam satu perubahan state,
       // supaya saldo tidak pernah terlihat setengah jadi.
-      postStock: ({ moves = [], transfer = null, updateTransfer = null }) =>
+      postStock: ({ moves = [], transfer = null, updateTransfer = null, opname = null, updateOpname = null }) =>
         setGudang((s2) => ({
           ...s2,
           moves: [...s2.moves, ...moves],
@@ -220,15 +244,22 @@ export function DataProvider({ children }) {
             : updateTransfer
               ? s2.transfers.map((t) => (t.id === updateTransfer.id ? { ...t, ...updateTransfer } : t))
               : s2.transfers,
+          opnames: opname
+            ? [opname, ...s2.opnames]
+            : updateOpname
+              ? s2.opnames.map((o) => (o.id === updateOpname.id ? { ...o, ...updateOpname } : o))
+              : s2.opnames,
         })),
       resetGudang,
+      companySettings,
+      setCompanySettings,
       pb,
       setPb,
       pbRole,
       setPbRole,
       resetPb,
     };
-  }, [contacts, groups, sales, orders, quotes, salesReturns, produk, gudang, pb, pbRole]);
+  }, [contacts, groups, sales, orders, quotes, salesReturns, produk, gudang, companySettings, pb, pbRole]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }

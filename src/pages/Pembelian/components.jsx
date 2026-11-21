@@ -387,6 +387,32 @@ export function ReferencePicker({
 const pageSizes = ['10', '20', '50'].map((v) => ({ value: v, label: `${v} / hal` }));
 
 // Menu aksi baris (titik tiga). items: [{ label, icon, onClick, color }]; item falsy diabaikan.
+/**
+ * Pita aksi di kaki form satu halaman. Dibungkus kartu sendiri supaya tombolnya
+ * tidak mengambang di bawah halaman — bentuknya sama dengan kaki form faktur
+ * penjualan: Batal berdiri sendiri di kiri karena ia membatalkan seluruh form,
+ * sedangkan aksi yang memajukan dokumen berkumpul di kanan.
+ */
+export function FormActions({ error, onCancel, cancelLabel = 'Batal', children }) {
+  return (
+    <Card withBorder radius="lg" padding={0} bg="white">
+      <Group justify="space-between" gap="md" px="lg" py="md" wrap="wrap">
+        <Group gap="md" wrap="nowrap" style={{ minWidth: 0 }}>
+          <Button variant="outline" color="slate" radius="md" onClick={onCancel}>
+            {cancelLabel}
+          </Button>
+          {error && (
+            <Text fz="xs" c="red.7" style={{ minWidth: 0 }}>
+              {error}
+            </Text>
+          )}
+        </Group>
+        <Group gap="sm">{children}</Group>
+      </Group>
+    </Card>
+  );
+}
+
 export function RowMenu({ items, label }) {
   const list = items.filter(Boolean);
   if (!list.length) return null;

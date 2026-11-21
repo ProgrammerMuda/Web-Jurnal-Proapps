@@ -42,6 +42,7 @@ import {
   Money,
   Package,
   Percent,
+  ListChecks,
   Receipt,
   ShieldCheck,
   ShoppingCart,
@@ -158,7 +159,8 @@ const groups = [
         icon: Calculator,
         children: [
           { label: 'Pemetaan Akun', icon: TreeStructure },
-          { label: 'Pajak', icon: Percent },
+          { key: 'pajak-biaya', label: 'Pajak & Biaya Perolehan', icon: Percent },
+          { key: 'akun-opname', label: 'Akun Selisih Opname', icon: ListChecks },
         ],
       },
       {

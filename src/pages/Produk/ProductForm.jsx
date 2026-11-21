@@ -29,6 +29,8 @@ import {
   Warehouse,
 } from '@/components/Icon.jsx';
 import { accounts } from '@/pages/DaftarAkun/accounts.js';
+import { Callout } from '@/pages/Pembelian/components.jsx';
+import { opnameHoldingProduct } from '@/pages/Gudang/opname.js';
 import { buyTaxOptions, emptyProduct, generateSku, saleTaxOptions } from './catalog.js';
 
 // Hanya akun paling bawah (bukan induk) yang boleh dipetakan ke produk.
@@ -76,19 +78,21 @@ function ToggleSection({ icon: Icon, title, description, checked, onChange, chil
 }
 
 // Pilihan "Dilacak / Tidak dilacak" sebagai dua kartu, seperti di situs.
-function ChoiceCard({ icon: Icon, title, description, active, onClick }) {
+function ChoiceCard({ icon: Icon, title, description, active, disabled, onClick }) {
   return (
     <Card
       withBorder
       radius="md"
       padding="sm"
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
       role="radio"
       aria-checked={active}
-      tabIndex={0}
-      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onClick()}
+      aria-disabled={disabled || undefined}
+      tabIndex={disabled ? -1 : 0}
+      onKeyDown={(e) => !disabled && (e.key === 'Enter' || e.key === ' ') && onClick()}
       style={{
-        cursor: 'pointer',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled && !active ? 0.55 : 1,
         borderColor: active ? 'var(--mantine-color-primary-9)' : undefined,
         backgroundColor: active ? 'var(--mantine-color-primary-0)' : undefined,
       }}
@@ -184,8 +188,12 @@ export default function ProductForm({
   onSave,
   onAddCategory,
   onAddUnit,
+  opnames,
 }) {
   const editing = !!product;
+  // Produk yang sedang dihitung di opname berjalan tidak boleh berubah sifatnya:
+  // saldo buku sudah dibekukan dalam satuan dasar yang berlaku saat itu.
+  const dikunci = editing ? opnameHoldingProduct(opnames, product.id) : null;
   const [form, setForm] = useState(() => product ?? emptyProduct());
   const [submitted, setSubmitted] = useState(false);
   const [quick, setQuick] = useState(null); // 'kategori' | 'satuan-jual' | 'satuan-beli'
@@ -547,6 +555,12 @@ export default function ProductForm({
               </Text>
             </Box>
           </Group>
+          {dikunci && (
+            <Callout tone="warn" title={`Produk sedang dihitung di ${dikunci.number}`}>
+              Lacak stok dan satuan dasar dikunci sampai opname itu diposting atau dibatalkan,
+              karena saldo bukunya sudah dibekukan dalam satuan yang berlaku sekarang.
+            </Callout>
+          )}
           <Grid gutter="md">
             <Grid.Col span={{ base: 12, sm: 6 }}>
               <ChoiceCard
@@ -554,7 +568,11 @@ export default function ProductForm({
                 title="Lacak stok (barang)"
                 description="Qty dihitung per gudang dan nilainya masuk akun persediaan."
                 active={form.tracked}
-                onClick={() => set({ tracked: true, kind: 'barang', baseUnitId: form.baseUnitId ?? form.buyUnitId ?? form.saleUnitId })}
+                disabled={!!dikunci}
+                onClick={() =>
+                  !dikunci &&
+                  set({ tracked: true, kind: 'barang', baseUnitId: form.baseUnitId ?? form.buyUnitId ?? form.saleUnitId })
+                }
               />
             </Grid.Col>
             <Grid.Col span={{ base: 12, sm: 6 }}>
@@ -563,7 +581,8 @@ export default function ProductForm({
                 title="Tidak dilacak (jasa / non-stok)"
                 description="Stok tidak dihitung. Cocok untuk jasa dan biaya."
                 active={!form.tracked}
-                onClick={() => set({ tracked: false })}
+                disabled={!!dikunci}
+                onClick={() => !dikunci && set({ tracked: false })}
               />
             </Grid.Col>
             {form.tracked && (
@@ -578,6 +597,7 @@ export default function ProductForm({
                     placeholder="Pilih satuan"
                     data={unitOptions}
                     value={form.baseUnitId}
+                    disabled={!!dikunci}
                     onChange={(v) => set({ baseUnitId: v })}
                     error={err('baseUnitId')}
                   />

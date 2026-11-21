@@ -6,7 +6,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Badge,
-  Box,
   Button,
   Card,
   Grid,
@@ -38,9 +37,9 @@ import {
   StatCell,
   StatusPill,
 } from '@/pages/Pembelian/components.jsx';
-import Placeholder from '@/pages/Penjualan/Placeholder.jsx';
 import { rupiah } from '@/pages/Penjualan/utils.js';
 import { periodLocked } from '@/pages/Penjualan/data.js';
+import { formatDate } from '@/pages/Pembelian/utils.js';
 import { useData } from '@/lib/store.jsx';
 import { unitName } from '@/pages/Produk/catalog.js';
 import { STATUS_PILL, TODAY, diffWarehouse, personLabel, picName } from './data.js';
@@ -70,14 +69,35 @@ import StockCard from './StockCard.jsx';
 import TransferForm from './TransferForm.jsx';
 import TransferDetail from './TransferDetail.jsx';
 import MoveJournal from './MoveJournal.jsx';
+import OpnameList from './OpnameList.jsx';
+import OpnameForm from './OpnameForm.jsx';
+import OpnameDetail from './OpnameDetail.jsx';
 import { ReasonModal } from '@/pages/Pembelian/Dialogs.jsx';
 import {
+  ApproveOpnameDialog,
+  CancelOpnameDialog,
   CancelTransferDialog,
   DeactivateDialog,
   DeleteDialog,
   MakeDefaultDialog,
   MinStockDialog,
+  StartOpnameDialog,
+  SubmitOpnameDialog,
 } from './Dialogs.jsx';
+import {
+  buildOpnameLines,
+  defaultOpnameAccounts,
+  foundLine,
+  nextOpnameNumber,
+  opnameEvent,
+  opnameSummary,
+  postBlockers,
+  postOpname,
+  reverseBlockers,
+  frozenMessage,
+  reasonFitsDiff,
+  reverseOpname,
+} from './opname.js';
 import { formatHash, parseHash } from './routes.js';
 
 const number = new Intl.NumberFormat('id-ID');
@@ -85,6 +105,8 @@ const number = new Intl.NumberFormat('id-ID');
 // riwayat perubahan tidak melompat ke tanggal lain daripada dokumen di sekitarnya.
 const nowIso = () => `${TODAY}T${new Date().toISOString().slice(11)}`;
 const uid = (p) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+// "2026-11-20" → "Nov 2026", untuk pesan periode terkunci.
+const monthLabel = (iso) => formatDate(`${iso.slice(0, 7)}-01`).replace(/^\d+ /, '');
 
 const statusFilters = [
   { value: 'active', label: 'Aktif' },
@@ -350,6 +372,7 @@ export default function Gudang() {
     stockOpnames,
     stockTransfers,
     postStock,
+    companySettings,
     products,
     productCategories,
     productUnits,
@@ -376,6 +399,11 @@ export default function Gudang() {
   const [minStock, setMinStock] = useState(null); // { row, warehouse }
   const [cancelFor, setCancelFor] = useState(null); // dokumen pindah yang akan dibatalkan
   const [rejectFor, setRejectFor] = useState(null); // dokumen pindah yang akan ditolak
+  const [startFor, setStartFor] = useState(null); // opname yang akan dimulai
+  const [submitFor, setSubmitFor] = useState(null);
+  const [approveFor, setApproveFor] = useState(null);
+  const [rejectOpnameFor, setRejectOpnameFor] = useState(null);
+  const [cancelOpnameFor, setCancelOpnameFor] = useState(null);
 
   const showValue = canViewInventoryValue(pbRole);
   const ctx = { moves: stockMoves, opnames: stockOpnames, pb, orders };
@@ -386,13 +414,23 @@ export default function Gudang() {
       moves: stockMoves,
       minimums: stockMinimums,
       transfers: stockTransfers,
+      opnames: stockOpnames,
       products,
       categories: productCategories,
       units: productUnits,
       warehouses,
       today: TODAY,
     }),
-    [stockMoves, stockMinimums, stockTransfers, products, productCategories, productUnits, warehouses],
+    [
+      stockMoves,
+      stockMinimums,
+      stockTransfers,
+      stockOpnames,
+      products,
+      productCategories,
+      productUnits,
+      warehouses,
+    ],
   );
 
   // Filter tab Mutasi Stok & kartu stok, disetel lewat hash dan toolbar.
@@ -612,7 +650,25 @@ export default function Gudang() {
       })
       .filter(Boolean);
 
+  /**
+   * O4: gudang yang sedang diopname tidak boleh menerima atau mengeluarkan
+   * barang. Dokumen yang diajukan SEBELUM opname dimulai tetap harus tertahan
+   * di sini — kalau lolos, saldo buku yang sudah dibekukan jadi tidak cocok
+   * dengan isi rak, dan selisihnya nanti salah dijurnal sebagai opname.
+   */
+  const transferFrozen = (transfer) =>
+    [transfer.fromWarehouseId, transfer.toWarehouseId]
+      .map((id) =>
+        frozenMessage(stockOpnames, id, warehouses.find((w) => w.id === id)?.name ?? 'Gudang'),
+      )
+      .filter(Boolean);
+
   const approveTransfer = (transfer) => {
+    const beku = transferFrozen(transfer);
+    if (beku.length) {
+      toast('Gudang sedang diopname', { color: 'red', body: `${beku[0]}.` });
+      return;
+    }
     const kurang = transferShortage(transfer);
     if (kurang.length) {
       toast('Stok tidak mencukupi lagi', {
@@ -652,6 +708,15 @@ export default function Gudang() {
   };
 
   const cancelTransfer = (transfer) => {
+    // Pembatalan dokumen yang sudah disetujui memindahkan barang kembali, jadi
+    // ia ikut ditahan. Menarik pengajuan yang belum disetujui tidak menyentuh
+    // stok, jadi itu tetap boleh.
+    const beku = transfer.status === 'disetujui' ? transferFrozen(transfer) : [];
+    if (beku.length) {
+      setCancelFor(null);
+      toast('Gudang sedang diopname', { color: 'red', body: `${beku[0]}.` });
+      return;
+    }
     const by = picName(pbRole) ?? 'Pengguna';
     // Dokumen yang belum disetujui belum punya mutasi, jadi tidak ada yang dibalik.
     if (transfer.status === 'menunggu') {
@@ -671,6 +736,176 @@ export default function Gudang() {
     });
     setCancelFor(null);
     toast(`${transfer.no} dibatalkan`, { body: 'Stok kembali ke gudang asal.' });
+  };
+
+  // --- Stok Opname ----------------------------------------------------------
+
+  // Pemetaan akun yang berlaku sekarang. Dokumen yang sudah diposting memakai
+  // salinannya sendiri, jadi perubahan di Pengaturan tidak menyentuh jurnal lama.
+  const opnameAccounts = useMemo(
+    () => ({ ...defaultOpnameAccounts, ...(companySettings.opnameAccounts ?? {}) }),
+    [companySettings.opnameAccounts],
+  );
+
+  const patchOpname = (opname, patch, event) =>
+    postStock({
+      updateOpname: {
+        id: opname.id,
+        ...patch,
+        ...(event ? { history: [...(opname.history ?? []), event] } : null),
+      },
+    });
+
+  const saveOpname = (form, start) => {
+    const id = uid('so');
+    const by = picName(pbRole) ?? 'Pengguna';
+    const number = nextOpnameNumber(stockOpnames);
+    // Draf belum membekukan apa pun; barisnya baru dibentuk saat Mulai hitung (O3).
+    const lines = start
+      ? buildOpnameLines({
+          products,
+          moves: stockMoves,
+          warehouseId: form.warehouseId,
+          date: form.date,
+          scope: form.scope,
+        })
+      : [];
+    const now = nowIso();
+    const doc = {
+      id,
+      number,
+      ...form,
+      status: start ? 'counting' : 'draft',
+      accountMap: null,
+      lines,
+      history: [
+        { at: now, by, action: 'created' },
+        ...(start ? [{ at: now, by, action: 'started' }] : []),
+      ],
+      ...(start ? { startedAt: now } : null),
+      createdBy: by,
+      createdAt: now,
+    };
+    postStock({ opname: doc });
+    const gudang = warehouses.find((w) => w.id === form.warehouseId)?.name ?? 'gudang';
+    toast(start ? `Opname ${number} dimulai` : `Draf ${number} disimpan`, {
+      body: start ? `${gudang} dibekukan sampai opname selesai.` : 'Saldo buku belum dibekukan.',
+    });
+    go({ name: 'opname', id });
+  };
+
+  const startOpname = (opname) => {
+    const lines = buildOpnameLines({
+      products,
+      moves: stockMoves,
+      warehouseId: opname.warehouseId,
+      date: opname.date,
+      scope: opname.scope,
+    });
+    const by = picName(pbRole) ?? 'Pengguna';
+    patchOpname(
+      opname,
+      { status: 'counting', lines, startedAt: nowIso() },
+      opnameEvent('started', by, null, nowIso()),
+    );
+    setStartFor(null);
+    const gudang = warehouses.find((w) => w.id === opname.warehouseId)?.name ?? 'gudang';
+    toast(`Opname ${opname.number} dimulai`, { body: `${gudang} dibekukan.` });
+  };
+
+  const patchOpnameLine = (opname, idx, patch) => {
+    const lines = (opname.lines ?? []).map((l, i) => {
+      if (i !== idx) return l;
+      const next = { ...l, ...patch };
+      // Arah selisih bisa berbalik saat qty diubah; alasan yang tidak lagi masuk
+      // akal dikosongkan daripada ikut terbawa diam-diam.
+      const d = next.countedQty == null ? 0 : next.countedQty - next.bookQty;
+      if (next.reason && !reasonFitsDiff(next.reason, d)) next.reason = null;
+      return next;
+    });
+    postStock({ updateOpname: { id: opname.id, lines } });
+  };
+
+  const addFoundProduct = (opname, productId) => {
+    const harga = getAverageCost(stockMoves, productId, opname.date);
+    postStock({
+      updateOpname: {
+        id: opname.id,
+        lines: [...(opname.lines ?? []), foundLine(productId, harga)],
+      },
+    });
+  };
+
+  const submitOpname = (opname) => {
+    patchOpname(
+      opname,
+      { status: 'pending_approval' },
+      opnameEvent('submitted', picName(pbRole) ?? 'Pengguna', null, nowIso()),
+    );
+    setSubmitFor(null);
+    toast('Opname dikirim ke Building Manager', {
+      body: `${opname.number} menunggu persetujuan ${personLabel(TRANSFER_APPROVER)}.`,
+    });
+  };
+
+  const approveOpname = (opname) => {
+    const by = picName(pbRole) ?? 'Pengguna';
+    const moves = postOpname(opname, { accountMap: opnameAccounts, by });
+    postStock({
+      moves,
+      updateOpname: {
+        id: opname.id,
+        status: 'posted',
+        // Akun dikunci di dokumen DAN di mutasinya, supaya keduanya tetap cocok
+        // walau pemetaannya diubah nanti.
+        accountMap: opnameAccounts,
+        postedAt: nowIso(),
+        history: [...(opname.history ?? []), opnameEvent('approved', by, null, nowIso())],
+      },
+    });
+    setApproveFor(null);
+    toast(`Opname ${opname.number} diposting`, {
+      body: `${moves.length} mutasi penyesuaian dibuat.`,
+    });
+  };
+
+  const rejectOpname = (opname, reason) => {
+    const by = picName(pbRole) ?? 'Pengguna';
+    patchOpname(opname, { status: 'counting' }, opnameEvent('rejected', by, reason, nowIso()));
+    setRejectOpnameFor(null);
+    toast(`Opname ${opname.number} ditolak`, { body: 'Dokumen dikembalikan ke petugas.' });
+  };
+
+  const cancelOpname = (opname, reason) => {
+    const by = picName(pbRole) ?? 'Pengguna';
+    if (opname.status !== 'posted') {
+      patchOpname(
+        opname,
+        { status: 'cancelled', cancelledAt: nowIso() },
+        opnameEvent('cancelled', by, reason, nowIso()),
+      );
+      setCancelOpnameFor(null);
+      toast(`Opname ${opname.number} dibatalkan`, { body: 'Belum ada mutasi yang perlu dibalik.' });
+      return;
+    }
+    const costs = effectiveCosts(stockMoves);
+    const tanggal = periodLocked(opname.date) ? TODAY : opname.date;
+    const moves = reverseOpname(opname, stockMoves, { date: tanggal, by, costs });
+    postStock({
+      moves,
+      updateOpname: {
+        id: opname.id,
+        status: 'cancelled',
+        cancelledAt: nowIso(),
+        cancelReason: reason || null,
+        // Alasannya ikut ke Riwayat, bukan hanya ke toast yang langsung hilang.
+        history: [...(opname.history ?? []), opnameEvent('cancelled', by, reason, nowIso())],
+      },
+    });
+    setCancelOpnameFor(null);
+    toast(`Opname ${opname.number} dibatalkan`, {
+      body: `${moves.length} mutasi pembalik dicatat.`,
+    });
   };
 
   // Tautan solusi pada dialog blokir nonaktif.
@@ -735,6 +970,81 @@ export default function Gudang() {
         onClose={() => setCancelFor(null)}
         onConfirm={() => cancelTransfer(cancelFor)}
       />
+      <StartOpnameDialog
+        opname={startFor}
+        warehouseName={warehouses.find((w) => w.id === startFor?.warehouseId)?.name ?? 'gudang ini'}
+        count={
+          startFor
+            ? buildOpnameLines({
+                products,
+                moves: stockMoves,
+                warehouseId: startFor.warehouseId,
+                date: startFor.date,
+                scope: startFor.scope,
+              }).length
+            : 0
+        }
+        onClose={() => setStartFor(null)}
+        onConfirm={() => startOpname(startFor)}
+      />
+      <SubmitOpnameDialog
+        opname={submitFor}
+        summary={submitFor ? opnameSummary(submitFor) : null}
+        showValue={showValue}
+        onClose={() => setSubmitFor(null)}
+        onConfirm={() => submitOpname(submitFor)}
+      />
+      <ApproveOpnameDialog
+        opname={approveFor}
+        summary={approveFor ? opnameSummary(approveFor) : null}
+        showValue={showValue || canApproveTransfer(pbRole)}
+        moveCount={approveFor ? opnameSummary(approveFor).diffCount : 0}
+        blockers={
+          approveFor
+            ? postBlockers(approveFor, {
+                products,
+                accountMap: opnameAccounts,
+                periodLocked,
+                monthLabel,
+              })
+            : []
+        }
+        onClose={() => setApproveFor(null)}
+        onConfirm={() => approveOpname(approveFor)}
+      />
+      <ReasonModal
+        opened={!!rejectOpnameFor}
+        onClose={() => setRejectOpnameFor(null)}
+        title={`Tolak ${rejectOpnameFor?.number ?? ''}?`}
+        label="Alasan penolakan"
+        confirmLabel="Tolak opname"
+        onConfirm={(reason) => rejectOpname(rejectOpnameFor, reason)}
+      />
+      <CancelOpnameDialog
+        opname={cancelOpnameFor}
+        warehouseName={
+          warehouses.find((w) => w.id === cancelOpnameFor?.warehouseId)?.name ?? 'gudang ini'
+        }
+        moveCount={
+          cancelOpnameFor
+            ? stockMoves.filter(
+                (m) => m.sourceType === 'stock_opname' && m.sourceId === cancelOpnameFor.id && !m.reversalOfId,
+              ).length
+            : 0
+        }
+        blockers={
+          cancelOpnameFor && cancelOpnameFor.status === 'posted'
+            ? reverseBlockers(
+                cancelOpnameFor,
+                stockMoves,
+                products,
+                periodLocked(cancelOpnameFor.date) ? TODAY : cancelOpnameFor.date,
+              )
+            : []
+        }
+        onClose={() => setCancelOpnameFor(null)}
+        onConfirm={(reason) => cancelOpname(cancelOpnameFor, reason)}
+      />
       <MinStockDialog
         row={minStock?.row}
         warehouse={minStock?.warehouse}
@@ -760,6 +1070,8 @@ export default function Gudang() {
   const openSource = (m) => {
     if (m.sourceType === 'stock_transfer' && stockTransfers.some((t) => t.id === m.sourceId))
       return go({ name: 'transfer', id: m.sourceId });
+    if (m.sourceType === 'stock_opname' && stockOpnames.some((o) => o.id === m.sourceId))
+      return go({ name: 'opname', id: m.sourceId });
     if (m.sourceType === 'goods_receipt' && pb.receipts.some((r) => r.id === m.sourceId)) {
       window.location.hash = `#pembelian/receipt/${m.sourceId}`;
       return undefined;
@@ -894,24 +1206,69 @@ export default function Gudang() {
       </>
     );
 
-  if (route.tab === 'opname')
-    return (
-      <Box p="lg" maw={1440} mx="auto">
-        <Stack gap="lg">
-          <Placeholder
-            icon={ListChecks}
-            title="Stok Opname"
-            description="Perhitungan fisik stok per gudang dan penyesuaian selisihnya."
-            plan={[
-              'Buat sesi opname per gudang beserta daftar produk yang dihitung.',
-              'Input hasil hitung fisik dan selisih terhadap saldo sistem.',
-              'Penyesuaian stok dan jurnal selisih persediaan.',
-              'Status opname berjalan dipakai menu Gudang untuk mencegah gudang dinonaktifkan.',
-            ]}
+  if (route.tab === 'opname') {
+    if (route.view.name === 'opname-new')
+      return (
+        <>
+          <OpnameForm
+            data={data}
+            opnames={stockOpnames}
+            preset={{ warehouseId: route.filter?.warehouseId ?? null }}
+            onCancel={() => go({ name: 'tab', tab: 'opname' })}
+            onSave={saveOpname}
           />
-        </Stack>
-      </Box>
+          {dialogs}
+        </>
+      );
+
+    const opname = stockOpnames.find((o) => o.id === route.view.id);
+    if (route.view.name === 'opname' && opname)
+      return (
+        <>
+          <OpnameDetail
+            opname={opname}
+            data={data}
+            moves={listMoves(stockMoves)}
+            accountMap={opnameAccounts}
+            // O13: harga & nilai mengikuti hak lihat nilai, tetapi approver
+            // tetap perlu melihatnya — ia tidak bisa menyetujui angka yang
+            // tidak ia lihat.
+            showValue={showValue || canApproveTransfer(pbRole)}
+            // Blind count hanya berlaku untuk yang menghitung (prinsip 1),
+            // bukan untuk semua peran yang tidak boleh melihat nilai.
+            blind={pbRole === 'gudang'}
+            canCount={['gudang', 'accounting', 'superadmin'].includes(pbRole)}
+            canReview={['accounting', 'superadmin'].includes(pbRole)}
+            canApprove={canApproveTransfer(pbRole)}
+            approverLabel={personLabel(TRANSFER_APPROVER)}
+            onBack={() => go({ name: 'tab', tab: 'opname' })}
+            onStart={() => setStartFor(opname)}
+            onPatchLine={(idx, patch) => patchOpnameLine(opname, idx, patch)}
+            onAddFound={(productId) => addFoundProduct(opname, productId)}
+            onSubmit={() => setSubmitFor(opname)}
+            onApprove={() => setApproveFor(opname)}
+            onReject={() => setRejectOpnameFor(opname)}
+            onCancel={() => setCancelOpnameFor(opname)}
+            onOpenJournal={(m) => go({ name: 'journal', moveId: m.id })}
+            onOpenCard={(productId) => openCard(productId, opname.warehouseId)}
+          />
+          {dialogs}
+        </>
+      );
+
+    return (
+      <>
+        <OpnameList
+          data={data}
+          opnames={stockOpnames}
+          showValue={showValue}
+          onOpen={(o) => go({ name: 'opname', id: o.id })}
+          onNew={() => go({ name: 'opname-new' })}
+        />
+        {dialogs}
+      </>
     );
+  }
 
   const selected = warehouses.find((w) => w.id === route.view.id);
   if (route.view.name === 'detail' && selected) {
@@ -932,6 +1289,8 @@ export default function Gudang() {
           onDelete={() => setRemove(selected)}
           // Pindah barang dari detail gudang: gudang asalnya sudah terisi.
           onTransfer={() => go({ name: 'transfer-new', warehouseId: selected.id })}
+          onNewOpname={() => go({ name: 'opname-new', warehouseId: selected.id })}
+          onOpenOpname={(o) => go({ name: 'opname', id: o.id })}
           onOpenCard={(productId) => openCard(productId, selected.id)}
           onSetMin={(row) => setMinStock({ row, warehouse: selected })}
           onOpenMoves={() => {

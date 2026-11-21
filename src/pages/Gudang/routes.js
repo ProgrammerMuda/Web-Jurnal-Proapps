@@ -7,6 +7,8 @@
 // #gudang/jurnal?mutasi=<id>      jurnal transaksi satu mutasi
 // #gudang/pindah/new?asal=&isi=   form pindah barang
 // #gudang/pindah/<id>             detail pindah barang
+// #gudang/opname/new?gudang=      form buat opname
+// #gudang/opname/<id>             detail stok opname
 export const gudangTabs = [
   { value: 'warehouses', label: 'Gudang', title: 'Gudang' },
   { value: 'moves', label: 'Mutasi Stok', title: 'Mutasi Stok' },
@@ -30,6 +32,8 @@ export function parseHash(h) {
   if (a === 'jurnal') return { tab: 'moves', view: { name: 'journal' }, filter };
   if (a === 'pindah' && b === 'new') return { tab: 'moves', view: { name: 'transfer-new' }, filter };
   if (a === 'pindah' && b) return { tab: 'moves', view: { name: 'transfer', id: b }, filter };
+  if (a === 'opname' && b === 'new') return { tab: 'opname', view: { name: 'opname-new' }, filter };
+  if (a === 'opname' && b) return { tab: 'opname', view: { name: 'opname', id: b }, filter };
   if (a === 'tab' && tabKeys.includes(b)) return { tab: b, view: { name: 'home' }, filter };
   return { tab: 'warehouses', view: { name: 'home' }, filter };
 }
@@ -59,6 +63,10 @@ export function formatHash(v) {
       return `#gudang/pindah/new${qs(v)}`;
     case 'transfer':
       return `#gudang/pindah/${v.id}`;
+    case 'opname-new':
+      return `#gudang/opname/new${qs(v)}`;
+    case 'opname':
+      return `#gudang/opname/${v.id}`;
     default:
       return '#gudang';
   }
@@ -70,5 +78,7 @@ export const gudangTitle = (hash) => {
   if (view.name === 'card') return 'Kartu Stok';
   if (view.name === 'journal') return 'Jurnal Transaksi';
   if (view.name === 'transfer' || view.name === 'transfer-new') return 'Pindah Barang';
+  if (view.name === 'opname-new') return 'Buat Opname';
+  if (view.name === 'opname') return 'Detail Stok Opname';
   return gudangTabs.find((t) => t.value === tab).title;
 };

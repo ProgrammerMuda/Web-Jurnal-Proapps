@@ -1,8 +1,10 @@
 // Detail penerimaan: FPB (barang) atau BAPP (jasa) yang dicatat dari sebuah PO.
-import { Badge, Box, Button, Card, Grid, Group, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core';
+import { Badge, Box, Button, Card, Grid, Group, SimpleGrid, Stack, Table, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
 import { Check, DownloadSimple, Info, Package, Paperclip, Receipt, Truck } from '@/components/Icon.jsx';
 import { BackLink, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section } from './components.jsx';
-import { approvalState, canCreate, isApproverTurn, signApproval } from './permissions.js';
+import { approvalState, canCreate, hidesPrices, isApproverTurn, signApproval } from './permissions.js';
+import { landedUnitCost } from './landedCost.js';
+import { useData } from '@/lib/store.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
 import AttachmentList from './Attachments.jsx';
 import { downloadReceipt } from './receiptPdf.js';
@@ -14,12 +16,23 @@ import { StatusPill } from './components.jsx';
 const th = { th: { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 600, color: 'var(--mantine-color-slate-7)', whiteSpace: 'nowrap' } };
 
 export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
+  const { companySettings } = useData();
   const po = pb.posById[r.poId];
   const vendor = pb.vendorsById[r.vendorId];
   const isJasa = r.kind === 'jasa';
   const docName = isJasa ? 'BAPP' : 'FPB';
   const itemOf = (id) => po?.items.find((i) => i.id === id);
   const confirmed = receiptConfirmed(r);
+  // Harga perolehan per unit: DPP ditambah ongkir dan PPN sejauh keduanya
+  // dikapitalisasi. Angka inilah yang masuk persediaan, bukan harga PO.
+  const showCost = !isJasa && !hidesPrices(pb.role);
+  const costOf = (itemId) => landedUnitCost(po, itemId, companySettings, r);
+  const costHint = (c) => {
+    const bagian = [`DPP ${rupiah(Math.round(c.dpp))}`];
+    if (c.vat) bagian.push(`PPN ${rupiah(Math.round(c.vat))}`);
+    if (c.freight) bagian.push(`ongkir ${rupiah(Math.round(c.freight))}`);
+    return bagian.join(' + ');
+  };
   const open = uninvoicedLines(r, pb.invoices).length > 0;
   // BAPP jasa disetujui Atasan dulu (spesifikasi 2.2) sebelum Accounting bisa memfakturkan.
   // Approval BAPP berjenjang dua: Chief Finance lalu Building Manager.
@@ -144,6 +157,7 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
                       <Table.Th ta="right">Diterima</Table.Th>
                       <Table.Th ta="right">Ditolak</Table.Th>
                       <Table.Th ta="right">Difaktur</Table.Th>
+                      {showCost && <Table.Th ta="right">Harga perolehan</Table.Th>}
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -156,6 +170,15 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
                           <Table.Td ta="right" fz="sm" fw={700}>{l.qty} {it?.unit}</Table.Td>
                           <Table.Td ta="right" fz="sm" c={l.rejected ? 'red.7' : undefined}>{l.rejected || 0}</Table.Td>
                           <Table.Td ta="right" fz="sm">{invoicedQty(r.id, l.itemId, pb.invoices)}</Table.Td>
+                          {showCost && (
+                            <Table.Td ta="right" fz="sm">
+                              <Tooltip label={costHint(costOf(l.itemId))} withArrow fz="xs">
+                                <Text fz="sm" fw={600} style={{ cursor: 'help' }}>
+                                  {rupiah(Math.round(costOf(l.itemId).total))}
+                                </Text>
+                              </Tooltip>
+                            </Table.Td>
+                          )}
                         </Table.Tr>
                       );
                     })}

@@ -20,11 +20,12 @@ import NumberField from '@/components/NumberField.jsx';
 import DateField from '@/components/DateField.jsx';
 import { FormModal, blockedProps } from '@/components/common.jsx';
 import { ArrowsLeftRight, Plus, Trash, Warning } from '@/components/Icon.jsx';
-import { BackLink, Callout, DataTable, Section } from '@/pages/Pembelian/components.jsx';
+import { BackLink, Callout, DataTable, FormActions, Section } from '@/pages/Pembelian/components.jsx';
 import { unitName } from '@/pages/Produk/catalog.js';
 import { periodLocked } from '@/pages/Penjualan/data.js';
 import { formatDate } from '@/pages/Pembelian/utils.js';
 import { canIssue, getBalance } from './stock.js';
+import { runningOpnameOf } from './opname.js';
 
 const number = new Intl.NumberFormat('id-ID');
 // "2026-09-14" → "Sep 2026"
@@ -36,7 +37,17 @@ export default function TransferForm({ data, preset, onCancel, onSave }) {
     () => data.warehouses.filter((w) => w.status === 'active'),
     [data.warehouses],
   );
-  const options = aktif.map((w) => ({ value: w.id, label: `${w.code} · ${w.name}` }));
+  // Gudang yang sedang diopname dibekukan (O4): tetap terlihat, tapi tidak bisa
+  // dipilih — asal maupun tujuan.
+  const opnameOf = (id) => runningOpnameOf(data.opnames, id);
+  const options = aktif.map((w) => {
+    const o = opnameOf(w.id);
+    return {
+      value: w.id,
+      label: `${w.code} · ${w.name}${o ? ` — Sedang diopname (${o.number})` : ''}`,
+      disabled: !!o,
+    };
+  });
 
   const [date, setDate] = useState(data.today);
   const [from, setFrom] = useState(preset.fromWarehouseId ?? null);
@@ -101,8 +112,17 @@ export default function TransferForm({ data, preset, onCancel, onSave }) {
       (periodLocked(date) && `Periode ${monthLabel(date)} sudah dikunci`) ||
       (date > data.today && 'Tanggal tidak boleh melewati hari ini') ||
       null,
-    from: !from ? 'Pilih gudang asal' : null,
-    to: !to ? 'Pilih gudang tujuan' : to === from ? 'Gudang tujuan harus berbeda dari gudang asal' : null,
+    from:
+      (!from && 'Pilih gudang asal') ||
+      (opnameOf(from) &&
+        `${aktif.find((w) => w.id === from)?.name} sedang diopname (${opnameOf(from).number}). Selesaikan atau batalkan opname dulu`) ||
+      null,
+    to:
+      (!to && 'Pilih gudang tujuan') ||
+      (to === from && 'Gudang tujuan harus berbeda dari gudang asal') ||
+      (opnameOf(to) &&
+        `${aktif.find((w) => w.id === to)?.name} sedang diopname (${opnameOf(to).number}). Selesaikan atau batalkan opname dulu`) ||
+      null,
     lines:
       (!lines.length && 'Tambahkan minimal satu produk') ||
       (lines.every((l) => !l.productId) && 'Pilih produk yang akan dipindah') ||
@@ -291,23 +311,11 @@ export default function TransferForm({ data, preset, onCancel, onSave }) {
         )}
       </Section>
 
-      <Group justify="flex-end" gap="sm">
-        {submitted && blocked && (
-          <Text fz="xs" c="red.7" mr="auto">
-            {blocked}
-          </Text>
-        )}
-        <Button variant="default" radius="md" onClick={onCancel}>
-          Batal
-        </Button>
-        <Button
-          radius="md"
-          onClick={submit}
-          {...blockedProps(blocked, () => setSubmitted(true))}
-        >
+      <FormActions error={submitted ? blocked : null} onCancel={onCancel}>
+        <Button radius="md" onClick={submit} {...blockedProps(blocked, () => setSubmitted(true))}>
           Simpan
         </Button>
-      </Group>
+      </FormActions>
 
       <FormModal
         opened={!!confirmReset}

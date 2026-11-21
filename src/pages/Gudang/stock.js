@@ -71,6 +71,29 @@ export const stockMovesSeed = [
   mv('mv-17', '2026-11-02', 'PDH/2026/11/0001', 'transfer_out', 'kertas-a4', 'wh-1', 10, 0, { sourceType: 'stock_transfer', sourceId: 'tr-0001' }),
   mv('mv-18', '2026-11-02', 'PDH/2026/11/0001', 'transfer_in', 'kertas-a4', 'wh-2', 10, 56000, { sourceType: 'stock_transfer', sourceId: 'tr-0001' }),
   mv('mv-19', '2026-11-03', 'FPB/2026/11/0002', 'receipt', 'tinta-printer', 'wh-1', 9, 185000, { sourceType: 'goods_receipt', sourceId: 'gr-2' }),
+  // FPB/2026/11/0003: ongkir dikapitalisasi, jadi harga perolehannya di atas
+  // harga PO. Rinciannya dibawa di costBreakdown supaya bisa ditelusuri ulang
+  // walau kebijakan ongkirnya nanti diubah.
+  mv('mv-20', '2026-11-03', 'FPB/2026/11/0003', 'receipt', 'map-plastik', 'wh-1', 100, 3850, {
+    sourceType: 'goods_receipt',
+    sourceId: 'fpb-0045',
+    costBreakdown: { dpp: 3500, freight: 350, vat: 0, vatRate: 0.11, freightCapitalized: true },
+  }),
+  mv('mv-21', '2026-11-03', 'FPB/2026/11/0003', 'receipt', 'kertas-a4', 'wh-1', 10, 61600, {
+    sourceType: 'goods_receipt',
+    sourceId: 'fpb-0045',
+    costBreakdown: { dpp: 56000, freight: 5600, vat: 0, vatRate: 0.11, freightCapitalized: true },
+  }),
+  // Retur dinilai pada harga perolehan FPB di atas (Rp 3.850), bukan rata-rata
+  // bergerak Map plastik pada tanggal itu.
+  mv('mv-22', '2026-11-04', 'RTR/2026/11/0001', 'purchase_return', 'map-plastik', 'wh-1', 20, 3850, {
+    sourceType: 'purchase_return',
+    sourceId: 'rtr-0001',
+    sourceReceiptMoveId: 'mv-20',
+    costBreakdown: { dpp: 3500, freight: 350, vat: 0, vatRate: 0.11, freightCapitalized: true },
+    billed: true,
+    freightRefunded: false,
+  }),
 ];
 
 /**
@@ -135,10 +158,6 @@ export const stockMinimumsSeed = [
   { productId: 'kain-pel', warehouseId: 'wh-4', minQty: 0 },
 ];
 
-export const stockOpnamesSeed = [
-  { id: 'so-1', number: 'SO/2026/11/003', warehouseId: 'wh-1', date: '2026-11-03', status: 'berjalan' },
-];
-
 // ---------------------------------------------------------------------------
 // Urutan (M7): tanggal dokumen, lalu waktu posting
 // ---------------------------------------------------------------------------
@@ -176,21 +195,38 @@ export function productLedger(moves, productId) {
   let value = 0;
   return sortMoves(moves.filter((m) => m.productId === productId)).map((move) => {
     let unitCost = Number(move.unitCost) || 0;
+    let residual = 0;
     if (move.qtyOut > 0) {
-      // Harga keluar = rata-rata saat mutasi itu terjadi (M6).
-      unitCost = qty > 0 ? value / qty : unitCost;
+      // Retur pembelian dinilai dengan harga perolehan dari penerimaan aslinya,
+      // bukan harga rata-rata: yang dikembalikan ke vendor adalah barang yang itu,
+      // dengan harga yang itu. Kalau dipaksa memakai rata-rata, nilai persediaan
+      // yang dikurangi tidak sama dengan tagihan yang dikurangi, dan selisihnya
+      // tidak tercatat di mana pun.
+      if (move.type !== 'purchase_return') {
+        unitCost = qty > 0 ? value / qty : unitCost;
+      }
       qty -= move.qtyOut;
       value -= move.qtyOut * unitCost;
     } else {
       qty += move.qtyIn;
       value += move.qtyIn * unitCost;
     }
-    // Jaga-jaga pembulatan: saldo nol berarti nilainya nol.
     if (qty <= 0) {
       qty = Math.max(0, qty);
-      value = qty === 0 ? 0 : value;
+      // Qty habis tapi nilainya belum nol — biasanya sisa pembulatan atau akibat
+      // retur berharga asli. Sisanya DIKELUARKAN sebagai residual supaya bisa
+      // dijurnal ke akun selisih, bukan dinolkan diam-diam.
+      if (qty === 0 && Math.abs(value) >= 0.5) residual = value;
+      if (qty === 0) value = 0;
     }
-    return { move, unitCost, avg: qty > 0 ? value / qty : unitCost, qtyAll: qty, valueAll: value };
+    return {
+      move,
+      unitCost,
+      residual,
+      avg: qty > 0 ? value / qty : unitCost,
+      qtyAll: qty,
+      valueAll: value,
+    };
   });
 }
 
@@ -337,6 +373,19 @@ export const sumValue = (rows) => rows.reduce((n, r) => n + r.value, 0);
 // ---------------------------------------------------------------------------
 
 /** Riwayat mutasi terurut terbaru dulu, dengan harga & nilai per baris. */
+/**
+ * Rincian harga perolehan satu mutasi sebagai teks, mis.
+ * "DPP Rp 3.500 + ongkir Rp 350". Dipakai tooltip kolom harga.
+ */
+export function costBreakdownLabel(move, rupiah) {
+  const cb = move?.costBreakdown;
+  if (!cb) return null;
+  const parts = [`DPP ${rupiah(Math.round(cb.dpp))}`];
+  if (cb.vat) parts.push(`PPN ${rupiah(Math.round(cb.vat))}`);
+  if (cb.freight && cb.freightCapitalized) parts.push(`ongkir ${rupiah(Math.round(cb.freight))}`);
+  return parts.length > 1 ? parts.join(' + ') : null;
+}
+
 export function listMoves(moves, filter = {}) {
   const { warehouseId = 'all', productId = null, types = [], from, to, query = '' } = filter;
   const q = query.trim().toLowerCase();
@@ -345,6 +394,7 @@ export function listMoves(moves, filter = {}) {
   [...new Set(moves.map((m) => m.productId))].forEach((id) => {
     productLedger(moves, id).forEach((r) => priced.set(r.move.id, r));
   });
+  const rowOf = (m) => priced.get(m.id);
   return sortMovesDesc(
     moves.filter(
       (m) =>
@@ -357,8 +407,10 @@ export function listMoves(moves, filter = {}) {
     ),
   ).map((m) => ({
     ...m,
-    unit: priced.get(m.id)?.unitCost ?? m.unitCost ?? 0,
-    amount: (m.qtyIn + m.qtyOut) * (priced.get(m.id)?.unitCost ?? m.unitCost ?? 0),
+    unit: rowOf(m)?.unitCost ?? m.unitCost ?? 0,
+    amount: (m.qtyIn + m.qtyOut) * (rowOf(m)?.unitCost ?? m.unitCost ?? 0),
+    // Sisa nilai saat qty produk habis (H15) ikut dibawa supaya jurnalnya lengkap.
+    residual: rowOf(m)?.residual ?? 0,
   }));
 }
 
@@ -369,23 +421,28 @@ export function listMoves(moves, filter = {}) {
 export function getStockCard(moves, productId, warehouseId = 'all', from, to) {
   const ledger = productLedger(moves, productId);
   let qty = 0;
-  let value = 0;
+  let avg = 0;
   const rows = [];
   let opening = { qty: 0, value: 0 };
 
   ledger.forEach((r) => {
     const m = r.move;
-    if (!inScope(m, warehouseId)) return;
     if (to && m.date > to) return;
-    const masuk = m.qtyIn > 0;
-    qty += m.qtyIn - m.qtyOut;
-    value += (masuk ? m.qtyIn : -m.qtyOut) * r.unitCost;
-    if (qty <= 0) value = qty === 0 ? 0 : value;
+    // Rata-rata tertimbang digabung lintas gudang (M6), jadi mutasi di gudang
+    // LAIN pun mengubah harga yang dipakai menilai saldo gudang ini. Karena itu
+    // baris di luar lingkup tetap dilewati untuk memperbarui rata-ratanya,
+    // hanya qty-nya yang tidak ikut.
+    avg = r.avg;
+    if (inScope(m, warehouseId)) qty += m.qtyIn - m.qtyOut;
+    // Nilai saldo = qty × rata-rata saat itu, bukan akumulasi harga tiap mutasi.
+    // Kalau diakumulasi, angkanya menyimpang dari Saldo stok dan detail gudang
+    // yang memang menghitungnya sebagai qty × rata-rata.
     if (from && m.date < from) {
-      opening = { qty, value };
+      opening = { qty, value: qty * avg };
       return;
     }
-    rows.push({ ...m, unitCost: r.unitCost, avg: r.avg, saldoQty: qty, saldoValue: value });
+    if (!inScope(m, warehouseId)) return;
+    rows.push({ ...m, unitCost: r.unitCost, avg, saldoQty: qty, saldoValue: qty * avg });
   });
 
   // Pada lingkup "semua gudang", pindah antar gudang hanya memutar barang yang sama
@@ -394,7 +451,7 @@ export function getStockCard(moves, productId, warehouseId = 'all', from, to) {
   return {
     opening,
     rows,
-    closing: { qty, value },
+    closing: { qty, value: qty * avg },
     masuk: rows.reduce((n, r) => (internal(r) ? n : n + r.qtyIn), 0),
     keluar: rows.reduce((n, r) => (internal(r) ? n : n + r.qtyOut), 0),
   };
@@ -425,6 +482,9 @@ export const buildMove = ({
   sourceNo,
   createdBy = 'Pengguna',
   reversalOfId = null,
+  // Rincian harga perolehan per unit dan konteks retur. Disimpan di mutasinya
+  // supaya jurnal tidak perlu membaca ulang dokumen sumbernya.
+  ...extra
 }) => {
   const masuk = MOVE_TYPE[type].dir === 'in';
   return {
@@ -442,6 +502,7 @@ export const buildMove = ({
     sourceNo,
     createdBy,
     ...(reversalOfId ? { reversalOfId } : null),
+    ...extra,
   };
 };
 
@@ -491,6 +552,3 @@ const FLIP = {
 function flip(type) {
   return FLIP[type] ?? type;
 }
-
-export const runningOpnameOf = (opnames, warehouseId) =>
-  opnames.find((o) => o.warehouseId === warehouseId && o.status === 'berjalan') ?? null;

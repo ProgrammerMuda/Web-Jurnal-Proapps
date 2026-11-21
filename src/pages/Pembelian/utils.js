@@ -790,8 +790,15 @@ export function buildPOs(f, pos, vendors) {
     // Ada serah terima atau tidak — disepakati di penawaran, lalu dibawa ke PO/SPK.
     // Penawaran lama tanpa kolom ini dianggap memakai serah terima, seperti sebelumnya.
     withReceipt: g.q?.withReceipt !== false,
+    // Ongkir yang ditagih vendor ikut ke PO: ia bagian dari harga perolehan barang,
+    // jadi harus tersimpan di dokumen yang kelak menghasilkan mutasi stok.
+    shipping: f.procurement?.shipping?.[g.vendorId] ?? 0,
   }));
 }
+
+// Harga perolehan persediaan ada di landedCost.js (modul murni, tanpa ketergantungan
+// dokumen) dan di-ekspor ulang dari sini supaya pemanggil lama tetap jalan.
+export { freightOf, freightShare, landedUnitCost, totalFreight } from './landedCost.js';
 
 // --- Rekening vendor ---------------------------------------------------------------------------
 // Data lama menyimpan rekening sebagai satu string ("BCA 123-456-7890"); sekarang terpisah
@@ -911,6 +918,7 @@ export function createPOs(f, pb) {
       // Gudang tujuan diwarisi dari lokasi kirim pada permintaannya; bila permintaan
       // belum menyebutkannya, dipakai gudang utama. SPK (semua jasa) tidak mengirim
       // barang ke gudang, jadi dikosongkan.
+      shipping: b.shipping ?? 0,
       warehouseId: poAllJasa({ items: b.items })
         ? null
         : (f.warehouseId ?? defaultWarehouseId(pb.warehouses ?? [])),
