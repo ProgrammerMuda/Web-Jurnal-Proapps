@@ -28,6 +28,7 @@ import {
   MagnifyingGlass,
   Package,
   Plus,
+  DownloadSimple,
   Printer,
   Prohibit,
   Scales,
@@ -48,6 +49,7 @@ import { formatDate } from '@/pages/Pembelian/utils.js';
 import { rupiah } from '@/pages/Penjualan/utils.js';
 import { unitName } from '@/pages/Produk/catalog.js';
 import { accountLabel } from './journal.js';
+import { downloadOpname } from './opnamePdf.js';
 import { picName } from './data.js';
 import {
   OPNAME_ACTION,
@@ -117,22 +119,24 @@ function DiffStat({ label, qty, value, color, showValue }) {
 
 
 /**
- * Yang dicetak bukan halaman apa adanya. Lembar hitung sengaja TIDAK memuat
- * saldo buku — kalau tercetak, hitungannya berhenti jujur (prinsip blind count),
+ * Lembar hitung yang dicetak lewat printer, bukan halaman apa adanya. Sengaja TIDAK
+ * memuat saldo buku — kalau tercetak, hitungannya berhenti jujur (prinsip blind count),
  * dan itu berlaku juga ketika Accounting yang menekan tombol cetaknya.
+ *
+ * Berita acaranya tidak di sini: dokumen itu untuk diarsipkan, jadi dibuat sebagai PDF
+ * dengan kerangka yang sama dengan dokumen pembelian — lihat opnamePdf.js.
  */
-function PrintSheet({ opname, data, summary, accountMap, berita }) {
+function PrintSheet({ opname, data }) {
   const warehouse = data.warehouses.find((w) => w.id === opname.warehouseId);
   const productOf = (id) => data.products.find((p) => p.id === id);
   const satuanOf = (id) => {
     const p = productOf(id);
     return unitName(data.units, p?.baseUnitId ?? p?.buyUnitId);
   };
-  const selisih = (opname.lines ?? []).filter((l) => isCounted(l) && diffQty(l) !== 0);
 
   return (
     <div className="print-sheet">
-      <h1>{berita ? 'Berita Acara Stok Opname' : 'Lembar Hitung Stok Opname'}</h1>
+      <h1>Lembar Hitung Stok Opname</h1>
       <p className="meta">
         {opname.number} · {warehouse?.name ?? opname.warehouseId} · Tanggal hitung{' '}
         {formatDate(opname.date)}
@@ -141,109 +145,43 @@ function PrintSheet({ opname, data, summary, accountMap, berita }) {
         Petugas hitung: {picName(opname.counterUserId) ?? '—'} · Dibuat oleh: {opname.createdBy}
       </p>
 
-      {berita ? (
-        <>
-          <table>
-            <thead>
-              <tr>
-                <th>Produk</th>
-                <th className="num">Saldo buku</th>
-                <th className="num">Qty hitung</th>
-                <th className="num">Selisih</th>
-                <th className="num">Nilai</th>
-                <th>Alasan</th>
-                <th>Akun</th>
-              </tr>
-            </thead>
-            <tbody>
-              {selisih.length === 0 ? (
-                <tr>
-                  <td colSpan={7}>Tidak ada selisih. Seluruh hitungan cocok dengan saldo buku.</td>
-                </tr>
-              ) : (
-                selisih.map((l) => (
-                  <tr key={l.productId}>
-                    <td>{productOf(l.productId)?.name ?? l.productId}</td>
-                    <td className="num">{number.format(l.bookQty)}</td>
-                    <td className="num">{number.format(l.countedQty)}</td>
-                    <td className="num">
-                      {diffQty(l) > 0 ? `+${number.format(diffQty(l))}` : number.format(diffQty(l))}
-                    </td>
-                    <td className="num">{rupiah(Math.round(diffValue(l)))}</td>
-                    <td>
-                      {reasonLabel(l.reason)}
-                      {l.note ? ` — ${l.note}` : ''}
-                    </td>
-                    <td>{accountLabel(accountOfLine(l, opname, accountMap))}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-          <p className="meta" style={{ marginTop: 10 }}>
-            Produk dihitung: {number.format(summary.counted)} dari {number.format(summary.total)} ·
-            Lebih {number.format(summary.gainQty)} unit ({rupiah(Math.round(summary.gainValue))}) ·
-            Kurang {number.format(summary.lossQty)} unit ({rupiah(Math.round(summary.lossValue))}) ·
-            Net {rupiah(Math.round(summary.netValue))}
-          </p>
-          <div className="sign">
-            <div>
-              Petugas Hitung
-              <div className="line">{picName(opname.counterUserId) ?? ''}</div>
-            </div>
-            <div>
-              Accounting
-              <div className="line">{opname.createdBy}</div>
-            </div>
-            <div>
-              Building Manager
-              <div className="line">
-                {(opname.history ?? []).find((h) => h.action === 'approved')?.by ?? ''}
-              </div>
-            </div>
-          </div>
-        </>
-      ) : (
-        <>
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: 32 }}>No</th>
-                <th>Produk</th>
-                <th>SKU</th>
-                <th>Satuan</th>
-                <th style={{ width: 110 }}>Qty hitung</th>
-                <th style={{ width: 90 }}>Paraf</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(opname.lines ?? []).map((l, i) => (
-                <tr key={l.productId}>
-                  <td className="num">{i + 1}</td>
-                  <td>{productOf(l.productId)?.name ?? l.productId}</td>
-                  <td>{productOf(l.productId)?.sku ?? ''}</td>
-                  <td>{satuanOf(l.productId)}</td>
-                  <td className="blank" />
-                  <td className="blank" />
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="meta" style={{ marginTop: 10 }}>
-            Isi qty hasil hitungan fisik. Barang yang memang tidak ada ditulis 0, bukan dikosongkan.
-          </p>
-          <div className="sign">
-            <div>
-              Petugas Hitung
-              <div className="line">{picName(opname.counterUserId) ?? ''}</div>
-            </div>
-            <div>
-              Saksi
-              <div className="line" />
-            </div>
-          </div>
-        </>
-      )}
+      <table>
+        <thead>
+          <tr>
+            <th style={{ width: 32 }}>No</th>
+            <th>Produk</th>
+            <th>SKU</th>
+            <th>Satuan</th>
+            <th style={{ width: 110 }}>Qty hitung</th>
+            <th style={{ width: 90 }}>Paraf</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(opname.lines ?? []).map((l, i) => (
+            <tr key={l.productId}>
+              <td className="num">{i + 1}</td>
+              <td>{productOf(l.productId)?.name ?? l.productId}</td>
+              <td>{productOf(l.productId)?.sku ?? ''}</td>
+              <td>{satuanOf(l.productId)}</td>
+              <td className="blank" />
+              <td className="blank" />
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="meta" style={{ marginTop: 10 }}>
+        Isi qty hasil hitungan fisik. Barang yang memang tidak ada ditulis 0, bukan dikosongkan.
+      </p>
+      <div className="sign">
+        <div>
+          Petugas Hitung
+          <div className="line">{picName(opname.counterUserId) ?? ''}</div>
+        </div>
+        <div>
+          Saksi
+          <div className="line" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -368,14 +306,9 @@ export default function OpnameDetail({
     <Stack gap="lg" p="lg" maw={1440} mx="auto">
       <BackLink label="Kembali ke stok opname" onClick={onBack} />
 
-      {/* Hanya muncul saat dicetak; lihat .print-sheet di index.css. */}
-      <PrintSheet
-        opname={opname}
-        data={data}
-        summary={s}
-        accountMap={accountMap}
-        berita={posted}
-      />
+      {/* Hanya muncul saat dicetak; lihat .print-sheet di index.css. Dokumen yang sudah
+          diposting tidak lagi butuh lembar hitung — buktinya berita acara PDF. */}
+      {!posted && <PrintSheet opname={opname} data={data} />}
 
       <Card withBorder radius="lg" padding="lg" bg="white">
         <Group justify="space-between" align="flex-start" gap="md" wrap="wrap">
@@ -401,13 +334,26 @@ export default function OpnameDetail({
           </Group>
 
           <Group gap="xs">
+            {/* Dua keluaran yang berbeda sifatnya: lembar hitung diisi tangan di gudang
+                jadi langsung ke printer, berita acara diarsipkan jadi diunduh sebagai PDF. */}
             <Button
               variant="default"
               radius="md"
-              leftSection={<Printer size={16} />}
-              onClick={() => window.print()}
+              leftSection={posted ? <DownloadSimple size={16} /> : <Printer size={16} />}
+              onClick={
+                posted
+                  ? () =>
+                      downloadOpname(opname, {
+                        warehouse,
+                        products: data.products,
+                        units: data.units,
+                        accountMap,
+                        scope: scopeLabel(opname, data),
+                      })
+                  : () => window.print()
+              }
             >
-              {posted ? 'Cetak berita acara' : 'Cetak lembar hitung'}
+              {posted ? 'Unduh berita acara' : 'Cetak lembar hitung'}
             </Button>
             {draft && canReview && (
               <Button radius="md" leftSection={<Check size={16} />} onClick={onStart}>
