@@ -1730,6 +1730,19 @@ export function SendPoModal({ opened, onClose, po, pb, onConfirm }) {
 // --- Detail penawaran vendor ----------------------------------------------------------------------
 // Menggantikan accordion di tabel penawaran: rincian per item plus keterangan yang tidak muat
 // di tabel (masa berlaku, deskripsi, berkas) dikumpulkan di satu tempat.
+// Satu kelompok keterangan sebagai kartu: judul di kepala berlatar abu, isinya di badan.
+// Bentuknya sama dengan tabel di modal ini, jadi keduanya terbaca sebagai satu bahasa.
+function InfoCard({ title, children }) {
+  return (
+    <Box style={tableFrame}>
+      <Box px="md" py={8} bg="slate.0" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
+        <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }}>{title}</Text>
+      </Box>
+      <Box px="md" py="sm">{children}</Box>
+    </Box>
+  );
+}
+
 // Satu keterangan dengan baris kedua opsional — mis. nama termin lalu jatuh temponya.
 // Tidak memakai Field karena nilainya perlu dua baris terpisah, bukan satu paragraf.
 function Pair({ label, value, sub }) {
@@ -1745,7 +1758,6 @@ function Pair({ label, value, sub }) {
 export function QuoteDetailModal({ opened, onClose, quote: q, fppbj, pb }) {
   if (!q || !fppbj) return null;
   const name = pb.vendorsById[q.vendorId]?.name ?? q.vendorId;
-  const nPo = pb.pos.filter((p) => p.vendorId === q.vendorId).length;
   const t = quoteTotals(q, fppbj.items);
   const isJasa = poAllJasa(fppbj);
   // Nama termin dan mekanismenya (jatuh tempo, retensi, jumlah termin) dipisah:
@@ -1764,17 +1776,15 @@ export function QuoteDetailModal({ opened, onClose, quote: q, fppbj, pb }) {
       <Stack gap="md">
         {/* Dua kelompok terpisah: siapa & kapan penawarannya, lalu syarat yang disanggupi.
             Total penawaran tidak diulang di sini — angkanya ada di kaki tabel harga. */}
-        <Box>
-          <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mb={8}>Penawaran</Text>
+        <InfoCard title="Penawaran">
           <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md" verticalSpacing="sm">
-            <Pair label="Vendor" value={name} sub={nPo > 0 ? `Vendor lama · ${nPo} PO` : 'Vendor baru'} />
+            <Pair label="Vendor" value={name} />
             <Pair label="No. penawaran" value={q.no} />
             <Pair label="Berlaku sampai" value={q.validUntil ? formatDate(q.validUntil) : '—'} />
           </SimpleGrid>
-        </Box>
+        </InfoCard>
 
-        <Box>
-          <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mb={8}>Ketentuan</Text>
+        <InfoCard title="Ketentuan">
           <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md" verticalSpacing="sm">
             {/* Nama termin di baris pertama; jatuh tempo dan rincian lain di baris keduanya,
                 bukan disambung jadi satu kalimat panjang. */}
@@ -1782,7 +1792,7 @@ export function QuoteDetailModal({ opened, onClose, quote: q, fppbj, pb }) {
             <Pair label={isJasa ? 'Waktu pengerjaan' : 'Waktu kirim'} value={`${q.lead} hari`} />
             <Pair label="Garansi" value={q.warranty || '—'} />
           </SimpleGrid>
-        </Box>
+        </InfoCard>
 
         {q.desc?.trim() && (
           <Box>
