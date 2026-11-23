@@ -21,6 +21,7 @@ import {
   offerPrice,
   PROC_STATUS,
   quoteLine,
+  quoteDiscountLabel,
   proofFiles,
   quotesAllItems,
   rupiah,
@@ -271,7 +272,14 @@ export default function BiddingForm({ f, role, patchProc, onSubmit, onApprove, o
                       <Table.Td colSpan={3} fz="sm" fw={700} c="slate.9">Total penawaran</Table.Td>
                       <Table.Td ta="right" fz="sm" fw={700} c={low ? 'green.8' : 'slate.9'}>
                         {rupiah(t.total)}
-                        <Text fz={10} c="slate.6" fw={400} style={{ whiteSpace: 'nowrap' }}>DPP {rupiah(t.dpp)} · PPN {rupiah(t.ppn)}</Text>
+                        <Text fz={10} c="slate.6" fw={400} style={{ whiteSpace: 'nowrap' }}>
+                          {[
+                            `DPP ${rupiah(t.dpp)}`,
+                            `PPN ${rupiah(t.ppn)}`,
+                            t.disc > 0 && `diskon ${quoteDiscountLabel(x)} (-${rupiah(t.disc)})`,
+                            t.ship > 0 && `ongkir ${rupiah(t.ship)}`,
+                          ].filter(Boolean).join(' · ')}
+                        </Text>
                       </Table.Td>
                       <Table.Td />
                       <Table.Td ta="right" fz={11} fw={700} c={!covers || low ? 'slate.5' : 'red.7'}>

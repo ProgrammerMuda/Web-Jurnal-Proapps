@@ -3,9 +3,10 @@ import { periodOptions, personLabel, RULES, TODAY } from './data.js';
 import { defaultWarehouseId } from '@/pages/Gudang/data.js';
 import { dueFromLabel, termFields, termMechanics } from './paymentTerms.js';
 
-import { addDays, formatDate } from '@/pages/Penjualan/utils.js';
+import { addDays, formatDate, rupiah } from '@/pages/Penjualan/utils.js';
 
-export { rupiah, rupiahShort } from '@/pages/Penjualan/utils.js';
+export { rupiahShort } from '@/pages/Penjualan/utils.js';
+export { rupiah };
 export { formatDate, addDays };
 
 export const sum = (arr, fn) => arr.reduce((n, x) => n + fn(x), 0);
@@ -373,6 +374,34 @@ export const quoteLine = (q, itemId) => q.lines.find((l) => l.itemId === itemId)
 export const quoteSum = (q, items) =>
   sum(q.lines, (l) => l.price * (items.find((i) => i.id === l.itemId)?.qty ?? 0));
 
+// Ongkos kirim yang ditagih vendor pada penawarannya. Opsional: penawaran tanpa
+// kolom ini (termasuk data lama) berarti ongkir sudah termasuk harga barang.
+export const quoteShipping = (q) => Math.max(0, Number(q?.shipping) || 0);
+// Diskon penawaran dalam rupiah. Disimpan sebagai { mode: 'rp' | 'pct', value }
+// supaya diskon persen ikut menyesuaikan kalau harga item dinegosiasi ulang.
+// Tidak pernah melebihi nilai dasarnya.
+export function quoteDiscount(q, base) {
+  const d = q?.discount;
+  const v = Number(d?.value) || 0;
+  if (!d || v <= 0 || base <= 0) return 0;
+  return Math.min(d.mode === 'pct' ? Math.round((base * Math.min(v, 100)) / 100) : Math.round(v), base);
+}
+// Cara diskon ditulis di layar, mis. "5%" atau "Rp250.000".
+export const quoteDiscountLabel = (q) => {
+  const d = q?.discount;
+  const v = Number(d?.value) || 0;
+  if (!d || v <= 0) return '';
+  return d.mode === 'pct' ? `${v}%`.replace('.', ',') : rupiah(v);
+};
+// Nilai penawaran apa adanya (sebelum negosiasi): harga item, dikurangi diskon,
+// ditambah ongkir. Dipakai tabel pembanding dan detail penawaran.
+export function quoteTotals(q, items) {
+  const base = sum(items, (it) => (quoteLine(q, it.id)?.price ?? 0) * it.qty);
+  const disc = quoteDiscount(q, base);
+  const ship = quoteShipping(q);
+  return { base, disc, ship, total: base - disc + ship };
+}
+
 // Pemenang per item. Pada jalur vendor tunggal, pemenangnya otomatis vendor pada penawaran pertama.
 export const winnerOf = (f, itemId) => f.procurement?.winners?.[itemId] ?? (f.single?.on ? f.quotes[0]?.vendorId : undefined);
 
@@ -658,9 +687,11 @@ export function vendorTotals(f, vendorId) {
       ppn += t.includes('ppn') ? b * RULES.ppn : 0;
     }
   }
-  const disc = Math.min(p.discounts?.[vendorId] ?? 0, base);
+  // Diskon dan ongkir datang dari penawaran vendor; angka hasil negosiasi di
+  // pengadaan (kalau ada) menimpanya.
+  const disc = Math.min(p.discounts?.[vendorId] ?? quoteDiscount(q, base), base);
   const r = base > 0 ? 1 - disc / base : 1;
-  const ship = p.shipping?.[vendorId] ?? 0;
+  const ship = p.shipping?.[vendorId] ?? quoteShipping(q);
   return { base, dpp: Math.round(dpp * r), disc, ppn: Math.round(ppn * r), ship, total: Math.round((dpp + ppn) * r) + ship };
 }
 // Nilai pengadaan menurut penawaran: total vendor pemenang, atau penawaran terendah bila
@@ -743,28 +774,22 @@ export function buildPOs(f, pos, vendors) {
   const p = f.procurement;
   const groups = {};
   const note = '';
-  // Diskon vendor (hasil negosiasi) dibagi rata ke semua harga itemnya agar total PO sama dengan form bidding.
+  // Diskon vendor dibagi rata ke semua harga itemnya agar total PO sama dengan form bidding.
+  // Sumbernya penawaran vendor, ditimpa angka hasil negosiasi bila pengadaan mengisinya.
+  // Berlaku untuk kedua jalur: vendor tunggal juga bisa menawarkan diskon.
+  const vendorOf = (it) => (f.route === 'bidding' ? winnerOf(f, it.id) : f.quotes[0]?.vendorId);
   const ratio = {};
-  if (f.route === 'bidding') {
-    for (const v of new Set(f.items.map((it) => winnerOf(f, it.id)))) {
-      const base = f.items.filter((it) => winnerOf(f, it.id) === v).reduce((n, it) => n + it.qty * offerPrice(f, v, it.id), 0);
-      const disc = Math.min(p.discounts?.[v] ?? 0, base);
-      ratio[v] = base > 0 ? 1 - disc / base : 1;
-    }
+  for (const v of new Set(f.items.map(vendorOf).filter(Boolean))) {
+    const qv = f.quotes.find((x) => x.vendorId === v);
+    const base = f.items.filter((it) => vendorOf(it) === v).reduce((n, it) => n + it.qty * offerPrice(f, v, it.id), 0);
+    const disc = Math.min(p.discounts?.[v] ?? quoteDiscount(qv, base), base);
+    ratio[v] = base > 0 ? 1 - disc / base : 1;
   }
   for (const it of f.items) {
-    let vendorId;
-    let price;
-    let q;
-    if (f.route === 'bidding') {
-      vendorId = winnerOf(f, it.id);
-      q = f.quotes.find((x) => x.vendorId === vendorId);
-      price = Math.round(offerPrice(f, vendorId, it.id) * (ratio[vendorId] ?? 1));
-    } else {
-      q = f.quotes[0];
-      vendorId = q.vendorId;
-      price = quoteLine(q, it.id).price;
-    }
+    const vendorId = vendorOf(it);
+    const q = f.quotes.find((x) => x.vendorId === vendorId);
+    // offerPrice memakai harga final hasil negosiasi bila ada, selain itu harga penawaran.
+    let price = Math.round(offerPrice(f, vendorId, it.id) * (ratio[vendorId] ?? 1));
     // Pajak per item mengikuti penawaran; harga "sudah termasuk PPN" diubah menjadi DPP agar total PO sama dengan penawaran.
     const taxes = lineTaxes(q, quoteLine(q, it.id));
     const incl = taxes.includes('ppn_incl');
@@ -792,7 +817,7 @@ export function buildPOs(f, pos, vendors) {
     withReceipt: g.q?.withReceipt !== false,
     // Ongkir yang ditagih vendor ikut ke PO: ia bagian dari harga perolehan barang,
     // jadi harus tersimpan di dokumen yang kelak menghasilkan mutasi stok.
-    shipping: f.procurement?.shipping?.[g.vendorId] ?? 0,
+    shipping: f.procurement?.shipping?.[g.vendorId] ?? quoteShipping(g.q),
   }));
 }
 

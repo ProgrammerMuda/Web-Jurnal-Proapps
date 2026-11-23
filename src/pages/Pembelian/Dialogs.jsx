@@ -6,6 +6,7 @@ import {
   Button,
   Group,
   Input,
+  SegmentedControl,
   SimpleGrid,
   Stack,
   Select,
@@ -46,6 +47,9 @@ import {
   poAllJasa,
   poDocLabel,
   proofFiles,
+  termParts,
+  quoteTotals,
+  quoteDiscountLabel,
   lineRate,
   lineTaxes,
   TAX_OPTIONS,
@@ -62,7 +66,6 @@ import {
   routeSwitchEffects,
   rupiah,
   uid,
-  termText,
   vendorCredit,
   vendorEmail,
 } from './utils.js';
@@ -162,6 +165,11 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
     period: editing?.term?.period ?? d0.period ?? 'bulan',
     periods: editing?.term?.periods ?? d0.periods ?? 12,
     lead: editing?.lead ?? '',
+    // Ongkir dan diskon sifatnya opsional: penawaran tanpa keduanya tetap sah.
+    // Diskon disimpan sebagai mode + nilai supaya diskon persen tetap persen.
+    shipping: editing?.shipping ?? 0,
+    discMode: editing?.discount?.mode ?? 'rp',
+    discValue: editing?.discount?.value ?? 0,
     // Apakah barang/jasanya melewati serah terima. Bawaannya ya — itu keadaan normal,
     // dan penawaran lama yang belum punya kolom ini memang berarti begitu.
     withReceipt: editing?.withReceipt ?? true,
@@ -203,7 +211,20 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
   const pctSum = Math.round(pcts.reduce((n, p) => n + (Number(p) || 0), 0) * 10) / 10;
   // Nilai yang dibagi ke termin: total penawaran dikurangi uang muka dan retensi.
   const quoteGross = fppbj.items.reduce((n, i) => n + i.qty * (lines[i.id]?.price || 0), 0);
-  const base = scheduleBase(quoteGross, buildTerm(f, spec));
+  // Diskon persen mengikuti subtotal; diskon rupiah dipakai apa adanya. Keduanya opsional.
+  const discRp =
+    Number(f.discValue) > 0
+      ? Math.min(
+          f.discMode === 'pct'
+            ? Math.round((quoteGross * Math.min(Number(f.discValue), 100)) / 100)
+            : Math.round(Number(f.discValue)),
+          quoteGross,
+        )
+      : 0;
+  const shipRp = Math.max(0, Number(f.shipping) || 0);
+  const quoteNet = quoteGross - discRp + shipRp;
+  // Termin dibagi dari nilai yang benar-benar ditagih vendor, jadi sesudah diskon dan ongkir.
+  const base = scheduleBase(quoteNet, buildTerm(f, spec));
   const setPct = (k, v) => setF((x) => ({ ...x, termPcts: x.termPcts.map((p, i) => (i === k ? Number(v) || 0 : p)) }));
 
   const usedVendors = fppbj.quotes.filter((q) => q.id !== editing?.id).map((q) => q.vendorId);
@@ -224,6 +245,12 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
     periods: needs('period') && !(f.periods >= 1) && 'Jumlah periode minimal 1',
     prices: fppbj.items.some((i) => !(lines[i.id].price > 0)) && 'Isi harga untuk semua item',
     specs: fppbj.items.some((i) => !lines[i.id].spec.trim()) && 'Isi spesifikasi yang ditawarkan untuk semua item',
+    disc:
+      f.discMode === 'rp' &&
+      Number(f.discValue) > 0 &&
+      quoteGross > 0 &&
+      Number(f.discValue) > quoteGross &&
+      'Diskon tidak boleh melebihi subtotal penawaran',
   };
   const invalid = Object.values(errors).some(Boolean);
   const submit = () => {
@@ -240,6 +267,9 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
       lead: Number(f.lead),
       warranty: f.warrantyValue > 0 ? `${f.warrantyValue} ${f.warrantyUnit}` : '',
       withReceipt: f.withReceipt,
+      // Keduanya opsional: 0 / null berarti vendor tidak menagih ongkir dan tidak memberi diskon.
+      shipping: shipRp,
+      discount: Number(f.discValue) > 0 ? { mode: f.discMode, value: Number(f.discValue) } : null,
       lines: fppbj.items.map((i) => ({
         itemId: i.id,
         ...lines[i.id],
@@ -354,6 +384,99 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
           })()}
         </Box>
         {sub && (errors.prices || errors.specs) && <Text fz="xs" c="red.7">{errors.prices || errors.specs}</Text>}
+
+        {/* Ongkir dan diskon sering ada di surat penawaran, tapi tidak selalu — keduanya
+            opsional. Dibiarkan 0 berarti harga barangnya sudah final. */}
+        <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mt="xs">Ongkir &amp; diskon (opsional)</Text>
+        <Box style={tableFrame} p="sm">
+          <Stack gap="sm">
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+              <NumberField
+                label="Ongkos kirim"
+                size="sm"
+                radius="md"
+                money
+                prefix="Rp "
+                placeholder="0"
+                description="Biaya kirim yang ditagih vendor. Ikut jadi harga perolehan barang."
+                value={f.shipping}
+                onChange={(v) => set({ shipping: Number(v) || 0 })}
+              />
+              <Box>
+                <Input.Wrapper
+                  label="Diskon"
+                  size="sm"
+                  description="Potongan dari vendor, dalam rupiah atau persen dari subtotal."
+                  error={sub && errors.disc}
+                >
+                  <Group gap="xs" wrap="nowrap" mt={4}>
+                    <SegmentedControl
+                      size="xs"
+                      radius="md"
+                      data={[{ value: 'rp', label: 'Rp' }, { value: 'pct', label: '%' }]}
+                      value={f.discMode}
+                      onChange={(v) => set({ discMode: v })}
+                      aria-label="Satuan diskon"
+                    />
+                    <Box style={{ flex: 1, minWidth: 0 }}>
+                      {f.discMode === 'pct' ? (
+                        <NumberField
+                          size="sm"
+                          radius="md"
+                          min={0}
+                          max={100}
+                          clampBehavior="strict"
+                          decimalScale={2}
+                          unit="%"
+                          placeholder="0"
+                          aria-label="Diskon persen"
+                          value={f.discValue}
+                          onChange={(v) => set({ discValue: Number(v) || 0 })}
+                        />
+                      ) : (
+                        <NumberField
+                          size="sm"
+                          radius="md"
+                          money
+                          prefix="Rp "
+                          placeholder="0"
+                          aria-label="Diskon rupiah"
+                          error={!!(sub && errors.disc)}
+                          value={f.discValue}
+                          onChange={(v) => set({ discValue: Number(v) || 0 })}
+                        />
+                      )}
+                    </Box>
+                  </Group>
+                </Input.Wrapper>
+              </Box>
+            </SimpleGrid>
+            {/* Ringkasan nilai penawaran, supaya pengaruh diskon dan ongkir langsung terlihat. */}
+            <Box style={{ borderTop: '1px solid var(--mantine-color-gray-2)', paddingTop: 8 }}>
+              <Group justify="space-between" gap="xs">
+                <Text fz="xs" c="slate.6">Subtotal item</Text>
+                <Text fz="xs" fw={600} c="slate.8">{rupiah(quoteGross)}</Text>
+              </Group>
+              {discRp > 0 && (
+                <Group justify="space-between" gap="xs" mt={2}>
+                  <Text fz="xs" c="slate.6">Diskon{f.discMode === 'pct' ? ` ${Number(f.discValue)}%`.replace('.', ',') : ''}</Text>
+                  <Text fz="xs" fw={600} c="green.8">-{rupiah(discRp)}</Text>
+                </Group>
+              )}
+              {shipRp > 0 && (
+                <Group justify="space-between" gap="xs" mt={2}>
+                  <Text fz="xs" c="slate.6">Ongkos kirim</Text>
+                  <Text fz="xs" fw={600} c="slate.8">{rupiah(shipRp)}</Text>
+                </Group>
+              )}
+              <Group justify="space-between" gap="xs" mt={4}>
+                <Text fz="xs" fw={700} c="slate.9">Nilai penawaran</Text>
+                <Text fz="sm" fw={700} c="slate.9">{rupiah(quoteNet)}</Text>
+              </Group>
+              <Text fz={10} c="slate.5" mt={2}>Belum termasuk PPN. Pajak dihitung per item di tabel harga.</Text>
+            </Box>
+          </Stack>
+        </Box>
 
         <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mt="xs">Ketentuan</Text>
         <>
@@ -1607,12 +1730,27 @@ export function SendPoModal({ opened, onClose, po, pb, onConfirm }) {
 // --- Detail penawaran vendor ----------------------------------------------------------------------
 // Menggantikan accordion di tabel penawaran: rincian per item plus keterangan yang tidak muat
 // di tabel (masa berlaku, deskripsi, berkas) dikumpulkan di satu tempat.
+// Satu keterangan dengan baris kedua opsional — mis. nama termin lalu jatuh temponya.
+// Tidak memakai Field karena nilainya perlu dua baris terpisah, bukan satu paragraf.
+function Pair({ label, value, sub }) {
+  return (
+    <Box style={{ minWidth: 0 }}>
+      <Text fz={11} c="slate.6">{label}</Text>
+      <Text fz="sm" fw={600} c="slate.9" lh={1.35} style={{ overflowWrap: 'anywhere' }}>{value}</Text>
+      {sub && <Text fz={11} c="slate.6" lh={1.35}>{sub}</Text>}
+    </Box>
+  );
+}
+
 export function QuoteDetailModal({ opened, onClose, quote: q, fppbj, pb }) {
   if (!q || !fppbj) return null;
   const name = pb.vendorsById[q.vendorId]?.name ?? q.vendorId;
   const nPo = pb.pos.filter((p) => p.vendorId === q.vendorId).length;
-  const total = fppbj.items.reduce((n, it) => n + (q.lines.find((l) => l.itemId === it.id)?.price ?? 0) * it.qty, 0);
+  const t = quoteTotals(q, fppbj.items);
   const isJasa = poAllJasa(fppbj);
+  // Nama termin dan mekanismenya (jatuh tempo, retensi, jumlah termin) dipisah:
+  // yang pertama identitas terminnya, yang kedua akibatnya pada penagihan.
+  const term = termParts(q.term);
   return (
     <FormModal
       opened={opened}
@@ -1624,26 +1762,37 @@ export function QuoteDetailModal({ opened, onClose, quote: q, fppbj, pb }) {
       footer={<Button radius="md" variant="default" onClick={onClose}>Tutup</Button>}
     >
       <Stack gap="md">
-        <SimpleGrid cols={{ base: 2, sm: 4 }}>
-          <Field label="Vendor">{name}</Field>
-          <Field label="Riwayat">{nPo > 0 ? `Vendor lama · ${nPo} PO` : 'Vendor baru'}</Field>
-          <Field label="No. penawaran">{q.no}</Field>
-          <Field label="Berlaku sampai">{q.validUntil ? formatDate(q.validUntil) : '—'}</Field>
-          <Field label="Termin bayar">{termText(q.term)}</Field>
-          <Field label={isJasa ? 'Waktu pengerjaan' : 'Waktu kirim'}>{q.lead} hari</Field>
-          <Field label="Garansi">{q.warranty || '—'}</Field>
-          <Field label="Total penawaran">{rupiah(total)}</Field>
-        </SimpleGrid>
+        {/* Dua kelompok terpisah: siapa & kapan penawarannya, lalu syarat yang disanggupi.
+            Total penawaran tidak diulang di sini — angkanya ada di kaki tabel harga. */}
+        <Box>
+          <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mb={8}>Penawaran</Text>
+          <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md" verticalSpacing="sm">
+            <Pair label="Vendor" value={name} sub={nPo > 0 ? `Vendor lama · ${nPo} PO` : 'Vendor baru'} />
+            <Pair label="No. penawaran" value={q.no} />
+            <Pair label="Berlaku sampai" value={q.validUntil ? formatDate(q.validUntil) : '—'} />
+          </SimpleGrid>
+        </Box>
+
+        <Box>
+          <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mb={8}>Ketentuan</Text>
+          <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md" verticalSpacing="sm">
+            {/* Nama termin di baris pertama; jatuh tempo dan rincian lain di baris keduanya,
+                bukan disambung jadi satu kalimat panjang. */}
+            <Pair label="Termin bayar" value={term.label} sub={term.detail} />
+            <Pair label={isJasa ? 'Waktu pengerjaan' : 'Waktu kirim'} value={`${q.lead} hari`} />
+            <Pair label="Garansi" value={q.warranty || '—'} />
+          </SimpleGrid>
+        </Box>
 
         {q.desc?.trim() && (
           <Box>
-            <Text fz={11} fw={600} c="slate.6" mb={4}>Keterangan vendor</Text>
+            <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mb={6}>Keterangan vendor</Text>
             <Text fz="sm" c="slate.8" style={{ whiteSpace: 'pre-wrap' }}>{q.desc}</Text>
           </Box>
         )}
 
         <Box>
-          <Text fz={11} fw={600} c="slate.6" mb={6}>Harga per item</Text>
+          <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mb={8}>Harga per item</Text>
           <Box style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 'var(--mantine-radius-md)', overflow: 'auto' }}>
             <Table verticalSpacing="xs" horizontalSpacing="sm" miw={560} styles={{ th: { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 600, color: 'var(--mantine-color-slate-7)', whiteSpace: 'nowrap' } }}>
               <Table.Thead bg="slate.0">
@@ -1661,7 +1810,8 @@ export function QuoteDetailModal({ opened, onClose, quote: q, fppbj, pb }) {
                     <Table.Tr key={it.id}>
                       <Table.Td>
                         <Text fz="sm" fw={600} c="slate.9">{it.desc}</Text>
-                        {l?.spec && <Text fz={11} c="slate.6">{l.spec}</Text>}
+                        {/* Spesifikasi hanya ditampilkan kalau memang diisi; tanda hubung bukan isi. */}
+                        {l?.spec?.trim() && l.spec.trim() !== '-' && <Text fz={11} c="slate.6">{l.spec.trim()}</Text>}
                       </Table.Td>
                       <Table.Td ta="right" fz="sm" style={{ whiteSpace: 'nowrap' }}>{it.qty} {it.unit}</Table.Td>
                       <Table.Td ta="right">
@@ -1678,13 +1828,36 @@ export function QuoteDetailModal({ opened, onClose, quote: q, fppbj, pb }) {
                     </Table.Tr>
                   );
                 })}
+                {/* Subtotal hanya perlu dipisahkan kalau ada diskon atau ongkir yang mengubahnya. */}
+                {(t.disc > 0 || t.ship > 0) && (
+                  <Table.Tr>
+                    <Table.Td colSpan={3} ta="right" fz="xs" c="slate.6">Subtotal item</Table.Td>
+                    <Table.Td ta="right" fz="sm" fw={600}>{rupiah(t.base)}</Table.Td>
+                  </Table.Tr>
+                )}
+                {t.disc > 0 && (
+                  <Table.Tr>
+                    <Table.Td colSpan={3} ta="right" fz="xs" c="slate.6">Diskon {quoteDiscountLabel(q)}</Table.Td>
+                    <Table.Td ta="right" fz="sm" fw={600} c="green.8">-{rupiah(t.disc)}</Table.Td>
+                  </Table.Tr>
+                )}
+                {t.ship > 0 && (
+                  <Table.Tr>
+                    <Table.Td colSpan={3} ta="right" fz="xs" c="slate.6">Ongkos kirim</Table.Td>
+                    <Table.Td ta="right" fz="sm" fw={600}>{rupiah(t.ship)}</Table.Td>
+                  </Table.Tr>
+                )}
+                <Table.Tr bg="slate.0">
+                  <Table.Td colSpan={3} ta="right" fz="sm" fw={700} c="slate.9">Total penawaran</Table.Td>
+                  <Table.Td ta="right" fz="sm" fw={700} c="slate.9">{rupiah(t.total)}</Table.Td>
+                </Table.Tr>
               </Table.Tbody>
             </Table>
           </Box>
         </Box>
 
         <Box>
-          <Text fz={11} fw={600} c="slate.6" mb={6}>Berkas penawaran</Text>
+          <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }} mb={8}>Berkas penawaran</Text>
           {q.file ? <AttachmentList names={[q.file]} label={`Penawaran ${name}`} /> : <Text fz="xs" c="slate.6">Tidak ada berkas dilampirkan.</Text>}
         </Box>
       </Stack>
@@ -1696,7 +1869,7 @@ export function QuoteDetailModal({ opened, onClose, quote: q, fppbj, pb }) {
 export function ConfirmDeleteQuoteModal({ opened, onClose, quote, fppbj, pb, onConfirm }) {
   if (!quote || !fppbj) return null;
   const name = pb.vendorsById[quote.vendorId]?.name ?? quote.vendorId;
-  const nilai = fppbj.items.reduce((n, it) => n + (quote.lines.find((l) => l.itemId === it.id)?.price ?? 0) * it.qty, 0);
+  const nilai = quoteTotals(quote, fppbj.items).total;
   const isWinner = Object.values(fppbj.procurement?.winners ?? {}).includes(quote.vendorId);
   const sisa = fppbj.quotes.length - 1;
   const perluLagi = Math.max(0, minQuotesFor(fppbj) - sisa);

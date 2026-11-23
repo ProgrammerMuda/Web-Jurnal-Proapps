@@ -28,6 +28,9 @@ import {
   procurementValue,
   PROC_STATUS,
   quoteLine,
+  quoteTotals,
+  quoteDiscountLabel,
+  vendorTotals,
   rupiah,
   termParts,
   termText,
@@ -304,6 +307,38 @@ export function SingleSection({ f, pb, role, patchProc, onAddQuote, onViewQuote,
             </Table.Tbody>
           </Table>
         </Box>
+        {/* Rekap nilai: harga final per item, lalu diskon dan ongkir dari penawaran vendor. */}
+        {(() => {
+          const t = vendorTotals(f, q.vendorId);
+          return (
+            <Box style={frame} px="md" py="sm">
+              <Group justify="space-between" gap="xs">
+                <Text fz="xs" c="slate.6">Subtotal item</Text>
+                <Text fz="xs" fw={600} c="slate.8">{rupiah(t.base)}</Text>
+              </Group>
+              {t.disc > 0 && (
+                <Group justify="space-between" gap="xs" mt={2}>
+                  <Text fz="xs" c="slate.6">Diskon {quoteDiscountLabel(q)}</Text>
+                  <Text fz="xs" fw={600} c="green.8">-{rupiah(t.disc)}</Text>
+                </Group>
+              )}
+              <Group justify="space-between" gap="xs" mt={2}>
+                <Text fz="xs" c="slate.6">PPN</Text>
+                <Text fz="xs" fw={600} c="slate.8">{rupiah(t.ppn)}</Text>
+              </Group>
+              {t.ship > 0 && (
+                <Group justify="space-between" gap="xs" mt={2}>
+                  <Text fz="xs" c="slate.6">Ongkos kirim</Text>
+                  <Text fz="xs" fw={600} c="slate.8">{rupiah(t.ship)}</Text>
+                </Group>
+              )}
+              <Group justify="space-between" gap="xs" mt={6} style={{ borderTop: '1px solid var(--mantine-color-gray-2)', paddingTop: 6 }}>
+                <Text fz="sm" fw={700} c="slate.9">Total</Text>
+                <Text fz="sm" fw={700} c="slate.9">{rupiah(t.total)}</Text>
+              </Group>
+            </Box>
+          );
+        })()}
         {readOnly ? (
           proc.negotiation?.trim() && (
             <Box>
@@ -374,8 +409,10 @@ export function BiddingSection({ f, pb, role, patchProc, onAddQuote, onViewQuote
               </Table.Thead>
               <Table.Tbody>
                 {f.quotes.map((q) => {
-                  const total = f.items.reduce((n, it) => n + (quoteLine(q, it.id)?.price ?? 0) * it.qty, 0);
-                  const lowest = f.quotes.length > 1 && total === Math.min(...f.quotes.map((x) => f.items.reduce((n, it) => n + (quoteLine(x, it.id)?.price ?? 0) * it.qty, 0)));
+                  // Nilai penawaran = harga item - diskon + ongkir, supaya pembanding "termurah" adil.
+                  const t = quoteTotals(q, f.items);
+                  const total = t.total;
+                  const lowest = f.quotes.length > 1 && total === Math.min(...f.quotes.map((x) => quoteTotals(x, f.items).total));
                   const nPo = pb ? pb.pos.filter((p) => p.vendorId === q.vendorId).length : 0;
                   return (
                     <Table.Tr key={q.id}>
@@ -396,6 +433,11 @@ export function BiddingSection({ f, pb, role, patchProc, onAddQuote, onViewQuote
                       <Table.Td fz="sm">{q.warranty || '—'}</Table.Td>
                       <Table.Td ta="right">
                         <Text fz="sm" fw={700} c={lowest ? 'green.8' : 'slate.9'}>{rupiah(total)}</Text>
+                        {(t.disc > 0 || t.ship > 0) && (
+                          <Text fz={10} c="slate.6" fw={500}>
+                            {[t.disc > 0 && `diskon ${quoteDiscountLabel(q)}`, t.ship > 0 && `ongkir ${rupiah(t.ship)}`].filter(Boolean).join(' · ')}
+                          </Text>
+                        )}
                         {lowest && <Badge size="xs" radius="sm" variant="light" color="green" fw={700} tt="none">Termurah</Badge>}
                       </Table.Td>
                       <Table.Td ta="right">
