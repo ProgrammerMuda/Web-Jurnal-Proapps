@@ -1,4 +1,4 @@
-// Halaman detail Jurnal Transaksi satu Payment Voucher.
+// Halaman detail Jurnal Transaksi satu dokumen pembelian: FPB/BAPP, faktur, atau Payment Voucher.
 //
 // Jurnalnya tidak disimpan — dibentuk ulang dari dokumennya setiap kali dibaca (lihat
 // journal.js). Jadi halaman ini selalu memperlihatkan keadaan terbaru dokumen sumbernya,
@@ -7,8 +7,9 @@ import { Badge, Box, Card, Grid, Group, SimpleGrid, Stack, Table, Text, ThemeIco
 import { Calculator, ClipboardText, FileText, Info, Paperclip } from '@/components/Icon.jsx';
 import AttachmentList from './Attachments.jsx';
 import { BackLink, CardHead, CopyIcon, DataTable, DocNumber, Section } from './components.jsx';
-import { journalNote, journalTotals, voucherJournal } from './journal.js';
-import { formatDate, proofFiles, pvJournalDate, rupiah } from './utils.js';
+import { useData } from '@/lib/store.jsx';
+import { journalEntry, journalTotals } from './journal.js';
+import { formatDate, rupiah } from './utils.js';
 
 // Satu angka ringkasan di pita atas: label kecil, angkanya besar, keterangannya di bawah.
 function StatBox({ label, value, hint, color = 'slate.9', dot }) {
@@ -24,26 +25,26 @@ function StatBox({ label, value, hint, color = 'slate.9', dot }) {
   );
 }
 
-export default function JournalDetail({ voucher: v, pb, onBack, go }) {
-  const vendor = pb.vendorsById[v.vendorId];
-  const prs = (v.prIds ?? []).map((id) => pb.prsById[id]).filter(Boolean);
-  const jurnal = voucherJournal(v, pb);
+export default function JournalDetail({ kind = 'pv', doc: v, pb, onBack, go }) {
+  const { stockMoves, products } = useData();
+  const e = journalEntry(kind, v, pb, { stockMoves, products });
+  const jurnal = e.lines;
   const total = journalTotals(jurnal);
-  const tanggal = pvJournalDate(v) ?? v.date;
+  const tanggal = e.date;
   const selisih = total.debit - total.credit;
-  const berkas = proofFiles(v);
-  const keterangan = journalNote(v, pb);
+  const berkas = e.files;
+  const keterangan = e.note;
 
   const audit = [
     ['Tanggal transaksi', formatDate(tanggal)],
-    ['Dokumen sumber', <DocNumber key="pv" onClick={() => go({ name: 'voucher', id: v.id })}>{v.number}</DocNumber>],
-    ['Jenis transaksi', 'Kas keluar'],
-    ['Pihak terkait', vendor?.name ?? '—'],
-    ['Dasar pembayaran', prs.length
-      ? <Group key="pr" gap={6} wrap="wrap">{prs.map((p) => <DocNumber key={p.id} onClick={() => go({ name: 'pr', id: p.id })}>{p.number}</DocNumber>)}</Group>
+    ['Dokumen sumber', <DocNumber key="src" onClick={() => go(e.source.view)}>{e.source.label}</DocNumber>],
+    ['Jenis transaksi', e.typeLabel],
+    ['Pihak terkait', e.party],
+    [e.basisLabel, e.basis.length
+      ? <Group key="basis" gap={6} wrap="wrap">{e.basis.map((b) => <DocNumber key={b.label} onClick={() => go(b.view)}>{b.label}</DocNumber>)}</Group>
       : '—'],
-    ['Rekening sumber', v.source || '—'],
-    ['Dibukukan oleh', v.journalBy || v.paidBy || '—'],
+    ...e.extra,
+    ['Dibukukan oleh', e.by],
     ['ID sistem', <Group key="id" gap={6} wrap="nowrap"><Text fz="sm" fw={700} c="slate.9" ff="monospace">{v.id}</Text><CopyIcon value={v.id} size={14} /></Group>],
   ];
 
@@ -59,7 +60,7 @@ export default function JournalDetail({ voucher: v, pb, onBack, go }) {
           <Box style={{ minWidth: 0 }}>
             <Group gap="xs" wrap="wrap">
               <Title order={2} fz={{ base: 20, md: 24 }} c="slate.9">Jurnal Transaksi</Title>
-              <Badge size="sm" radius="sm" variant="light" color="primary" fw={700} tt="none">Kas keluar</Badge>
+              <Badge size="sm" radius="sm" variant="light" color="primary" fw={700} tt="none">{e.typeLabel}</Badge>
             </Group>
             <Text fz="sm" c="slate.6">{formatDate(tanggal)}</Text>
           </Box>
@@ -109,7 +110,7 @@ export default function JournalDetail({ voucher: v, pb, onBack, go }) {
                       <Text fz="sm" fw={600} c="primary.9">{l.code} · {l.name}</Text>
                       <Text fz={11} c="slate.6">{l.debit ? 'Sisi debit' : 'Sisi kredit'}</Text>
                     </Table.Td>
-                    <Table.Td fz="xs" c="slate.7">{keterangan}</Table.Td>
+                    <Table.Td fz="xs" c="slate.7">{l.memo || keterangan}</Table.Td>
                     <Table.Td ta="right" fz="sm" fw={l.debit ? 700 : 400} c={l.debit ? 'slate.9' : 'slate.4'}>
                       {l.debit ? rupiah(l.debit) : '—'}
                     </Table.Td>
@@ -172,7 +173,7 @@ export default function JournalDetail({ voucher: v, pb, onBack, go }) {
                 {berkas.length === 0 ? (
                   <Text fz="xs" c="slate.6">Tidak ada berkas bukti yang dilampirkan.</Text>
                 ) : (
-                  <AttachmentList names={berkas} label="Bukti transfer" />
+                  <AttachmentList names={berkas} label={e.filesLabel} />
                 )}
               </Box>
             </Section>

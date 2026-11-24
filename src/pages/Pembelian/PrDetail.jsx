@@ -56,8 +56,7 @@ export default function PrDetail({ pr, pb, onBack, go, openDialog }) {
               <Group gap="xs" wrap="wrap">
                 <Title order={2} fz={{ base: 20, md: 24 }} c="slate.9">{pr.number}</Title>
                 <CopyIcon value={pr.number} size={16} />
-                <StatusPill map={PR_STATUS} status={pr.status} />
-                <Badge size="sm" radius="sm" variant="light" color="gray" c="slate.6" fw={700} tt="none">{isDp ? 'Di muka' : 'Pelunasan'}</Badge>
+                <StatusPill map={PR_STATUS} status={pr.status} approval={{ doc: pr, kind: 'pr' }} />
               </Group>
               {/* Cukup tanggal pengajuannya; vendor dan pesanannya ada di kartu informasi. */}
               <Text fz="sm" c="slate.6">{formatDate(pr.date)}</Text>

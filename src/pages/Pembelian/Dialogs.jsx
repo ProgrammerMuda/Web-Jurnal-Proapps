@@ -31,10 +31,19 @@ import DateField from '@/components/DateField.jsx';
 import NumberField from '@/components/NumberField.jsx';
 import AttachmentList from './Attachments.jsx';
 import { Callout, CopyIcon, Field, FormModal, blockedProps } from './components.jsx';
+import TermBreakdown from './TermBreakdown.jsx';
 import { periodOptions, personLabel, TODAY } from './data.js';
 import { snapshotTerm, termFields } from './paymentTerms.js';
 import {
   addDays,
+  advancePct,
+  dpInvoiceOf,
+  dpBlockReason,
+  dpBlocks,
+  dpState,
+  DP_STATE,
+  poDpAmount,
+  termText,
   bappJournalDate,
   bappProgress,
   bankOf,
@@ -47,7 +56,6 @@ import {
   poAllJasa,
   poDocLabel,
   proofFiles,
-  termParts,
   quoteTotals,
   quoteDiscountLabel,
   lineRate,
@@ -746,9 +754,6 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
     po?.warehouseId,
     warehouses.find((w) => w.id === po?.warehouseId)?.name ?? 'Gudang tujuan',
   );
-  // Perusahaan PKP sesekali menerima faktur pajak yang tidak bisa dikreditkan;
-  // untuk dokumen itu PPN-nya ikut jadi harga barang.
-  const [vatNotCreditable, setVatNotCreditable] = useState(false);
   const [date, setDate] = useState(TODAY);
   const [doNo, setDoNo] = useState('');
   const [note, setNote] = useState('');
@@ -837,9 +842,6 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
       // milik periode yang di-BAPP, bukan hari dokumennya diketik.
       journalDate: prefix === 'BAPP' ? journalDate : date,
       warehouseId: po.warehouseId ?? null,
-      // Disimpan di dokumen: harga perolehan baris FPB dibaca ulang dari sini,
-      // bukan dari pengaturan yang mungkin sudah berubah setelahnya.
-      vatNotCreditable,
       file,
       lines,
       note,
@@ -856,11 +858,10 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
       products,
       by: personLabel(pb.role),
       settings: companySettings,
-      doc: { vatNotCreditable },
     });
     toast(
       prefix === 'BAPP'
-        ? 'BAPP dicatat. Menunggu persetujuan atasan sebelum bisa difaktur.'
+        ? 'BAPP dicatat. Menunggu approval Chief Finance lalu Building Manager sebelum bisa difaktur.'
         : `${prefix} dicatat. Sisa qty yang belum diterima tetap terbuka.`,
     );
     onClose();
@@ -882,6 +883,12 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
         </>
       }
     >
+      {dpBlocks(dpState(po, pb.calc)) && (
+        <Callout tone="warn" title={DP_STATE[dpState(po, pb.calc).state].label}>
+          {dpBlockReason(dpState(po, pb.calc))}. Penerimaan tetap bisa disimpan — barang yang sudah
+          datang tetap dicatat — tapi faktur pelunasannya baru bisa dibuat setelah uang muka beres.
+        </Callout>
+      )}
       {err.beku && (
         <Callout tone="warn" title="Gudang sedang diopname">
           {err.beku}. Penerimaan ke gudang ini ditahan sampai opname-nya diposting atau
@@ -1118,15 +1125,6 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
           onChange={touch(setFile)}
         />
       )}
-      {!isJasa && companySettings.isPkp && (
-        <Checkbox
-          size="sm"
-          label="PPN tidak dapat dikreditkan"
-          description="Misalnya faktur pajak cacat atau pembelian untuk penyerahan yang dibebaskan. PPN-nya ikut masuk harga barang, bukan dicatat sebagai PPN Masukan."
-          checked={vatNotCreditable}
-          onChange={(e) => setVatNotCreditable(e.currentTarget.checked)}
-        />
-      )}
       <Textarea label={isJasa ? 'Catatan pemeriksaan' : 'Catatan kondisi'} placeholder={isJasa ? 'Contoh: Pekerjaan sesuai lingkup, tidak ada temuan' : 'Contoh: Dus penyok, isi dalam kondisi baik'} size="sm" radius="md" autosize minRows={2} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
       {!bappMode && !bappPlain && (
         <Callout>
@@ -1281,6 +1279,122 @@ export function VoucherModal({ opened, onClose, pr, pb }) {
       <Callout>
         PV ini baru perintah bayar — kas belum berkurang. Uang keluar dicatat terpisah pada PV-nya,
         dan jurnal kas keluarnya terposting saat itu juga.
+      </Callout>
+    </FormModal>
+  );
+}
+
+// --- Faktur uang muka (DP / CBD) ---------------------------------------------------------------
+// Uang muka tidak lagi langsung diajukan lewat Payment Request: vendor menagihnya dulu
+// dengan invoice uang muka, dicatat di sini sebagai faktur, baru PR dan PV menyusul —
+// rantainya sama dengan pelunasan. Jurnalnya: Dr Uang Muka Pembelian / Cr Hutang Usaha.
+export function DpInvoiceModal({ opened, onClose, po, pb, onSaved }) {
+  const vendor = pb.vendorsById[po?.vendorId];
+  const base = po ? poDpAmount(po) : 0;
+  const [vendorNo, setVendorNo] = useState('');
+  const [date, setDate] = useState(TODAY);
+  const [dueDate, setDueDate] = useState(TODAY);
+  const [amount, setAmount] = useState(base);
+  const [invFile, setInvFile] = useState('');
+  const [taxFile, setTaxFile] = useState('');
+  const [note, setNote] = useState('');
+  const [sub, setSub] = useState(false);
+  if (!po) return null;
+  const sudah = dpInvoiceOf(po.id, pb.invoices);
+  const pct = advancePct(po.term);
+  const label = pct >= 100 ? 'Bayar penuh di muka' : `Uang muka ${pct}%`;
+  const err = {
+    vendorNo: !vendorNo.trim() && 'No. invoice vendor wajib diisi',
+    date: (!date && 'Tanggal faktur wajib diisi') || (date > TODAY && 'Tidak boleh setelah hari ini'),
+    dueDate: (!dueDate && 'Jatuh tempo wajib diisi') || (dueDate < date && 'Tidak boleh sebelum tanggal faktur'),
+    amount: !(amount > 0) && 'Nilai uang muka wajib diisi',
+    invFile: !invFile && 'Unggah invoice uang muka dari vendor',
+    sudah: sudah && `Pesanan ini sudah punya faktur uang muka ${sudah.number}`,
+  };
+  const invalid = Object.values(err).some(Boolean);
+  const submit = () => {
+    setSub(true);
+    if (invalid) return;
+    const doc = {
+      id: uid('fkt'),
+      number: nextNumber('FKT', pb.invoices),
+      type: 'dp',
+      vendorNo: vendorNo.trim(),
+      poId: po.id,
+      vendorId: po.vendorId,
+      date,
+      dueDate,
+      // Satu baris bernilai bruto. PPN atas uang muka belum dipisah (keputusan terbuka #3
+      // di spesifikasi jurnal), jadi tarifnya 0 dan PPN diakui penuh di faktur pelunasan.
+      lines: [{ kind: 'dp', desc: `${label} atas ${poDocLabel(po)} ${po.number}`, unit: 'ls', qty: 1, price: amount, ppnRate: 0 }],
+      pphPct: 0,
+      files: [invFile, taxFile].filter(Boolean),
+      note,
+      createdBy: personLabel(pb.role),
+    };
+    pb.add('invoices', doc);
+    toast('Faktur uang muka dicatat. Hutang ke vendor tercatat, tinggal diajukan Payment Request.');
+    onClose();
+    onSaved?.(doc.id);
+  };
+  return (
+    <FormModal
+      opened={opened}
+      onClose={onClose}
+      size={620}
+      icon={FileText}
+      title="Catat faktur uang muka"
+      subtitle={`${po.number} · ${vendor?.name ?? ''}`}
+      footer={
+        <>
+          <Cancel onClick={onClose} />
+          <Button radius="md" onClick={submit}>Simpan faktur</Button>
+        </>
+      }
+    >
+      <Group
+        justify="space-between"
+        px="md"
+        py="sm"
+        bg="primary.0"
+        style={{ border: '1px solid var(--mantine-color-primary-1)', borderRadius: 'var(--mantine-radius-md)' }}
+      >
+        <Box>
+          <Text fz={11} fw={600} c="primary.9">{label} menurut termin</Text>
+          <Text fz={11} c="slate.6">{termText(po.term)} · total {poDocLabel(po)} {rupiah(poTotal(po))}</Text>
+        </Box>
+        <Text fz={22} fw={700} c="primary.9">{rupiah(base)}</Text>
+      </Group>
+
+      <SimpleGrid cols={{ base: 1, sm: 2 }}>
+        <TextInput label="No. invoice vendor" withAsterisk size="sm" radius="md" placeholder="Contoh: INV-DP-0012" value={vendorNo} error={sub && err.vendorNo} onChange={(e) => setVendorNo(e.currentTarget.value)} />
+        <NumberField
+          label="Nilai uang muka"
+          withAsterisk
+          money
+          size="sm"
+          radius="md"
+          prefix="Rp "
+          value={amount}
+          error={sub && err.amount}
+          description={amount !== base ? `Berbeda dari termin (${rupiah(base)})` : undefined}
+          onChange={(v) => setAmount(Number(v) || 0)}
+        />
+        <DateField label="Tanggal faktur" withAsterisk size="sm" radius="md" max={TODAY} value={date} error={sub && err.date} onChange={(e) => setDate(e.currentTarget.value)} />
+        <DateField label="Jatuh tempo" withAsterisk size="sm" radius="md" min={date} value={dueDate} error={sub && err.dueDate} onChange={(e) => setDueDate(e.currentTarget.value)} />
+      </SimpleGrid>
+
+      <SimpleGrid cols={{ base: 1, sm: 2 }}>
+        <FileField label="Invoice uang muka" withAsterisk value={invFile} error={sub && err.invFile} onChange={setInvFile} />
+        <FileField label="Faktur pajak uang muka (opsional)" value={taxFile} onChange={setTaxFile} />
+      </SimpleGrid>
+
+      <Textarea label="Catatan" placeholder="Opsional" size="sm" radius="md" autosize minRows={2} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
+
+      {sub && err.sudah && <Text fz="xs" c="red.7">{err.sudah}</Text>}
+      <Callout>
+        Jurnalnya: Uang Muka Pembelian (debit) dan Hutang Lainnya (kredit). Kas baru berkurang saat
+        PV-nya dibayar. Uang muka ini dipotongkan nanti di faktur pelunasan.
       </Callout>
     </FormModal>
   );
@@ -1760,9 +1874,6 @@ export function QuoteDetailModal({ opened, onClose, quote: q, fppbj, pb }) {
   const name = pb.vendorsById[q.vendorId]?.name ?? q.vendorId;
   const t = quoteTotals(q, fppbj.items);
   const isJasa = poAllJasa(fppbj);
-  // Nama termin dan mekanismenya (jatuh tempo, retensi, jumlah termin) dipisah:
-  // yang pertama identitas terminnya, yang kedua akibatnya pada penagihan.
-  const term = termParts(q.term);
   return (
     <FormModal
       opened={opened}
@@ -1786,12 +1897,14 @@ export function QuoteDetailModal({ opened, onClose, quote: q, fppbj, pb }) {
 
         <InfoCard title="Ketentuan">
           <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md" verticalSpacing="sm">
-            {/* Nama termin di baris pertama; jatuh tempo dan rincian lain di baris keduanya,
-                bukan disambung jadi satu kalimat panjang. */}
-            <Pair label="Termin bayar" value={term.label} sub={term.detail} />
             <Pair label={isJasa ? 'Waktu pengerjaan' : 'Waktu kirim'} value={`${q.lead} hari`} />
             <Pair label="Garansi" value={q.warranty || '—'} />
           </SimpleGrid>
+          {/* Termin dirinci per tahap: berapa dan kapan jatuh tempo tiap pembayaran. */}
+          <Box mt="sm">
+            <Text fz={11} c="slate.6" mb={4}>Termin bayar</Text>
+            <TermBreakdown term={q.term} total={t.total} jasa={isJasa} />
+          </Box>
         </InfoCard>
 
         {q.desc?.trim() && (

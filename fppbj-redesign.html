@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>FPPBJ/2026/11/011</title>
+<style>
+  @page { size: A4; margin: 0; }
+  :root {
+    --ink: #111827;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --soft: #f3f6fb;
+    --accent: #0b2e6f;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #fff; }
+  body {
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    font-size: 9.5pt;
+    line-height: 1.45;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 16mm 16mm 14mm;
+    display: flex;
+    flex-direction: column;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+  .label {
+    font-size: 7.5pt;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 4px;
+  }
+  .sub { color: var(--muted); font-size: 8pt; }
+
+  /* Header */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 24px;
+    padding-bottom: 14px;
+    border-bottom: 2px solid var(--accent);
+  }
+  .company { display: flex; gap: 12px; }
+  .logo {
+    width: 44px; height: 44px; border-radius: 8px;
+    background: var(--accent); color: #fff;
+    display: grid; place-items: center;
+    font-weight: 700; font-size: 13pt; flex: none;
+  }
+  .company h1 { font-size: 12pt; margin: 0 0 2px; }
+  .company p { margin: 0; color: var(--muted); font-size: 8.5pt; }
+  .doc { text-align: right; }
+  .doc h2 {
+    margin: 0; font-size: 13pt; line-height: 1.25;
+    letter-spacing: .03em; color: var(--accent);
+  }
+  .doc .no { font-size: 11pt; font-weight: 600; margin-top: 4px; }
+  .badge {
+    display: inline-block; margin-top: 6px;
+    padding: 2px 8px; border-radius: 999px;
+    background: #fef3c7; color: #92400e;
+    font-size: 7.5pt; font-weight: 600;
+  }
+
+  /* Meta strip */
+  .meta {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    margin-top: 14px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .meta > div { padding: 8px 12px; }
+  .meta > div + div { border-left: 1px solid var(--line); }
+  .meta .label { margin-bottom: 2px; }
+  .meta .v { font-weight: 600; }
+  .meta .empty { color: var(--muted); font-weight: 400; }
+
+  /* Cards */
+  .cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 16px;
+  }
+  .card { background: var(--soft); border-radius: 6px; padding: 12px 14px; }
+  .card .name { font-size: 11pt; font-weight: 700; margin: 0 0 4px; }
+  .card p { margin: 0; }
+  .card dl {
+    display: grid; grid-template-columns: 78px 1fr;
+    margin: 0; row-gap: 1px; font-size: 8.5pt;
+  }
+  .card dt { color: var(--muted); }
+  .card dd { margin: 0; }
+
+  /* Items */
+  table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+  thead th {
+    font-size: 7.5pt; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--muted);
+    text-align: left; padding: 7px 8px; white-space: nowrap;
+    border-bottom: 1.5px solid var(--ink);
+  }
+  tbody td { padding: 9px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th.r, td.r { text-align: right; }
+  th:first-child, td:first-child { padding-left: 0; }
+  th:last-child, td:last-child { padding-right: 0; }
+  .item { font-weight: 600; }
+  tfoot td { padding: 9px 8px; font-weight: 600; }
+  tfoot td:last-child { padding-right: 0; }
+
+  .note {
+    margin-top: 10px;
+    padding: 8px 12px;
+    border-left: 3px solid var(--accent);
+    background: var(--soft);
+    font-size: 8.5pt; color: #374151;
+  }
+
+  /* Signatures */
+  .sign {
+    margin-top: auto;
+    padding-top: 24px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  .sign .box { height: 60px; }
+  .sign .who { border-top: 1px solid var(--ink); padding-top: 5px; font-weight: 600; }
+  .sign .role { color: var(--muted); font-size: 8pt; }
+
+  footer {
+    margin-top: 18px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+    display: flex; justify-content: space-between;
+    color: var(--muted); font-size: 7.5pt;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div class="company">
+      <div class="logo">DS</div>
+      <div>
+        <h1>Demo Site</h1>
+        <p>Alamat perusahaan, Kota, Kode Pos</p>
+        <p>Dokumen internal</p>
+      </div>
+    </div>
+    <div class="doc">
+      <h2>FORMULIR PERMINTAAN<br>PEMBELIAN BARANG / JASA</h2>
+      <div class="no num">FPPBJ/2026/11/011</div>
+      <span class="badge">Dalam pengadaan</span>
+    </div>
+  </header>
+
+  <section class="meta">
+    <div><p class="label">Tanggal permintaan</p><div class="v">2 Nov 2026</div></div>
+    <div><p class="label">Dibutuhkan pada</p><div class="v">20 Des 2026</div></div>
+    <div><p class="label">Jalur pengadaan</p><div class="v">Vendor tunggal</div></div>
+    <div><p class="label">Referensi IOM</p><div class="v empty">Tidak ada</div></div>
+  </section>
+
+  <section class="cards">
+    <div class="card">
+      <p class="label">Peminta</p>
+      <p class="name">Andi Wijaya</p>
+      <dl>
+        <dt>Jabatan</dt><dd>Staff Housekeeping</dd>
+        <dt>Departemen</dt><dd>Umum</dd>
+        <dt>Lokasi kirim</dt><dd>Gudang Utama</dd>
+      </dl>
+    </div>
+    <div class="card">
+      <p class="label">Keperluan</p>
+      <p class="name">ATK bulanan lantai 1–3</p>
+      <dl>
+        <dt>Alasan jalur</dt><dd>Isi alasan bila memilih vendor tunggal</dd>
+        <dt>PO terkait</dt><dd class="num">PO/2026/11/011</dd>
+      </dl>
+    </div>
+  </section>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:26px">No</th>
+        <th>Barang atau jasa</th>
+        <th style="width:70px">Jenis</th>
+        <th class="r" style="width:56px">Qty</th>
+        <th style="width:56px">Satuan</th>
+        <th style="width:150px">Keterangan</th>
+      </tr>
+    </thead>
+    <tbody class="num">
+      <tr>
+        <td>1</td>
+        <td><div class="item">Kertas A4 80 gsm</div><div class="sub">Kode ATK-001</div></td>
+        <td>Barang</td>
+        <td class="r">50</td>
+        <td>rim</td>
+        <td class="sub">—</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td><div class="item">Map plastik</div><div class="sub">Kode ATK-014</div></td>
+        <td>Barang</td>
+        <td class="r">200</td>
+        <td>pcs</td>
+        <td class="sub">—</td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr>
+        <td></td>
+        <td colspan="5">2 item diminta</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <div class="note">
+    Harga belum ditentukan pada tahap permintaan. Nilainya mengikuti penawaran vendor saat pengadaan.
+  </div>
+
+  <section class="sign">
+    <div>
+      <p class="label">Diajukan oleh</p>
+      <div class="box"></div>
+      <div class="who">Andi Wijaya</div>
+      <div class="role">Staff Housekeeping</div>
+      <div class="role">Tgl: ____________</div>
+    </div>
+    <div>
+      <p class="label">Disetujui oleh</p>
+      <div class="box"></div>
+      <div class="who">Nama atasan</div>
+      <div class="role">Kepala Departemen Umum</div>
+      <div class="role">Tgl: ____________</div>
+    </div>
+    <div>
+      <p class="label">Diverifikasi oleh</p>
+      <div class="box"></div>
+      <div class="who">Nama staf</div>
+      <div class="role">Accounting</div>
+      <div class="role">Tgl: ____________</div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Dicetak 4 Nov 2026 dari Jurnal Accounting</span>
+    <span class="num">FPPBJ/2026/11/011 · Halaman 1 dari 1</span>
+  </footer>
+
+</div>
+</body>
+</html>

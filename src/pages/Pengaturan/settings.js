@@ -56,7 +56,9 @@ export const defaultCompanySettings = {
 
 /**
  * PPN ikut menjadi harga perolehan bila perusahaan non-PKP, atau bila dokumen
- * itu ditandai PPN-nya tidak dapat dikreditkan (mis. faktur pajak cacat).
+ * itu ditandai PPN-nya tidak dapat dikreditkan. Tanda itu tidak lagi bisa dipasang dari
+ * form FPB (gudang tidak tahu status pajak); yang dibaca di sini hanya dari data lama.
+ * Kasus langka faktur pajak cacat diselesaikan accounting dengan jurnal penyesuaian.
  */
 export const vatCapitalized = (settings, doc) =>
   !settings?.isPkp || !!doc?.vatNotCreditable;

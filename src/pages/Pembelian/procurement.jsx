@@ -16,9 +16,10 @@ import {
 import { blockedBySoD, approvalState, isApproverTurn, canCreate } from './permissions.js';
 import { Check, Eye, ListChecks, PencilSimple, Plus, Scales, Storefront, Trash, Warning } from '@/components/Icon.jsx';
 import NumberField from '@/components/NumberField.jsx';
-import { Callout, RowMenu, Section } from './components.jsx';
+import { Callout, RowMenu, Section, StatusPill } from './components.jsx';
 import { personTitle } from './data.js';
 import BiddingForm from './BiddingSheet.jsx';
+import TermBreakdown from './TermBreakdown.jsx';
 import {
   biddingReady,
   minQuotesFor,
@@ -33,7 +34,6 @@ import {
   vendorTotals,
   rupiah,
   termParts,
-  termText,
   lineTaxes,
   taxSummary,
   biddingWinner,
@@ -232,7 +232,6 @@ export function SingleSection({ f, pb, role, patchProc, onAddQuote, onViewQuote,
   }
 
   const q = f.quotes[0];
-  const termLabel = termText(q.term);
   const readOnly = locked || !canCreate(role, 'quote');
   const approved = st === 'disetujui';
   // Setelah disetujui yang tersisa hanya harga final (teks), bukan kolom penawaran dan isian yang dinonaktifkan.
@@ -244,7 +243,7 @@ export function SingleSection({ f, pb, role, patchProc, onAddQuote, onViewQuote,
       description="Periksa penawarannya, tetapkan harga final, lalu ajukan ke approver."
       right={
         <Group gap="xs" wrap="nowrap">
-          {st && <Badge radius="sm" variant="light" color={PROC_STATUS[st].color} tt="none">{PROC_STATUS[st].label}</Badge>}
+          {st && <StatusPill map={PROC_STATUS} status={st} approval={{ doc: proc, kind: 'procurement' }} />}
           {!locked && canCreate(role, 'quote') && (
             <Button size="xs" radius="md" variant="default" onClick={() => onEditQuote(q.id)}>Ubah penawaran</Button>
           )}
@@ -259,11 +258,10 @@ export function SingleSection({ f, pb, role, patchProc, onAddQuote, onViewQuote,
       }
     >
       <Stack gap="md">
-        <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
+        <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
           {[
             ['Vendor', vendor(q.vendorId)],
             ['No. penawaran', q.no],
-            ['Termin bayar', termLabel],
             ['Estimasi pengiriman', `${q.lead} hari`],
           ].map(([label, value]) => (
             <Box key={label} style={{ minWidth: 0 }}>
@@ -272,6 +270,13 @@ export function SingleSection({ f, pb, role, patchProc, onAddQuote, onViewQuote,
             </Box>
           ))}
         </SimpleGrid>
+        {/* Termin dirinci per tahap — uang muka berapa dan kapan, pelunasan berapa dan kapan —
+            dengan nominal dari harga final. Satu kalimat "DP 30% · jatuh tempo saat penerimaan"
+            dulu menumpuk semuanya jadi satu. */}
+        <Box>
+          <Text fz={11} fw={600} c="slate.6" mb={4}>Termin bayar</Text>
+          <TermBreakdown term={q.term} total={vendorTotals(f, q.vendorId).total} jasa={poAllJasa(f)} />
+        </Box>
         <Box style={frame}>
           <Table verticalSpacing="xs" horizontalSpacing="sm" miw={approved ? 420 : 560} styles={th}>
             <Table.Thead bg="slate.0">

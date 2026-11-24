@@ -3,7 +3,7 @@
 //
 // Dua jalur:
 //   'invoice' — pelunasan satu atau beberapa faktur vendor yang sama, dengan alokasi per faktur.
-//   'dp'      — uang muka / CBD dari satu PO/SPK, sebelum fakturnya ada.
+//   'dp'      — uang muka / CBD dari satu faktur uang muka (dicatat dulu dari detail PO/SPK).
 import {
   Alert,
   Badge,
@@ -49,7 +49,7 @@ import {
 import { FileField } from './Dialogs.jsx';
 import { personLabel, TODAY } from './data.js';
 import {
-  advancePct,
+  isDpInvoice,
   bankOf,
   formatDate,
   INV_STATUS,
@@ -57,7 +57,6 @@ import {
   invTotals,
   nextNumber,
   poDocLabel,
-  poDpAmount,
   poTotal,
   rupiah,
   termText,
@@ -189,13 +188,15 @@ function TotalsBand({ rows, totalLabel, total }) {
 
 export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null, onBack, onSaved }) {
   // Faktur yang masih punya sisa hutang belum dialokasikan ke PR mana pun.
-  const readyInvoices = pb.invoices.filter((i) => invTotals(i, pb.calc).free > 0);
-  // PO/SPK beruang muka yang PR DP-nya belum pernah diajukan.
-  const readyPos = pb.pos.filter(
-    (p) => p.sent && advancePct(p.term) > 0 && !pb.prs.some((x) => x.kind === 'dp' && x.poId === p.id && x.status !== 'ditolak'),
-  );
+  const openInvoices = pb.invoices.filter((i) => invTotals(i, pb.calc).free > 0);
+  const readyInvoices = openInvoices.filter((i) => !isDpInvoice(i));
+  // Faktur uang muka yang belum tercakup PR. Uang muka kini selalu ditagih lewat faktur
+  // dulu — PR tidak lagi dibuat langsung dari PO/SPK.
+  const readyDps = openInvoices.filter(isDpInvoice);
 
-  const seededPo = readyPos.some((p) => p.id === initialPoId) ? initialPoId : null;
+  // Dibuka dari PO (?po=): cari faktur uang mukanya. Dibuka dari faktur (?inv=): faktur uang
+  // muka membawa form ke jalur uang muka.
+  const seededPo = readyDps.find((i) => i.poId === initialPoId || initialInvoiceIds.includes(i.id))?.id ?? null;
   // Pilihan awal dari alamat halaman: cukup faktur yang memang masih bisa diajukan.
   const seededInv = initialInvoiceIds.filter((id) => readyInvoices.some((i) => i.id === id));
 
@@ -207,7 +208,7 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
   // Vendor dipilih dulu — boleh lebih dari satu — baru fakturnya menyusul. Uang muka tetap
   // satu vendor, karena uang mukanya milik satu pesanan.
   const [vendorSel, setVendorSel] = useState(() => {
-    if (seededPo) return [pb.posById[seededPo]?.vendorId].filter(Boolean);
+    if (seededPo) return [pb.invoicesById[seededPo]?.vendorId].filter(Boolean);
     return [...new Set(seededInv.map((id) => pb.invoicesById[id]?.vendorId).filter(Boolean))];
   });
   const [picked, setPicked] = useState(seededPo ? [seededPo] : seededInv);
@@ -217,23 +218,24 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
   const [note, setNote] = useState('');
 
   const isDp = mode === 'dp';
-  const ready = isDp ? readyPos : readyInvoices;
+  const ready = isDp ? readyDps : readyInvoices;
   // Hanya dokumen milik vendor yang dipilih. Satu PR boleh mencakup beberapa vendor;
   // pembayarannya tetap per vendor — satu Payment Voucher per vendor nanti.
   const rows = ready.filter((d) => vendorSel.includes(d.vendorId));
   const vendorsWithReady = pb.vendors.filter((v) => ready.some((d) => d.vendorId === v.id));
   const payeeOptions = vendorsWithReady.map((v) => {
     const milik = ready.filter((d) => d.vendorId === v.id);
-    const nilai = milik.reduce((n, d) => n + (isDp ? poDpAmount(d) : invTotals(d, pb.calc).free), 0);
+    const nilai = milik.reduce((n, d) => n + invTotals(d, pb.calc).free, 0);
     return {
       value: v.id,
       label: v.name,
-      sub: `${milik.length} ${isDp ? 'pesanan beruang muka' : 'faktur terbuka'} · ${rupiah(nilai)}`,
+      sub: `${milik.length} ${isDp ? 'faktur uang muka' : 'faktur terbuka'} · ${rupiah(nilai)}`,
     };
   });
 
   const invs = isDp ? [] : picked.map((id) => pb.invoicesById[id]).filter(Boolean);
-  const po = isDp ? pb.posById[picked[0]] : null;
+  const dpInv = isDp ? pb.invoicesById[picked[0]] : null;
+  const po = isDp ? pb.posById[dpInv?.poId] : null;
   // Vendor yang benar-benar ditagih dalam PR ini, menurut dokumen yang dipilih.
   const vendorIds = [...new Set(isDp ? (po ? [po.vendorId] : []) : invs.map((i) => i.vendorId))];
   const vendors = vendorIds.map((id) => pb.vendorsById[id]).filter(Boolean);
@@ -243,9 +245,9 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
   const allocOf = (i) => alloc[i.id] ?? totals[i.id].free;
   const totalFree = invs.reduce((n, i) => n + totals[i.id].free, 0);
   // Dokumen yang sedang ditagih, apa pun jalurnya.
-  const dokumen = isDp ? (po ? [po] : []) : invs;
+  const dokumen = isDp ? (dpInv ? [dpInv] : []) : invs;
   const subtotalOf = (vid) => invs.filter((i) => i.vendorId === vid).reduce((n, i) => n + allocOf(i), 0);
-  const dpBase = po ? poDpAmount(po) : 0;
+  const dpBase = dpInv ? invTotals(dpInv, pb.calc).free : 0;
   const dpAmount = dpInput ?? dpBase;
   const amount = isDp ? dpAmount : invs.reduce((n, i) => n + allocOf(i), 0);
   // Nominal DP yang diubah manual ditandai supaya tidak lewat tanpa disadari.
@@ -256,7 +258,7 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
   // tercentang yang tidak kelihatan di tabel mana pun tapi tetap ikut ditagihkan.
   const pickVendors = (ids) => {
     setVendorSel(ids);
-    setPicked((p) => p.filter((id) => ids.includes((isDp ? pb.posById[id] : pb.invoicesById[id])?.vendorId)));
+    setPicked((p) => p.filter((id) => ids.includes(pb.invoicesById[id]?.vendorId)));
     if (isDp) setDpInput(null);
   };
   const togglePick = (id) => setPicked((p) => {
@@ -268,14 +270,14 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
   const required = {
     source: {
       vendor: !vendorSel.length && (isDp ? 'Vendor wajib dipilih' : 'Pilih minimal satu vendor'),
-      picked: !picked.length && (isDp ? 'Pilih pesanan yang akan dibayar di muka' : 'Pilih minimal satu faktur'),
+      picked: !picked.length && (isDp ? 'Pilih faktur uang muka yang akan dibayar' : 'Pilih minimal satu faktur'),
     },
     amount: {
       amount: amount <= 0 && 'Nominal pembayaran masih Rp 0',
-      over: !isDp && invs.some((i) => allocOf(i) > totals[i.id].free) && 'Alokasi melebihi sisa hutang faktur',
+      over: (isDp ? dpAmount > dpBase : invs.some((i) => allocOf(i) > totals[i.id].free)) && 'Nominal melebihi sisa hutang faktur',
     },
     submit: {
-      ref: isDp && !ref && 'Invoice proforma wajib diunggah',
+      ref: false,
     },
   };
   const blockOf = (i) => Object.values(required[STEPS[i].value]).find(Boolean) ?? null;
@@ -305,9 +307,9 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
       // daftar lengkapnya ada di vendorIds.
       vendorId: vendor.id,
       vendorIds,
-      poId: isDp ? po.id : invs[0].poId,
-      invoiceIds: isDp ? [] : invs.map((i) => i.id),
-      alloc: isDp ? undefined : Object.fromEntries(invs.map((i) => [i.id, allocOf(i)])),
+      poId: isDp ? dpInv.poId : invs[0].poId,
+      invoiceIds: isDp ? [dpInv.id] : invs.map((i) => i.id),
+      alloc: isDp ? { [dpInv.id]: dpAmount } : Object.fromEntries(invs.map((i) => [i.id, allocOf(i)])),
       amount,
       date: TODAY,
       status: 'diajukan',
@@ -334,7 +336,7 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
         icon={Wallet}
         title="Ajukan Pembayaran"
         description={isDp
-          ? 'Permintaan pembayaran uang muka atas satu pesanan, sebelum fakturnya ada.'
+          ? 'Permintaan pembayaran atas satu faktur uang muka dari vendor.'
           : 'Pilih vendor dulu, boleh beberapa, lalu faktur mana saja yang dibayar. Pembayarannya tetap per vendor.'}
       />
 
@@ -437,7 +439,7 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
                 <ModeCard
                   icon={Wallet}
                   title="Uang muka (DP / CBD)"
-                  text="Dibayar sebelum fakturnya ada, dari satu PO/SPK bertermin uang muka."
+                  text="Dari faktur uang muka yang sudah dicatat di detail PO/SPK."
                   active={isDp}
                   onClick={() => switchMode('dp')}
                 />
@@ -452,8 +454,8 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
                   size="sm"
                   radius="md"
                   searchable
-                  placeholder={vendorsWithReady.length ? 'Pilih vendor' : 'Tidak ada vendor dengan pesanan beruang muka'}
-                  description="Uang muka selalu atas satu pesanan, jadi satu vendor."
+                  placeholder={vendorsWithReady.length ? 'Pilih vendor' : 'Belum ada faktur uang muka yang terbuka'}
+                  description="Uang muka selalu atas satu faktur uang muka, jadi satu vendor."
                   disabled={!vendorsWithReady.length}
                   data={payeeOptions}
                   renderOption={renderPayeeOption}
@@ -484,13 +486,13 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
               )}
 
               {!vendorSel.length ? (
-                <Callout>Pilih vendor dulu untuk melihat {isDp ? 'pesanan beruang muka' : 'faktur'} yang bisa diajukan.</Callout>
+                <Callout>Pilih vendor dulu untuk melihat {isDp ? 'faktur uang muka' : 'faktur'} yang bisa diajukan.</Callout>
               ) : !rows.length ? (
                 <EmptyState
                   icon={Wallet}
-                  title={`Belum ada ${isDp ? 'pesanan' : 'faktur'} yang bisa diajukan`}
+                  title={`Belum ada ${isDp ? 'faktur uang muka' : 'faktur'} yang bisa diajukan`}
                   text={isDp
-                    ? 'Semua pesanan beruang muka vendor ini sudah pernah diajukan PR DP-nya.'
+                    ? 'Faktur uang muka vendor ini sudah diajukan semua. Catat faktur uang muka baru dari detail PO/SPK.'
                     : 'Semua faktur vendor yang dipilih sudah lunas atau sudah dialokasikan ke PR lain.'}
                 />
               ) : (
@@ -499,7 +501,7 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
                     <Table.Thead bg="slate.0">
                       <Table.Tr>
                         <Table.Th w={44} />
-                        <Table.Th>{isDp ? 'No. PO/SPK' : 'No. faktur'}</Table.Th>
+                        <Table.Th>{isDp ? 'No. faktur uang muka' : 'No. faktur'}</Table.Th>
                         {!isDp && <Table.Th>Vendor</Table.Th>}
                         <Table.Th>{isDp ? 'Termin bayar' : 'Jatuh tempo'}</Table.Th>
                         {!isDp && <Table.Th>Status</Table.Th>}
@@ -528,11 +530,11 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
                             </Table.Td>
                             <Table.Td fz="sm" fw={700}>
                               {d.number}
-                              {!isDp && d.vendorNo && <Text fz={11} c="slate.6" fw={400}>{d.vendorNo}</Text>}
+                              {d.vendorNo && <Text fz={11} c="slate.6" fw={400}>{d.vendorNo}{isDp && ` · ${pb.posById[d.poId]?.number ?? ''}`}</Text>}
                             </Table.Td>
                             {!isDp && <Table.Td fz="xs" c="slate.7">{pb.vendorsById[d.vendorId]?.name ?? '—'}</Table.Td>}
                             <Table.Td fz="xs" fw={late ? 700 : 400} c={late ? 'red.7' : 'slate.7'}>
-                              {isDp ? termText(d.term) : formatDate(d.dueDate)}
+                              {isDp ? termText(pb.posById[d.poId]?.term) : formatDate(d.dueDate)}
                             </Table.Td>
                             {/* Status dibaca dari sisa hutang dan tanggalnya, sama dengan daftar
                                 Tagihan Vendor — bukan ditebak ulang di sini. */}
@@ -543,7 +545,7 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
                             )}
                             {isDp && <Table.Td fz="xs" c="slate.7">{formatDate(d.date)}</Table.Td>}
                             <Table.Td ta="right" fz="sm" fw={600}>
-                              {rupiah(isDp ? poDpAmount(d) : invTotals(d, pb.calc).free)}
+                              {rupiah(invTotals(d, pb.calc).free)}
                             </Table.Td>
                           </Table.Tr>
                         );
@@ -572,7 +574,7 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
                   />
                   <Group gap={6} mt={4} wrap="nowrap">
                     <Text fz={11} c={offBase ? 'orange.8' : 'slate.6'}>
-                      {advancePct(po?.term) >= 100 ? 'Bayar penuh di muka' : `Uang muka ${advancePct(po?.term)}%`} = {rupiah(dpBase)}
+                      Sisa hutang {dpInv?.number} = {rupiah(dpBase)}
                     </Text>
                     {offBase && (
                       <Button size="compact-xs" radius="md" variant="subtle" onClick={() => setDpInput(dpBase)}>Pakai nilai ini</Button>
@@ -580,8 +582,8 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
                   </Group>
                 </Box>
                 <Callout>
-                  {termText(po?.term)} · dari total {poDocLabel(po)} {rupiah(poTotal(po))}. Uang muka dibayar tanpa
-                  faktur pembelian; vendor melampirkan invoice proforma.
+                  {termText(po?.term)} · dari total {poDocLabel(po)} {rupiah(poTotal(po))}. Hutang uang mukanya sudah
+                  diakui saat faktur uang muka dicatat; PR ini melunasinya.
                 </Callout>
               </Stack>
             ) : (
@@ -662,8 +664,7 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
                 </Callout>
               )}
               <FileField
-                label={isDp ? 'Invoice proforma' : 'Lampiran pendukung (opsional)'}
-                withAsterisk={isDp}
+                label="Lampiran pendukung (opsional)"
                 value={ref}
                 error={errors.ref}
                 onChange={setRef}
@@ -690,7 +691,7 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
         {step.value !== 'source' && (
           <TotalsBand
             rows={isDp
-              ? [{ label: 'Nilai pesanan', value: rupiah(poTotal(po)) }, offBase && { label: 'Nilai uang muka menurut termin', value: rupiah(dpBase), color: 'orange.8' }]
+              ? [{ label: 'Nilai pesanan', value: rupiah(poTotal(po)) }, { label: `Sisa hutang ${dpInv?.number ?? ''}`, value: rupiah(dpBase) }]
               : [
                 { label: `Sisa hutang ${invs.length} faktur`, value: rupiah(totalFree) },
                 { label: 'Sisa setelah PR ini', value: rupiah(Math.max(totalFree - amount, 0)) },

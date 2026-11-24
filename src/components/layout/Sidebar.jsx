@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Avatar,
+  Badge,
   Box,
   Center,
   Collapse,
@@ -14,7 +15,9 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { usePb } from '@/pages/Pembelian/usePb.js';
+import { actionCountsByMenu } from '@/pages/Pembelian/selectors.js';
 import badge from '@/assets/badge.svg';
 import mark from '@/assets/mark.svg';
 import {
@@ -215,8 +218,20 @@ function Chevron({ opened }) {
   );
 }
 
-function NavItem({ item, collapsed, opened, onToggle, activeKey, onNavigate }) {
+// Angka tugas yang menunggu peran aktif. Hanya untuk menu yang punya tugas; nol tidak ditulis.
+function Count({ n, dot }) {
+  if (!n) return null;
+  if (dot) return <Box w={8} h={8} bg="red.6" style={{ borderRadius: 99, position: 'absolute', top: 6, right: 10 }} />;
+  return (
+    <Badge size="xs" radius="xl" color="red.6" variant="filled" fw={700} miw={18} px={5} styles={{ label: { overflow: 'visible' } }}>
+      {n > 99 ? '99+' : n}
+    </Badge>
+  );
+}
+
+function NavItem({ item, collapsed, opened, onToggle, activeKey, onNavigate, counts = {} }) {
   const hasChildren = !!item.children;
+  const total = hasChildren ? item.children.reduce((n, c) => n + (counts[c.key] ?? 0), 0) : counts[item.key] ?? 0;
   const parentOfActive = hasActiveChild(item, activeKey);
   const active = item.key === activeKey;
   const go = () => item.key && onNavigate?.(item.key);
@@ -230,6 +245,8 @@ function NavItem({ item, collapsed, opened, onToggle, activeKey, onNavigate }) {
         active={active}
         leftSection={<item.icon size={20} />}
         styles={navStyles({ active, collapsed, parentOfActive })}
+        rightSection={<Count n={total} dot />}
+        style={{ position: 'relative' }}
       />
     );
     if (!hasChildren) {
@@ -245,7 +262,7 @@ function NavItem({ item, collapsed, opened, onToggle, activeKey, onNavigate }) {
         <Menu.Dropdown>
           <Menu.Label>{item.label}</Menu.Label>
           {item.children.map((c) => (
-            <Menu.Item key={c.label} leftSection={<c.icon size={16} />} fz={12} onClick={() => c.key && onNavigate?.(c.key)}>
+            <Menu.Item key={c.label} leftSection={<c.icon size={16} />} rightSection={<Count n={counts[c.key]} />} fz={12} onClick={() => c.key && onNavigate?.(c.key)}>
               {c.label}
             </Menu.Item>
           ))}
@@ -260,7 +277,8 @@ function NavItem({ item, collapsed, opened, onToggle, activeKey, onNavigate }) {
         label={item.label}
         active={active}
         leftSection={<item.icon size={20} />}
-        rightSection={hasChildren ? <Chevron opened={opened} /> : null}
+        // Grup tertutup tetap memberi tahu ada tugas di dalamnya; saat terbuka angkanya pindah ke submenu.
+        rightSection={hasChildren ? <Group gap={6} wrap="nowrap">{!opened && <Count n={total} />}<Chevron opened={opened} /></Group> : <Count n={total} />}
         onClick={hasChildren ? onToggle : go}
         aria-expanded={hasChildren ? opened : undefined}
         styles={navStyles({ active, collapsed, parentOfActive })}
@@ -281,6 +299,7 @@ function NavItem({ item, collapsed, opened, onToggle, activeKey, onNavigate }) {
                 active={c.key === activeKey}
                 onClick={() => c.key && onNavigate?.(c.key)}
                 leftSection={<c.icon size={16} />}
+                rightSection={<Count n={counts[c.key]} />}
                 styles={navStyles({ active: c.key === activeKey, collapsed, child: true })}
               />
             ))}
@@ -292,6 +311,12 @@ function NavItem({ item, collapsed, opened, onToggle, activeKey, onNavigate }) {
 }
 
 export default function Sidebar({ collapsed, onToggle, activeKey, onNavigate }) {
+  // Badge angka Pembelian: tugas "Perlu tindakan" milik peran yang sedang dilihat.
+  const pb = usePb();
+  const counts = useMemo(
+    () => Object.fromEntries(Object.entries(actionCountsByMenu(pb.role, pb)).map(([k, n]) => [`pembelian:${k}`, n])),
+    [pb],
+  );
   // Dropdown bisa terbuka bersamaan (bukan akordeon); grup yang berisi menu aktif terbuka awal.
   const [open, setOpen] = useState(
     () =>
@@ -381,6 +406,7 @@ export default function Sidebar({ collapsed, onToggle, activeKey, onNavigate }) 
                     onToggle={() => toggleItem(item.label)}
                     activeKey={activeKey}
                     onNavigate={onNavigate}
+                    counts={counts}
                   />
                 ))}
               </Stack>

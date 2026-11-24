@@ -111,7 +111,7 @@ export const poAllJasa = (po) => po.items.length > 0 && po.items.every((i) => i.
 export const poAllBarang = (po) => po.items.every((i) => i.kind !== 'jasa');
 // Faktur masih punya baris barang yang bisa diretur (jasa tidak diretur).
 export const canReturn = (inv, po, returns) =>
-  !!po && !inv.cancelled && inv.lines.some((l) => itemKind(po, l.itemId) === 'barang' && l.qty > returnedQty(inv.id, l.itemId, returns));
+  !!po && !isDpInvoice(inv) && !inv.cancelled && inv.lines.some((l) => itemKind(po, l.itemId) === 'barang' && l.qty > returnedQty(inv.id, l.itemId, returns));
 
 export const receiptsOf = (po, receipts) => receipts.filter((r) => r.poId === po.id);
 export const receivedQty = (po, itemId, receipts) =>
@@ -130,10 +130,14 @@ export const remainingQty = (po, itemId, receipts) => {
 //
 // Termin persen (milestone) tidak terkunci tanggal: milestone bisa tercapai kapan saja, dan
 // beberapa sekaligus boleh dicatat dalam satu BAPP asal berurutan.
+// SEMENTARA untuk uji coba prototipe: kunci periode dimatikan supaya termin berkala bisa
+// langsung di-BAPP. Kembalikan ke true sebelum dirilis.
+const KUNCI_PERIODE = false;
+
 export function scheduleRows(po, receipts, today, picked = []) {
   const rows = po.items.map((it) => {
     const received = remainingQty(po, it.id, receipts) === 0;
-    const lockedUntil = it.periodTo && it.periodTo > today ? it.periodTo : null;
+    const lockedUntil = KUNCI_PERIODE && it.periodTo && it.periodTo > today ? it.periodTo : null;
     return { item: it, received, lockedUntil, slot: it.slot ?? 0 };
   });
   // Berurutan: satu termin baru bisa dipilih kalau semua termin sebelumnya sudah diterima
@@ -217,7 +221,51 @@ export const uninvoicedLines = (receipt, invoices) =>
 // Faktur manual: ditagih vendor tanpa bersandar pada FPB/BAPP. Barisnya menyimpan deskripsi
 // sendiri (tanpa receiptId / itemId), jadi tidak mengurangi sisa penerimaan mana pun dan tidak
 // ikut pencocokan 3 arah. Dipakai untuk tagihan non-PO: listrik, sewa, jasa berulang.
-export const isManualInvoice = (inv) => !!inv && inv.lines.every((l) => !l.receiptId);
+export const isManualInvoice = (inv) => !!inv && !isDpInvoice(inv) && inv.lines.every((l) => !l.receiptId);
+// Faktur uang muka: tagihan DP/CBD dari vendor atas satu PO/SPK, sebelum barang/jasanya
+// diterima. Dicatat lebih dulu, baru diajukan Payment Request dan dibayar lewat PV.
+export const isDpInvoice = (inv) => inv?.type === 'dp';
+// Faktur uang muka yang masih hidup untuk satu pesanan.
+export const dpInvoiceOf = (poId, invoices) => liveInvoices(invoices).find((i) => isDpInvoice(i) && i.poId === poId);
+
+// Status uang muka satu pesanan, dibaca bertahap. null bila terminnya tidak menagih di muka.
+//   belum_faktur — vendor belum menagih DP (faktur uang muka belum dicatat)
+//   belum_bayar  — faktur uang muka ada, belum lunas
+//   lunas        — sudah dibayar
+//   dibatalkan   — uang muka dibatalkan resmi (disetujui Chief Finance), ditagih penuh di akhir
+// PR DP lama tanpa faktur uang muka tetap dikenali supaya data lama tidak ikut terkunci.
+export function dpState(po, { invoices = [], prs = [], pos = [], returns = [] } = {}) {
+  if (!po || advancePct(po.term) <= 0) return null;
+  if (po.dpWaiver?.status === 'disetujui') return { state: 'dibatalkan', waiver: po.dpWaiver };
+  const lama = prs.find((p) => p.kind === 'dp' && p.poId === po.id && !(p.invoiceIds ?? []).length && p.status !== 'ditolak');
+  if (lama) return { state: lama.status === 'dibayar' ? 'lunas' : 'belum_bayar', pr: lama };
+  const inv = dpInvoiceOf(po.id, invoices);
+  if (!inv) return { state: 'belum_faktur', waiver: po.dpWaiver };
+  const pr = prs.find((p) => p.kind === 'dp' && p.invoiceIds?.includes(inv.id) && p.status !== 'ditolak');
+  const t = invTotals(inv, { pos, prs, returns, invoices });
+  return { state: t.balance <= 0 ? 'lunas' : 'belum_bayar', inv, pr };
+}
+// Faktur pelunasan menunggu uang muka beres: lunas, atau dibatalkan resmi.
+export const dpBlocks = (s) => !!s && (s.state === 'belum_faktur' || s.state === 'belum_bayar');
+// Alasan satu kalimat, dipakai di baris yang dinonaktifkan dan di tooltip tombol.
+export function dpBlockReason(s) {
+  if (!dpBlocks(s)) return null;
+  if (s.state === 'belum_faktur') {
+    return s.waiver?.status === 'diajukan'
+      ? 'Pembatalan uang muka menunggu approval Chief Finance'
+      : 'Menunggu faktur uang muka dicatat';
+  }
+  const doc = s.inv?.number ?? s.pr?.number;
+  if (!s.pr) return `Menunggu PR uang muka ${doc} diajukan`;
+  return `Menunggu uang muka ${doc} dibayar · ${PR_STATUS[s.pr.status]?.label ?? s.pr.status}`;
+}
+// Label status untuk ditampilkan di detail PO dan callout.
+export const DP_STATE = {
+  belum_faktur: { label: 'Faktur uang muka belum dicatat', color: 'orange' },
+  belum_bayar: { label: 'Uang muka belum dibayar', color: 'orange' },
+  lunas: { label: 'Uang muka lunas', color: 'green' },
+  dibatalkan: { label: 'Uang muka dibatalkan', color: 'gray' },
+};
 // Nama baris faktur: dari item pesanan bila bersandar penerimaan, atau deskripsi yang diketik.
 export const invLineDesc = (l, item) => item?.desc ?? l.desc ?? '—';
 
@@ -225,8 +273,16 @@ export const invDpp = (inv) => sum(inv.lines, (l) => l.qty * l.price);
 export const invPpn = (inv) => Math.round(sum(inv.lines, (l) => l.qty * l.price * lineRate(l)));
 export const invPph = (inv) => Math.round((invDpp(inv) * (inv.pphPct || 0)) / 100);
 
-// Uang muka PO yang sudah dibayar, dipotongkan proporsional ke tiap faktur (per PO).
-export function invDpDeduct(inv, pos, prs) {
+// Uang muka PO yang sudah DIAKUI, dipotongkan proporsional ke tiap faktur (per PO).
+//
+// Dasarnya faktur uang muka yang tercatat, bukan pembayarannya: hutang uang muka sudah lahir
+// saat fakturnya dicatat. Kalau dasarnya pembayaran, faktur pelunasan yang dibuat sebelum DP
+// dibayar akan berubah nilainya diam-diam begitu DP-nya lunas. Faktur pelunasan sendiri baru
+// bisa dibuat setelah DP lunas (dpBlocks), jadi kedua dasar itu memberi angka yang sama.
+// PR DP lama tanpa faktur uang muka tetap dihitung dari yang sudah dibayar.
+export function invDpDeduct(inv, pos, prs, invoices = []) {
+  // Faktur uang muka tidak memotong dirinya sendiri.
+  if (isDpInvoice(inv)) return 0;
   const byPo = {}; // nilai kotor (DPP + PPN) baris faktur per PO
   for (const l of inv.lines) {
     const key = l.poId ?? inv.poId;
@@ -239,13 +295,59 @@ export function invDpDeduct(inv, pos, prs) {
     // Jadwal DP + termin progres sudah mengeluarkan uang muka dari nilai tiap termin,
     // jadi fakturnya tidak dipotong DP lagi — kalau dipotong, vendor kurang dibayar.
     if (scheduleExcludesDp(po.term)) continue;
-    const dpPaid = sum(
-      prs.filter((p) => p.kind === 'dp' && p.poId === po.id && p.status === 'dibayar'),
+    // Uang muka yang dibatalkan resmi tidak pernah ditagih, jadi tidak ada yang dipotong.
+    if (po.dpWaiver?.status === 'disetujui') continue;
+    const dpInv = sum(
+      liveInvoices(invoices).filter((i) => isDpInvoice(i) && i.poId === po.id),
+      (i) => invDpp(i) + invPpn(i),
+    );
+    const dpLama = sum(
+      prs.filter((p) => p.kind === 'dp' && p.poId === po.id && p.status === 'dibayar' && !(p.invoiceIds ?? []).length),
       (p) => p.amount,
     );
+    const dpPaid = dpInv + dpLama;
     if (dpPaid) total += Math.min(Math.round((dpPaid * gross) / poTotal(po)), dpPaid);
   }
   return total;
+}
+
+// Pemakaian uang muka pada termin yang jadwalnya SUDAH mengeluarkan DP (DP + termin progres,
+// DP + berkala). Fakturnya tidak dipotong DP (lihat invDpDeduct), tapi uang muka yang sudah
+// dibayar tetap harus keluar dari akun Uang Muka dan diakui sebagai biaya — kalau tidak, ia
+// menggantung selamanya dan biaya kontrak tercatat kurang sebesar DP.
+//
+// Porsinya proporsional terhadap nilai termin: termin Rp 26,64 jt dari jadwal Rp 106,56 jt
+// memakai 25% dari DP. Faktur yang menutup jadwal menyerap sisa pembulatan, jadi saldo uang
+// mukanya habis tepat nol. Hutang ke vendor tidak berubah.
+export function dpAmortization(inv, pos, prs = [], invoices = []) {
+  if (!inv || isDpInvoice(inv)) return [];
+  const bills = liveInvoices(invoices).filter((i) => !isDpInvoice(i));
+  const linesOf = (i, poId) => i.lines.filter((l) => (l.poId ?? i.poId) === poId);
+  const grossOf = (i, poId) => sum(linesOf(i, poId), (l) => l.qty * l.price * (1 + lineRate(l)));
+  const out = [];
+  for (const poId of [...new Set(inv.lines.map((l) => l.poId ?? inv.poId))]) {
+    const po = pos.find((p) => p.id === poId);
+    if (!po || !scheduleExcludesDp(po.term) || po.dpWaiver?.status === 'disetujui') continue;
+    const dpGross =
+      sum(liveInvoices(invoices).filter((i) => isDpInvoice(i) && i.poId === poId), (i) => invDpp(i) + invPpn(i))
+      + sum(prs.filter((p) => p.kind === 'dp' && p.poId === poId && p.status === 'dibayar' && !(p.invoiceIds ?? []).length), (p) => p.amount);
+    const total = poTotal(po);
+    if (!dpGross || !total) continue;
+    // Faktur sebelumnya menurut urutan pencatatan; faktur yang belum tersimpan dianggap paling akhir.
+    const idx = bills.findIndex((i) => i.id === inv.id);
+    const before = (idx >= 0 ? bills.slice(0, idx) : bills.filter((i) => i.id !== inv.id)).filter((i) => linesOf(i, poId).length);
+    const shareOf = (g) => Math.round((dpGross * g) / total);
+    const consumed = Math.min(sum(before, (i) => shareOf(grossOf(i, poId))), dpGross);
+    const gross = grossOf(inv, poId);
+    const lunas = sum(before, (i) => grossOf(i, poId)) + gross >= total - 1;
+    const amount = lunas ? dpGross - consumed : Math.min(shareOf(gross), dpGross - consumed);
+    if (amount <= 0) continue;
+    const dppBase = sum(linesOf(inv, poId), (l) => l.qty * l.price);
+    const rate = dppBase ? gross / dppBase - 1 : 0;
+    const dpp = Math.round(amount / (1 + rate));
+    out.push({ poId, amount, dpp, ppn: amount - dpp });
+  }
+  return out;
 }
 
 export const returnValue = (ret) => sum(ret.lines, (l) => l.qty * l.price);
@@ -275,19 +377,22 @@ export const invReturns = (inv, returns) =>
 export function prAllocated(inv, prs, { onlyPaid }) {
   return sum(
     prs.filter(
-      (p) => p.kind === 'pelunasan' && (onlyPaid ? p.status === 'dibayar' : p.status !== 'ditolak'),
+      (p) =>
+        // PR uang muka yang menunjuk faktur uang muka juga melunasi faktur itu.
+        (p.kind === 'pelunasan' || (p.kind === 'dp' && p.invoiceIds?.includes(inv.id)))
+        && (onlyPaid ? p.status === 'dibayar' : p.status !== 'ditolak'),
     ),
     (p) => p.alloc?.[inv.id] ?? (p.invoiceIds.length === 1 && p.invoiceIds[0] === inv.id ? p.amount : 0),
   );
 }
 
-export function invTotals(inv, { pos, prs, returns }) {
+export function invTotals(inv, { pos, prs, returns, invoices = [] }) {
   // Faktur batal bernilai nol di mana pun ia muncul (hutang, sisa, daftar pembayaran).
   if (inv.cancelled) return { dpp: 0, ppn: 0, pph: 0, dp: 0, ret: 0, credit: 0, total: 0, paid: 0, balance: 0, free: 0 };
   const dpp = invDpp(inv);
   const ppn = invPpn(inv);
   const pph = invPph(inv);
-  const dp = invDpDeduct(inv, pos, prs);
+  const dp = invDpDeduct(inv, pos, prs, invoices);
   const ret = invReturns(inv, returns);
   const credit = inv.credit ?? 0; // kredit vendor yang dialokasikan ke faktur ini
   const total = Math.max(dpp + ppn - pph - dp - ret - credit, 0);
@@ -335,7 +440,7 @@ export function poStatus(po, { receipts, invoices, prs, pos, returns }) {
   if (!full) return 'sebagian';
   const invs = liveInvoices(invoices).filter((i) => i.poId === po.id);
   const allInvoiced = receiptsOf(po, receipts).every((r) => uninvoicedLines(r, invoices).length === 0);
-  if (allInvoiced && invs.every((i) => invTotals(i, { pos, prs, returns }).balance <= 0)) {
+  if (allInvoiced && invs.every((i) => invTotals(i, { pos, prs, returns, invoices }).balance <= 0)) {
     return 'selesai';
   }
   return 'diterima';
@@ -496,7 +601,11 @@ export function expandSchedule(items, term, startIso) {
     let used = 0;
     const rows = pcts.map((pct, k) => {
       // Baris terakhir menyerap pembulatan supaya jumlahnya persis sama dengan nilai jadwal.
-      const price = k === n - 1 ? work - used : Math.round((work * pct) / 100);
+      // Tagihan berkala dibagi rata per periode (Rp 72 jt / 6 = Rp 12 jt tiap bulan), bukan
+      // lewat persen yang sudah dibulatkan (16,6%) — itu membuat lima bulan pertama kurang
+      // sedikit dan bulan terakhir menanggung selisihnya.
+      const share = periodic ? Math.round(work / n) : Math.round((work * pct) / 100);
+      const price = k === n - 1 ? work - used : share;
       used += price;
       // Termin berkala terikat kalender: rentangnya dihitung dari tanggal mulai kontrak,
       // dan dipakai untuk label, kunci tanggal pencatatan, serta tanggal jurnal.
@@ -880,7 +989,7 @@ export const PO_STATUS = {
 // mendahului uang keluar. Sekarang PV diterbitkan lebih dulu sebagai perintah bayar, dan
 // transfernya dicatat terhadap PV itu.
 export const PR_STATUS = {
-  diajukan: { label: 'Menunggu approval', color: 'orange' },
+  diajukan: { label: 'Menunggu approval', color: 'orange', pending: true },
   disetujui: { label: 'Siap diterbitkan PV', color: 'cyan' }, // lolos approval, menunggu PV
   diproses: { label: 'PV terbit', color: 'blue' }, // perintah bayar ada, uang belum keluar
   dibayar: { label: 'Dibayar', color: 'green' },
@@ -914,12 +1023,12 @@ export const INV_STATUS = {
   dibatalkan: { label: 'Dibatalkan', color: 'slate' },
 };
 export const RECEIPT_STATUS = {
-  draf: { label: 'Menunggu approval atasan', color: 'orange' },
+  draf: { label: 'Menunggu approval', color: 'orange', pending: true },
   dikonfirmasi: { label: 'Dikonfirmasi', color: 'green' },
 };
 export const PROC_STATUS = {
   draf: { label: 'Draf', color: 'gray' },
-  diajukan: { label: 'Menunggu approval', color: 'orange' },
+  diajukan: { label: 'Menunggu approval', color: 'orange', pending: true },
   disetujui: { label: 'Disetujui', color: 'green' },
   ditolak: { label: 'Ditolak', color: 'red' },
 };

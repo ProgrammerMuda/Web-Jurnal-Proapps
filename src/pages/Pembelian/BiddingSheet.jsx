@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Anchor, Badge, Box, Button, Grid, Group, Select, Stack, Table, Text, Textarea, ThemeIcon, Tooltip } from '@mantine/core';
 import { Check, Info, Scales, Storefront } from '@/components/Icon.jsx';
 import AttachmentList from './Attachments.jsx';
-import { Callout, Section } from './components.jsx';
+import { Callout, Section, StatusPill } from './components.jsx';
 import { canCreate } from './permissions.js';
 import { TODAY } from './data.js';
 import { DropField } from './Dialogs.jsx';
@@ -81,7 +81,7 @@ export default function BiddingForm({ f, role, patchProc, onSubmit, onApprove, o
       icon={Scales}
       title="Form bidding"
       description="Harga dari penawaran vendor. Pilih satu vendor pemenang untuk seluruh permintaan, lalu ajukan."
-      right={st ? <Badge radius="sm" variant="light" color={PROC_STATUS[st].color} tt="none">{PROC_STATUS[st].label}</Badge> : null}
+      right={st ? <StatusPill map={PROC_STATUS} status={st} approval={{ doc: proc, kind: 'procurement' }} /> : null}
     >
       <Stack gap="md">
         {/* Kepala lembar bidding: identitas dokumen + item yang dilelang di kiri, keterangan ringkas di kolom kanan. */}

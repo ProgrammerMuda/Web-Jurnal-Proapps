@@ -4,7 +4,8 @@
 //
 // Dua jalur dalam satu form:
 //   'receipt' — menagih dari FPB/BAPP yang sudah dikonfirmasi; qty dan harga terikat PO.
-//   'manual'  — tagihan non-PO (listrik, sewa, jasa berulang) yang barisnya diketik sendiri.
+//   'po'      — menagih langsung dari PO/SPK: faktur uang muka (DP/CBD), atau pesanan tanpa
+//               serah terima. Jalur 'manual' (non-PO) masih ada di kode tapi kartunya disembunyikan.
 import {
   ActionIcon,
   Alert,
@@ -54,21 +55,28 @@ import {
   vendorSelectData,
 } from './components.jsx';
 import { FileField } from './Dialogs.jsx';
-import { productCatalog, RULES, TODAY } from './data.js';
+import { personLabel, productCatalog, RULES, TODAY } from './data.js';
 import { termMechanics } from './paymentTerms.js';
 import {
   addDays,
+  advancePct,
   dueDaysOf,
   formatDate,
   invDpp,
   invPpn,
   invTotals,
   nextNumber,
+  poDocLabel,
+  poDpAmount,
   poDue,
+  poTotal,
   ppnLabel,
   receiptDue,
   rupiah,
   termKey,
+  termText,
+  dpBlockReason,
+  dpState,
   termParts,
   uid,
   uninvoicedLines,
@@ -212,13 +220,19 @@ function TotalsBand({ rows, totalLabel, total }) {
   );
 }
 
-function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, ready, pb, errors, keyOf }) {
+// Label baris uang muka, dipakai di kartu langkah, rincian, dan baris fakturnya.
+const dpLabelOf = (po) => (advancePct(po?.term) >= 100 ? 'Bayar penuh di muka' : `Uang muka ${advancePct(po?.term)}%`);
+
+function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, ready, pb, errors, keyOf, dpIds }) {
   const fromPo = mode === 'po';
+  // Faktur uang muka tidak punya jalur sendiri: ia tetap ditagih dari PO/SPK. Pesanan yang
+  // menunggu faktur DP-nya ikut tampil di tabel PO/SPK, ditandai, dan dipilih sendirian.
+  const isDp = fromPo && picked.length === 1 && dpIds.has(picked[0]);
   // Vendor dibatasi yang benar-benar punya penerimaan siap difaktur: daftar vendor penuh
   // hanya akan berujung pada tabel kosong.
   // 'receipt' dan 'po' sama-sama memilih dokumen sumber; 'manual' tidak.
-  const dariDokumen = mode === 'receipt' || mode === 'po';
-  const nounJalur = mode === 'po' ? 'pesanan' : 'penerimaan';
+  const dariDokumen = mode !== 'manual';
+  const nounJalur = fromPo ? 'pesanan' : 'penerimaan';
   const vendorsWithReady = pb.vendors.filter((v) => ready.some((r) => r.vendorId === v.id));
   // Diurutkan per termin lalu per tanggal, supaya yang bisa digabung berkumpul berdampingan
   // dan yang terkunci tidak berserak di antara yang bisa dipilih.
@@ -227,7 +241,8 @@ function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, 
     .sort((a, b) => keyOf(a).localeCompare(keyOf(b)) || a.date.localeCompare(b.date));
   // Termin penerimaan yang dipilih pertama mengunci termin sisanya.
   const docById = (id) => (fromPo ? pb.posById[id] : pb.receiptsById[id]);
-  const lockedKey = picked.length ? keyOf(docById(picked[0])) : null;
+  // Faktur uang muka tidak digabung dengan apa pun, jadi tidak mengunci termin baris lain.
+  const lockedKey = picked.length && !isDp ? keyOf(docById(picked[0])) : null;
   const lockedTerm = lockedKey
     ? termParts(fromPo ? docById(picked[0])?.term : pb.posById[docById(picked[0])?.poId]?.term).label
     : null;
@@ -243,7 +258,7 @@ function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, 
 
   return (
     <Stack gap="md">
-      <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
         <ModeCard
           icon={Truck}
           title="Dari penerimaan (FPB/BAPP)"
@@ -254,16 +269,9 @@ function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, 
         <ModeCard
           icon={Package}
           title="Dari PO/SPK"
-          text="Pesanan yang memang tidak lewat gudang: bayar di muka, atau jasa tanpa berita acara."
+          text="Uang muka (DP/CBD) sebelum barang datang, atau pesanan yang memang tidak lewat gudang."
           active={mode === 'po'}
           onClick={() => setMode('po')}
-        />
-        <ModeCard
-          icon={Invoice}
-          title="Tanpa penerimaan"
-          text="Tagihan non-PO: listrik, sewa, jasa berulang. Barisnya diketik sendiri."
-          active={mode === 'manual'}
-          onClick={() => setMode('manual')}
         />
       </SimpleGrid>
 
@@ -292,7 +300,7 @@ function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, 
             icon={fromPo ? Package : Truck}
             title={`Belum ada ${nounJalur} yang siap difaktur`}
             text={fromPo
-              ? 'Jalur ini hanya untuk pesanan yang belum punya FPB/BAPP sama sekali. Pesanan vendor ini sudah punya penerimaan, atau sudah difaktur penuh.'
+              ? 'Tidak ada pesanan vendor ini yang menunggu faktur uang muka atau bisa ditagih langsung tanpa FPB/BAPP. Jalur ini hanya untuk pesanan yang belum punya FPB/BAPP sama sekali. Pesanan vendor ini sudah punya penerimaan, atau sudah difaktur penuh.'
               : 'Semua FPB/BAPP vendor ini sudah difaktur penuh, atau belum dikonfirmasi.'}
           />
         ) : (
@@ -317,9 +325,15 @@ function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, 
                     const { label, detail } = termParts(po?.term);
                     const due = fromPo ? poDue(po) : receiptDue(po, r.date);
                     const dipilih = picked.includes(r.id);
+                    // Tertahan uang muka: faktur pelunasan menunggu DP pesanannya lunas atau
+                    // dibatalkan resmi. Barisnya tetap tampil supaya alasannya terbaca.
+                    // Baris uang muka: justru faktur DP inilah yang sedang dicatat.
+                    const rowDp = fromPo && dpIds.has(r.id);
+                    const dpTahan = rowDp ? null : dpBlockReason(dpState(po, pb.calc));
                     // Terkunci: terminnya berbeda dari penerimaan yang sudah dipilih.
-                    const terkunci = !!lockedKey && !dipilih && keyOf(r) !== lockedKey;
-                    const alasan = `Termin ${label} tidak bisa digabung dengan ${lockedTerm} dalam satu faktur`;
+                    const beda = !!lockedKey && !dipilih && !rowDp && keyOf(r) !== lockedKey;
+                    const terkunci = beda || (!!dpTahan && !dipilih);
+                    const alasan = dpTahan ?? `Termin ${label} tidak bisa digabung dengan ${lockedTerm} dalam satu faktur`;
                     const baris = (
                       <Table.Tr
                         key={r.id}
@@ -344,7 +358,7 @@ function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, 
                           {/* Alasan terkuncinya ditulis di barisnya, bukan hanya di tooltip:
                               kotak centang yang mati tanpa keterangan terbaca seperti kerusakan. */}
                           {terkunci
-                            ? <Text fz={10} fw={600} c="orange.8" mt={2}>Termin berbeda · tidak bisa digabung</Text>
+                            ? <Text fz={10} fw={600} c="orange.8" mt={2}>{dpTahan ?? 'Termin berbeda · tidak bisa digabung'}</Text>
                             : detail && <Text fz={10} c="slate.6" mt={2}>{detail}</Text>}
                         </Table.Td>
                         {/* Jatuh tempo yang sudah pasti dicetak tegas; yang masih bergantung
@@ -352,7 +366,16 @@ function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, 
                         <Table.Td fz="xs" fw={due.exact ? 700 : 400} c={due.exact ? 'slate.9' : 'slate.6'}>
                           {due.text}
                         </Table.Td>
-                        <Table.Td ta="right" fz="xs" c="slate.7">{(fromPo ? uninvoicedPoLines(r, pb.invoices) : uninvoicedLines(r, pb.invoices)).length} baris</Table.Td>
+                        <Table.Td ta="right">
+                          {rowDp ? (
+                            <>
+                              <Badge size="sm" radius="sm" variant="light" color="orange" fw={700} tt="none">{dpLabelOf(r)}</Badge>
+                              <Text fz="sm" fw={700} c="slate.9" mt={2}>{rupiah(poDpAmount(r))}</Text>
+                            </>
+                          ) : (
+                            <Text fz="xs" c="slate.7">{(fromPo ? uninvoicedPoLines(r, pb.invoices) : uninvoicedLines(r, pb.invoices)).length} baris</Text>
+                          )}
+                        </Table.Td>
                       </Table.Tr>
                     );
                     return terkunci ? (
@@ -368,7 +391,12 @@ function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, 
                 dari premis yang sama — satu faktur hanya punya satu syarat bayar — jadi premis
                 itu ditulis sekali, lalu akibatnya menyusul. Dua kotak terpisah dulu membuka
                 dengan kalimat yang persis sama. */}
-            {lockedKey ? (
+            {isDp ? (
+              <Callout title="Faktur uang muka">
+                Pesanan ini menunggu tagihan uang muka, jadi fakturnya dicatat sendiri per PO/SPK tanpa digabung. Setelah disimpan, hutangnya tinggal diajukan lewat
+                Payment Request, dan faktur pelunasan nanti otomatis dipotong uang muka ini.
+              </Callout>
+            ) : lockedKey ? (
               <Callout title={`Terkunci pada termin ${lockedTerm}`}>
                 <Stack gap={6}>
                   <Text fz="xs">
@@ -407,7 +435,7 @@ function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, 
 }
 
 // --- Halaman ------------------------------------------------------------------------------------
-export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = null, onBack, onSaved }) {
+export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = null, initialDpPoId = null, onBack, onSaved }) {
   const readyReceipts = pb.receipts.filter((r) => uninvoicedLines(r, pb.invoices).length > 0);
   // Pesanan yang boleh ditagih LANGSUNG: sudah dikirim, masih punya qty belum difaktur, dan
   // memang disepakati TANPA serah terima sejak penawaran (`withReceipt: false`).
@@ -418,10 +446,17 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   // penerimaan dihitung per FPB/BAPP (`invoicedQty`), sisa pesanan per PO (`invoicedQtyOfPo`).
   // Vendor bisa tertagih dua kali untuk barang yang sama.
   const readyPos = pb.pos.filter((p) => uninvoicedPoLines(p, pb.invoices).length > 0);
+  // Pesanan yang menunggu faktur uang muka: sudah dikirim, terminnya ber-DP, belum ada
+  // faktur DP-nya, dan tidak sedang diajukan tagih tanpa uang muka.
+  const readyDpPos = pb.pos.filter((p) => p.sent
+    && dpState(p, pb.calc)?.state === 'belum_faktur'
+    && p.dpWaiver?.status !== 'diajukan');
   // Pilihan awal dari alamat halaman disaring: vendor dan termin harus sama dengan
   // penerimaan pertama, supaya ?from=... tidak bisa menyelundupkan gabungan yang terlarang.
+  // Uang muka pesanan belum beres -> faktur pelunasannya ditahan (lihat dpBlocks di utils.js).
+  const dpTahanOf = (d) => dpBlockReason(dpState(d?.items ? d : pb.posById[d?.poId], pb.calc));
   const seeded = (() => {
-    const ada = initialReceiptIds.map((id) => readyReceipts.find((r) => r.id === id)).filter(Boolean);
+    const ada = initialReceiptIds.map((id) => readyReceipts.find((r) => r.id === id)).filter((r) => r && !dpTahanOf(r));
     if (!ada.length) return [];
     const k = (r) => termKey(pb.posById[r.poId]?.term);
     const first = ada[0];
@@ -434,12 +469,17 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   const [listOpen, setListOpen] = useState(false);
 
   // Dibuka dari detail PO/SPK tanpa serah terima: jalurnya langsung ke pesanan itu.
-  const seededPo = readyPos.some((p) => p.id === initialPoId) ? initialPoId : null;
-  const [mode, setMode] = useState(seededPo ? 'po' : 'receipt');
+  const seededPo = readyPos.some((p) => p.id === initialPoId && !dpTahanOf(p)) ? initialPoId : null;
+  // Dibuka dari tombol "Catat faktur uang muka" di detail PO: langkah 1 sudah terisi.
+  const seededDp = readyDpPos.some((p) => p.id === initialDpPoId) ? initialDpPoId : null;
+  const dpIds = new Set(readyDpPos.map((p) => p.id));
+  const [mode, setMode] = useState(seededDp || seededPo ? 'po' : 'receipt');
   const [vendorId, setVendorId] = useState(
-    () => (seededPo ? pb.posById[seededPo]?.vendorId : pb.receiptsById[seeded[0]]?.vendorId) ?? null,
+    () => (seededDp ? pb.posById[seededDp]?.vendorId : seededPo ? pb.posById[seededPo]?.vendorId : pb.receiptsById[seeded[0]]?.vendorId) ?? null,
   );
-  const [picked, setPicked] = useState(seededPo ? [seededPo] : seeded);
+  const [picked, setPicked] = useState(seededDp ? [seededDp] : seededPo ? [seededPo] : seeded);
+  // Nilai uang muka: null = ikut termin pesanan yang dipilih.
+  const [dpInput, setDpInput] = useState(null);
   const [manualLines, setManualLines] = useState([blankLine()]);
 
   const [vendorNo, setVendorNo] = useState('');
@@ -451,9 +491,13 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
 
   const manual = mode === 'manual';
   const fromPo = mode === 'po';
+  // Faktur uang muka = jalur PO/SPK dengan satu pesanan yang menunggu tagihan DP-nya.
+  const isDp = fromPo && picked.length === 1 && dpIds.has(picked[0]);
   const vendor = pb.vendorsById[vendorId];
   // Dokumen sumber yang bisa dipilih di langkah 1, menurut jalurnya.
-  const ready = fromPo ? readyPos : readyReceipts;
+  const ready = fromPo
+    ? [...readyDpPos, ...readyPos.filter((p) => !dpIds.has(p.id))]
+    : readyReceipts;
   const docById = (id) => (fromPo ? pb.posById[id] : pb.receiptsById[id]);
   const receipts = manual || fromPo ? [] : picked.map((id) => pb.receiptsById[id]).filter(Boolean);
   const orders = fromPo ? picked.map((id) => pb.posById[id]).filter(Boolean) : [];
@@ -462,7 +506,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
 
   // Mengganti vendor membuang pilihan dokumen: menyisakan pilihan vendor lama akan
   // menagihkan barang vendor A ke vendor B tanpa terlihat.
-  const pickVendor = (id) => { setVendorId(id); setPicked([]); };
+  const pickVendor = (id) => { setVendorId(id); setPicked([]); setDpInput(null); };
   // Identitas termin satu dokumen sumber. Penerimaan mewarisi termin pesanan asalnya;
   // pesanan membawa terminnya sendiri.
   const keyOf = (d) => termKey(fromPo ? d?.term : pb.posById[d?.poId]?.term);
@@ -470,6 +514,10 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   // pilihan awal bisa datang dari alamat halaman (?from=...), yang tidak lewat tabel itu.
   const togglePick = (id) => setPicked((p) => {
     if (p.includes(id)) return p.filter((x) => x !== id);
+    // Uang muka: satu faktur untuk satu pesanan, memilih yang lain menggantikan pilihan.
+    // Uang muka: satu faktur untuk satu pesanan, tidak digabung dengan baris lain.
+    if (fromPo && (dpIds.has(id) || (p.length && dpIds.has(p[0])))) { setDpInput(null); return [id]; }
+    if (dpTahanOf(docById(id))) return p;
     if (p.length && keyOf(docById(id)) !== keyOf(docById(p[0]))) return p;
     return [...p, id];
   });
@@ -510,7 +558,19 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   // Qty default = seluruh sisa yang belum difaktur. Disimpan terpisah supaya pilihan
   // penerimaan bisa berubah tanpa membuang angka yang sudah disesuaikan.
   const [qtys, setQtys] = useState({});
-  const lines = manual ? manualLines : base.map((b) => ({ ...b, qty: qtys[b.key] ?? b.open }));
+  const dpPo = isDp ? orders[0] : null;
+  const dpBase = dpPo ? poDpAmount(dpPo) : 0;
+  const dpAmount = dpInput ?? dpBase;
+  // Satu baris bernilai bruto. PPN atas uang muka belum dipisah (keputusan terbuka #3 di
+  // spesifikasi jurnal), jadi tarifnya 0 dan PPN diakui penuh di faktur pelunasan.
+  const dpLine = dpPo && {
+    key: 'dp', kind: 'dp', poId: dpPo.id, sourceNo: dpPo.number,
+    desc: `${dpLabelOf(dpPo)} atas ${poDocLabel(dpPo)} ${dpPo.number}`,
+    unit: 'ls', qty: 1, price: dpAmount, ppnRate: 0, pphRate: 0,
+  };
+  const lines = isDp
+    ? (dpLine ? [dpLine] : [])
+    : manual ? manualLines : base.map((b) => ({ ...b, qty: qtys[b.key] ?? b.open }));
   const setManualLine = (key, patch) => setManualLines((l) => l.map((x) => (x.key === key ? { ...x, ...patch } : x)));
 
   // --- jatuh tempo ---
@@ -518,7 +578,8 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   // penerimaan atau sejak tanggal faktur vendor). Faktur manual tidak punya pesanan,
   // jadi selalu dihitung dari tanggal fakturnya sendiri.
   const poTerm = fromPo ? orders[0]?.term : pb.posById[receipts[0]?.poId]?.term;
-  const termDue = dueDaysOf(poTerm);
+  // Uang muka ditagih saat itu juga, bukan menurut tempo pelunasan pesanannya.
+  const termDue = isDp ? 0 : dueDaysOf(poTerm);
   // Tanpa FPB/BAPP tidak ada tanggal penerimaan untuk dijadikan acuan, jadi tempo apa pun
   // yang disepakati dihitung dari tanggal faktur vendor.
   const dueFrom = manual || fromPo ? 'invoice' : termMechanics(poTerm).dueFrom;
@@ -538,19 +599,19 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   const autoPph = baseDpp
     ? Math.round((activeLines.reduce((n, l) => n + l.qty * l.price * (l.pphRate ?? 0), 0) / baseDpp) * 10000) / 100
     : 0;
-  const pph = pphInput ?? autoPph;
+  const pph = isDp ? 0 : (pphInput ?? autoPph);
   const draft = { lines: lines.map((l) => ({ ...l })), pphPct: pph, poId: lines[0]?.poId };
   const dpp = invDpp(draft);
   const ppn = invPpn(draft);
   const pphVal = Math.round((dpp * (pph || 0)) / 100);
-  const dpDeduct = invTotals({ ...draft }, { pos: pb.pos, prs: pb.prs, returns: [] }).dp;
+  const dpDeduct = isDp ? 0 : invTotals({ ...draft }, { pos: pb.pos, prs: pb.prs, returns: [], invoices: pb.invoices }).dp;
   const total = dpp + ppn - pphVal - dpDeduct;
 
   // --- isian wajib per langkah ---
   const required = {
     source: {
       vendor: !vendorId && 'Vendor wajib dipilih',
-      picked: !manual && !picked.length && `Pilih minimal satu ${fromPo ? 'pesanan' : 'penerimaan'} untuk difaktur`,
+      picked: !manual && !picked.length && (isDp ? 'Pilih pesanan yang uang mukanya ditagih' : `Pilih minimal satu ${fromPo ? 'pesanan' : 'penerimaan'} untuk difaktur`),
       term: !manual && new Set((fromPo ? orders : receipts).map(keyOf)).size > 1
         && `Termin bayar ${fromPo ? 'pesanan' : 'penerimaan'} yang dipilih berbeda — satu faktur hanya untuk satu termin`,
     },
@@ -562,7 +623,10 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
     invoice: {
       no: !vendorNo.trim() && 'No. invoice vendor wajib diisi',
       date: (!date && 'Tanggal faktur wajib diisi') || (date > TODAY && 'Tanggal faktur tidak boleh setelah hari ini'),
-      files: (!inv || !tax) && 'Unggah invoice vendor dan faktur pajak',
+      amount: isDp && ((!(dpAmount > 0) && 'Nilai uang muka wajib diisi')
+        || (dpPo && dpAmount > poTotal(dpPo) && `Melebihi nilai ${poDocLabel(dpPo)} (${rupiah(poTotal(dpPo))})`)),
+      // Faktur pajak uang muka belum tentu terbit, jadi untuk DP cukup invoice vendornya.
+      files: isDp ? (!inv && 'Unggah invoice uang muka dari vendor') : (!inv || !tax) && 'Unggah invoice vendor dan faktur pajak',
     },
   };
   const blockOf = (i) => Object.values(required[STEPS[i].value]).find(Boolean) ?? null;
@@ -585,6 +649,26 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
       setSub(true);
       return;
     }
+    if (isDp) {
+      const doc = {
+        id: uid('fkt'),
+        number: nextNumber('FKT', pb.invoices),
+        type: 'dp',
+        vendorNo: vendorNo.trim(),
+        poId: dpPo.id,
+        vendorId: dpPo.vendorId,
+        date,
+        dueDate,
+        lines: [{ kind: 'dp', desc: dpLine.desc, unit: 'ls', qty: 1, price: dpAmount, ppnRate: 0 }],
+        pphPct: 0,
+        files: [inv, tax].filter(Boolean),
+        createdBy: personLabel(pb.role),
+      };
+      pb.add('invoices', doc);
+      toast('Faktur uang muka dicatat. Hutang ke vendor tercatat, tinggal diajukan Payment Request.');
+      onSaved(doc.id);
+      return;
+    }
     const doc = {
       id: uid('fkt'),
       number: nextNumber('FKT', pb.invoices),
@@ -602,7 +686,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
       files: [inv, tax],
     };
     pb.add('invoices', doc);
-    toast(manual ? 'Faktur manual dibuat. Hutang usaha tercatat.' : 'Faktur dibuat. Hutang usaha tercatat.');
+    toast(manual ? 'Faktur manual dibuat. Hutang ke vendor tercatat.' : 'Faktur dibuat. Hutang ke vendor tercatat.');
     onSaved(doc.id);
   };
 
@@ -619,7 +703,9 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
         icon={Invoice}
         title="Catat Faktur"
         description={
-          manual
+          isDp
+            ? 'Tagihan uang muka dari vendor atas PO/SPK bertermin DP. Setelah dicatat, hutangnya diajukan lewat Payment Request dan nanti memotong faktur pelunasan.'
+            : manual
             ? 'Tagihan vendor tanpa FPB/BAPP, untuk biaya non-PO seperti listrik, sewa, atau jasa berulang.'
             : fromPo
               ? 'Tagihan vendor langsung dari pesanan, untuk PO/SPK yang memang tidak melewati gudang. Harga dikunci sama dengan PO/SPK.'
@@ -725,7 +811,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
           {step.value === 'source' && (
             <SourceStep
               mode={mode}
-              setMode={(m) => { setMode(m); setPicked([]); setQtys({}); }}
+              setMode={(m) => { setMode(m); setPicked([]); setQtys({}); setDpInput(null); }}
               vendorId={vendorId}
               setVendorId={pickVendor}
               picked={picked}
@@ -734,10 +820,42 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
               pb={pb}
               errors={errors}
               keyOf={keyOf}
+              dpIds={dpIds}
             />
           )}
 
-          {step.value === 'items' && (
+          {step.value === 'items' && isDp && (
+            <Stack gap="md">
+              <Box style={tableFrame}>
+                <Table verticalSpacing="xs" horizontalSpacing="sm" miw={600} styles={th}>
+                  <Table.Thead bg="slate.0">
+                    <Table.Tr>
+                      <Table.Th>Item</Table.Th>
+                      <Table.Th>Dari pesanan</Table.Th>
+                      <Table.Th>Qty</Table.Th>
+                      <Table.Th ta="right">Jumlah</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {lines.map((l) => (
+                      <Table.Tr key={l.key}>
+                        <Table.Td fz="sm" fw={600}>{l.desc}</Table.Td>
+                        <Table.Td fz="xs" c="slate.7">{l.sourceNo}</Table.Td>
+                        <Table.Td fz="sm">1 ls</Table.Td>
+                        <Table.Td ta="right" fz="sm" fw={600}>{rupiah(l.price)}</Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Box>
+              <Callout title="Tanpa pencocokan barang">
+                Uang muka dibayar sebelum barang/jasa diterima, jadi barisnya hanya satu: nilai uang muka.
+                Nilainya bisa diubah di langkah Data Faktur bila invoice vendor berbeda dari termin.
+              </Callout>
+            </Stack>
+          )}
+
+          {step.value === 'items' && !isDp && (
             <Stack gap="md">
               <Box style={tableFrame}>
                 <Table verticalSpacing="xs" horizontalSpacing="sm" miw={manual ? 880 : 720} styles={th}>
@@ -863,10 +981,10 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
               <Grid.Col span={{ base: 12, sm: 4 }}>
                 <TextInput label="No. invoice vendor" placeholder="Contoh: INV-2026-0123" withAsterisk size="sm" radius="md" value={vendorNo} error={errors.no} onChange={(e) => setVendorNo(e.currentTarget.value)} />
               </Grid.Col>
-              <Grid.Col span={{ base: 6, sm: 3 }}>
+              <Grid.Col span={{ base: 6, sm: isDp ? 4 : 3 }}>
                 <DateField label="Tanggal faktur" withAsterisk size="sm" radius="md" max={TODAY} error={errors.date} value={date} onChange={(e) => setDate(e.currentTarget.value)} />
               </Grid.Col>
-              <Grid.Col span={{ base: 6, sm: 3 }}>
+              <Grid.Col span={{ base: 6, sm: isDp ? 4 : 3 }}>
                 {/* Tanpa keterangan di bawahnya: tanggalnya sudah terisi, dan dasar
                     perhitungannya sudah diterangkan di langkah Sumber Tagihan. */}
                 <DateField
@@ -878,14 +996,47 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
                   onChange={(e) => setDueInput(e.currentTarget.value)}
                 />
               </Grid.Col>
-              <Grid.Col span={{ base: 12, sm: 2 }}>
+              {!isDp && <Grid.Col span={{ base: 12, sm: 2 }}>
                 <NumberField label="Potongan PPh" suffix=" %" size="sm" radius="md" min={0} max={100} decimalScale={2} value={pph} onChange={(v) => setPphInput(Number(v) || 0)} />
-              </Grid.Col>
+              </Grid.Col>}
+              {isDp && dpPo && (
+                <Grid.Col span={{ base: 12, sm: 4 }}>
+                  <NumberField
+                    label="Nilai uang muka"
+                    withAsterisk
+                    money
+                    size="sm"
+                    radius="md"
+                    prefix="Rp "
+                    value={dpAmount}
+                    error={errors.amount}
+                    onChange={(v) => setDpInput(Number(v) || 0)}
+                  />
+                </Grid.Col>
+              )}
+              {isDp && dpPo && (
+                <Grid.Col span={{ base: 12, sm: 8 }}>
+                  <Group
+                    justify="space-between"
+                    px="md"
+                    py="sm"
+                    bg="primary.0"
+                    style={{ border: '1px solid var(--mantine-color-primary-1)', borderRadius: 'var(--mantine-radius-md)' }}
+                  >
+                    <Box>
+                      <Text fz={11} fw={600} c="primary.9">{dpLabelOf(dpPo)} menurut termin</Text>
+                      <Text fz={11} c="slate.6">{termText(dpPo.term)} · total {poDocLabel(dpPo)} {rupiah(poTotal(dpPo))}</Text>
+                      {dpAmount !== dpBase && <Text fz={11} fw={600} c="orange.8">Nilai di invoice berbeda dari termin ({rupiah(dpBase)})</Text>}
+                    </Box>
+                    <Text fz={22} fw={700} c="primary.9">{rupiah(dpAmount)}</Text>
+                  </Group>
+                </Grid.Col>
+              )}
               <Grid.Col span={{ base: 12, sm: 6 }}>
                 <FileField label="Invoice vendor" withAsterisk value={inv} error={errors.files} onChange={setInv} />
               </Grid.Col>
               <Grid.Col span={{ base: 12, sm: 6 }}>
-                <FileField label="Faktur pajak" withAsterisk value={tax} error={errors.files} onChange={setTax} />
+                <FileField label={isDp ? 'Faktur pajak (opsional)' : 'Faktur pajak'} withAsterisk={!isDp} value={tax} error={isDp ? undefined : errors.files} onChange={setTax} />
               </Grid.Col>
             </Grid>
           )}
@@ -896,12 +1047,12 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
         {step.value === 'items' && (
           <TotalsBand
             rows={[
-              { label: 'DPP', value: rupiah(dpp) },
+              { label: isDp ? 'Uang muka' : 'DPP', value: rupiah(dpp) },
               ppn > 0 && { label: ppnLabel(activeLines), value: `+${rupiah(ppn)}` },
               pphVal > 0 && { label: 'Potongan PPh', value: `-${rupiah(pphVal)}`, color: 'red.7' },
               dpDeduct > 0 && { label: 'Potongan uang muka', value: `-${rupiah(dpDeduct)}`, color: 'red.7' },
             ]}
-            totalLabel="Hutang Usaha"
+            totalLabel="Hutang ke vendor"
             total={total}
           />
         )}

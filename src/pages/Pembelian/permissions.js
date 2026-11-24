@@ -46,6 +46,8 @@ const APPROVE = {
   procurement: ['cfo', 'bm'], // hasil bidding & vendor tunggal
   bapp: ['cfo', 'bm'],
   pr: ['cfo', 'bm'], // PR DP, pelunasan, retensi
+  // Membatalkan uang muka mengubah syarat bayar yang disepakati di pengadaan: cukup Chief Finance.
+  dpWaiver: ['cfo'],
 };
 export const approvalChain = (doc) => APPROVE[doc] ?? [];
 

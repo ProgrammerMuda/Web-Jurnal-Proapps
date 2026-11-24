@@ -177,7 +177,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
               <Table.Td fz="sm">{r.doNumber}</Table.Td>
               <Table.Td><Money>{r.lines.reduce((n, l) => n + l.qty, 0)}</Money></Table.Td>
               <Table.Td>{!receiptConfirmed(r)
-                ? <StatusPill map={RECEIPT_STATUS} status={r.status} size="xs" />
+                ? <StatusPill map={RECEIPT_STATUS} status={r.status} size="xs" approval={{ doc: r, kind: 'bapp' }} />
                 : <Badge size="xs" radius="sm" variant="light" color={open ? 'orange' : 'green'} fw={700} tt="none">{open ? 'Belum difaktur' : 'Sudah difaktur'}</Badge>}</Table.Td>
               <Table.Td ta="right">
                 <RowMenu label={r.number} items={[
@@ -266,7 +266,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
             <Table.Td fz="sm" fw={600} c="slate.9">{vendor(p.vendorId)}</Table.Td>
             <Table.Td fz="sm">{p.kind === 'dp' ? 'Di muka' : 'Pelunasan'}</Table.Td>
             <Table.Td>
-              <Tooltip label={p.note} disabled={p.status !== 'ditolak' || !p.note} withArrow fz="xs"><span><StatusPill map={PR_STATUS} status={p.status} size="xs" /></span></Tooltip>
+              <Tooltip label={p.note} disabled={p.status !== 'ditolak' || !p.note} withArrow fz="xs"><span><StatusPill map={PR_STATUS} status={p.status} size="xs" approval={{ doc: p, kind: 'pr' }} /></span></Tooltip>
             </Table.Td>
             <Table.Td>
               {pv ? (

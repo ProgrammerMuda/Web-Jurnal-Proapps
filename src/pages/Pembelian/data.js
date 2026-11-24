@@ -752,8 +752,6 @@ const rcOngkir = {
   date: '2026-11-03',
   doNumber: 'SJ-ALF-7781',
   kind: 'barang',
-  // Faktur pajaknya utuh, jadi PPN-nya dikreditkan dan tidak menempel ke barang.
-  vatNotCreditable: false,
   createdBy: 'Rudi Hermawan · Kepala Gudang',
   lines: [
     { itemId: 'o1', qty: 100, rejected: 0 },

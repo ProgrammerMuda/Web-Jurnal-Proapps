@@ -5,6 +5,9 @@ import { ArrowCounterClockwise, Calculator, CurrencyCircleDollar, DotsThreeVerti
 import AttachmentList from './Attachments.jsx';
 import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section, StatusPill } from './components.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
+import JournalCard from './JournalCard.jsx';
+import { invoiceJournal } from './journal.js';
+import { useData } from '@/lib/store.jsx';
 import { personLabel } from './data.js';
 import { ReasonModal } from './Dialogs.jsx';
 import { downloadInvoice } from './invoicePdf.js';
@@ -33,6 +36,7 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
   const role = pb.role;
   const po = pb.posById[inv.poId] ?? pb.posById[inv.lines[0]?.poId];
   const vendor = pb.vendorsById[inv.vendorId];
+  const { stockMoves, products } = useData();
   const t = invTotals(inv, pb.calc);
   const status = invStatus(inv, t);
   const overdue = invOverdue(inv, t);
@@ -239,7 +243,7 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
                     <Table.Tr key={p.id}>
                       <Table.Td><DocNumber onClick={() => go({ name: 'pr', id: p.id })}>{p.number}</DocNumber></Table.Td>
                       <Table.Td fz="sm">{p.kind === 'dp' ? 'Di muka' : 'Pelunasan'}</Table.Td>
-                      <Table.Td><StatusPill map={PR_STATUS} status={p.status} size="xs" /></Table.Td>
+                      <Table.Td><StatusPill map={PR_STATUS} status={p.status} size="xs" approval={{ doc: p, kind: 'pr' }} /></Table.Td>
                       <Table.Td ta="right" fz="sm" fw={700}>{rupiah(p.alloc?.[inv.id] ?? p.amount)}</Table.Td>
                       <Table.Td ta="right"><PrActions pr={p} pb={pb} openDialog={openDialog} /></Table.Td>
                     </Table.Tr>
@@ -300,6 +304,12 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
                 </Text>
               </Group>
             </Card>
+            <JournalCard
+              lines={inv.cancelled ? [] : invoiceJournal(inv, pb, { stockMoves, products })}
+              description={`Atas ${inv.number}`}
+              onDetail={() => go({ name: 'journal', kind: 'invoice', id: inv.id })}
+              empty="Faktur dibatalkan — jurnalnya dibalik pada tanggal pembatalan."
+            />
             <PurchaseFlow pb={pb} go={go} current={{ kind: 'invoice', id: inv.id }} />
           </Stack>
         </Grid.Col>

@@ -1,4 +1,4 @@
-// Rute modul Pembelian (disimpan di hash): #pembelian[/tab/<tab> | /fppbj/new | /fppbj/<id>[/edit] | /po/<id> | /receipt/<id> | /invoice/new[?from=<id,id>] | /invoice/<id> | /pr/new[?inv=<id,id>|?po=<id>] | /pr/<id> | /pv/<id>[/jurnal]].
+// Rute modul Pembelian (disimpan di hash): #pembelian[/tab/<tab> | /fppbj/new | /fppbj/<id>[/edit] | /po/<id> | /receipt/<id> | /invoice/new[?from=<id,id>] | /invoice/<id> | /pr/new[?inv=<id,id>|?po=<id>] | /pr/<id> | /pv/<id>[/jurnal] | /invoice/<id>/jurnal | /receipt/<id>/jurnal].
 // Tiap tab = satu menu di sidebar (submenu Pembelian), seperti di produksi.
 export const pembelianTabs = [
   { value: 'overview', label: 'Ringkasan Pembelian', title: 'Ringkasan Pembelian' },
@@ -25,12 +25,14 @@ export function parseHash(h) {
   if (a === 'fppbj' && b === 'new') return { tab: 'fppbj', view: { name: 'fppbj-new' } };
   if (a === 'fppbj' && b) return { tab: 'fppbj', view: { name: c === 'edit' ? 'fppbj-edit' : 'fppbj', id: b } };
   if (a === 'po' && b) return { tab: 'orders', view: { name: 'po', id: b } };
+  if (a === 'receipt' && b && c === 'jurnal') return { tab: 'receipts', view: { name: 'journal', kind: 'receipt', id: b } };
   if (a === 'receipt' && b) return { tab: 'receipts', view: { name: 'receipt', id: b } };
-  if (a === 'invoice' && b === 'new') return { tab: 'bills', view: { name: 'invoice-new', receiptIds: from ? from.split(',').filter(Boolean) : [], poId: poFrom || null } };
+  if (a === 'invoice' && b === 'new') return { tab: 'bills', view: { name: 'invoice-new', receiptIds: from ? from.split(',').filter(Boolean) : [], poId: poFrom || null, dpPoId: q.get('dp') || null } };
+  if (a === 'invoice' && b && b !== 'new' && c === 'jurnal') return { tab: 'bills', view: { name: 'journal', kind: 'invoice', id: b } };
   if (a === 'invoice' && b) return { tab: 'bills', view: { name: 'invoice', id: b } };
   if (a === 'pr' && b === 'new') return { tab: 'payments', view: { name: 'pr-new', invoiceIds: invFrom ? invFrom.split(',').filter(Boolean) : [], poId: poFrom || null } };
   if (a === 'pr' && b) return { tab: 'payments', view: { name: 'pr', id: b } };
-  if (a === 'pv' && b && c === 'jurnal') return { tab: 'payments', view: { name: 'journal', id: b } };
+  if (a === 'pv' && b && c === 'jurnal') return { tab: 'payments', view: { name: 'journal', kind: 'pv', id: b } };
   if (a === 'pv' && b) return { tab: 'payments', view: { name: 'voucher', id: b } };
   if (a === 'laporan-hutang') return { tab: 'payables', view: { name: 'home' } };
   return { tab: a === 'tab' && tabKeys.includes(b) ? b : 'overview', view: { name: 'home' } };
@@ -44,12 +46,12 @@ export function formatHash(v) {
     case 'fppbj-edit': return `#pembelian/fppbj/${v.id}/edit`;
     case 'po': return `#pembelian/po/${v.id}`;
     case 'receipt': return `#pembelian/receipt/${v.id}`;
-    case 'invoice-new': return `#pembelian/invoice/new${v.poId ? `?po=${v.poId}` : v.receiptIds?.length ? `?from=${v.receiptIds.join(',')}` : ''}`;
+    case 'invoice-new': return `#pembelian/invoice/new${v.dpPoId ? `?dp=${v.dpPoId}` : v.poId ? `?po=${v.poId}` : v.receiptIds?.length ? `?from=${v.receiptIds.join(',')}` : ''}`;
     case 'invoice': return `#pembelian/invoice/${v.id}`;
     case 'pr-new': return `#pembelian/pr/new${v.poId ? `?po=${v.poId}` : v.invoiceIds?.length ? `?inv=${v.invoiceIds.join(',')}` : ''}`;
     case 'pr': return `#pembelian/pr/${v.id}`;
     case 'voucher': return `#pembelian/pv/${v.id}`;
-    case 'journal': return `#pembelian/pv/${v.id}/jurnal`;
+    case 'journal': return `#pembelian/${v.kind && v.kind !== 'pv' ? v.kind : 'pv'}/${v.id}/jurnal`;
     default: return '#pembelian';
   }
 }

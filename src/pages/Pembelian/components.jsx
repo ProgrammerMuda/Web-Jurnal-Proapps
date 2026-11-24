@@ -16,11 +16,13 @@ import {
   Text,
   TextInput,
   ThemeIcon,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import { Fragment, useState } from 'react';
 import { Buildings, Check, CheckCircle, DotsThreeVertical, Info, MagnifyingGlass, Warning } from '@/components/Icon.jsx';
 import { roleOf } from './data.js';
+import { approvalState, roleLabel } from './permissions.js';
 
 import { FormModal } from '@/components/common.jsx';
 
@@ -61,12 +63,32 @@ export function SuccessModal({ opened, onClose, title, text, children }) {
   );
 }
 
-export function StatusPill({ map, status, size = 'sm' }) {
+// Semua status yang menunggu approval memakai satu nama, "Menunggu approval". Siapa yang
+// harus menyetujui (dan giliran siapa sekarang) ditaruh di info pada pill-nya, bukan di
+// namanya: nama status tetap seragam di semua alur, rinciannya tetap bisa dibaca.
+// Kirim `approval={{ doc, kind }}` agar info approver-nya muncul.
+export function approvalNote(doc, kind) {
+  const ap = approvalState(doc, kind);
+  if (!ap.total) return null;
+  const chain = ap.chain.map(roleLabel).join(' lalu ');
+  return ap.next
+    ? `Butuh approval ${chain}. Sekarang menunggu ${roleLabel(ap.next)} (${ap.done.length + 1} dari ${ap.total}).`
+    : `Butuh approval ${chain}.`;
+}
+
+export function StatusPill({ map, status, size = 'sm', approval }) {
   const s = map[status] ?? { label: status, color: 'gray' };
-  return (
-    <Badge size={size} radius="sm" variant="light" color={s.color} fw={700} tt="none">
+  const note = s.pending && approval ? approvalNote(approval.doc, approval.kind) : null;
+  const pill = (
+    <Badge size={size} radius="sm" variant="light" color={s.color} fw={700} tt="none" rightSection={note ? <Info size={size === 'xs' ? 11 : 13} /> : null}>
       {s.label}
     </Badge>
+  );
+  if (!note) return pill;
+  return (
+    <Tooltip label={note} multiline w={240} withArrow fz="xs" events={{ hover: true, focus: true, touch: true }}>
+      <span tabIndex={0} style={{ display: 'inline-flex', cursor: 'help' }}>{pill}</span>
+    </Tooltip>
   );
 }
 

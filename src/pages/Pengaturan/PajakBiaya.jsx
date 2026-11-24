@@ -73,11 +73,6 @@ export default function PajakBiaya() {
               />
             ))}
           </Group>
-          <Callout tone="info">
-            Perusahaan PKP tetap bisa menandai satu penerimaan sebagai{' '}
-            <b>PPN tidak dapat dikreditkan</b> — misalnya faktur pajak cacat. Untuk dokumen itu,
-            PPN-nya ikut masuk harga barang.
-          </Callout>
         </Stack>
       </Section>
 

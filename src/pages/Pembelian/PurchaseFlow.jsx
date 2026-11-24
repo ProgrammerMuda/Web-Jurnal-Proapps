@@ -1,14 +1,35 @@
-// Panel "Alur pembelian": rantai dokumen dari permintaan sampai Payment Voucher.
+// Panel "Alur pembelian": rantai dokumen dari permintaan sampai pembayaran.
 // Dipakai di semua halaman detail; dokumen yang sedang dibuka ditandai "Dokumen ini".
+//
+// Uang muka punya rantainya sendiri (faktur DP -> PR -> PV) yang terjadi SEBELUM barang
+// datang. Dulu dokumen-dokumennya tersebar ke langkah Faktur dan Payment Voucher di ujung
+// alur, sehingga PO yang baru lunas DP-nya terbaca seperti sudah hampir selesai: Faktur
+// tercentang, PV tercentang, padahal penerimaan dan pelunasannya belum ada. Sekarang tiap
+// pembayaran (uang muka, pelunasan) mengelompokkan dokumennya sendiri, dan hanya satu
+// langkah yang menyala: yang harus dikerjakan berikutnya.
 import { Badge, Box, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { Check, TreeStructure } from '@/components/Icon.jsx';
 import { DocNumber, Section, StatusPill } from './components.jsx';
-import { advancePct, PR_STATUS, PROC_STATUS, routeLabel } from './utils.js';
+import { termMechanics } from './paymentTerms.js';
+import {
+  advancePct,
+  dpState,
+  poAllJasa,
+  isDpInvoice,
+  poDpAmount,
+  PR_STATUS,
+  PROC_STATUS,
+  PV_STATUS,
+  pvStatus,
+  routeLabel,
+  rupiah,
+} from './utils.js';
 
-// Satu langkah: titik status + judul + dokumen terkait.
-export function FlowStep({ index, current, last, title, children, mark, state }) {
+// Satu langkah: titik status + judul (+ status di kanan) + isi.
+export function FlowStep({ index, current, last, title, meta, right, children, mark, state }) {
   const done = state ? state === 'done' : index < current;
   const active = state ? state === 'active' : index === current;
+  const skipped = state === 'skipped';
   return (
     <Group gap="sm" align="flex-start" wrap="nowrap">
       <Stack align="center" gap={0} style={{ alignSelf: 'stretch', flexShrink: 0 }}>
@@ -19,19 +40,57 @@ export function FlowStep({ index, current, last, title, children, mark, state })
           color={done ? 'secondary.7' : 'slate'}
           style={active ? { background: 'var(--mantine-color-secondary-1)', borderColor: 'var(--mantine-color-secondary-3)' } : undefined}
         >
-          {done ? <Check size={14} /> : <Text fz={mark ? 9 : 11} fw={700} c={active ? 'secondary.9' : 'slate.5'}>{mark ?? index + 1}</Text>}
+          {done ? <Check size={14} /> : <Text fz={11} fw={700} c={active ? 'secondary.9' : 'slate.5'}>{skipped ? '—' : mark ?? index + 1}</Text>}
         </ThemeIcon>
         {!last && <Box w={2} mt={4} style={{ flex: 1, minHeight: 16, background: done ? 'var(--mantine-color-secondary-7)' : 'var(--mantine-color-gray-3)' }} />}
       </Stack>
       <Box pb={last ? 0 : 'md'} style={{ minWidth: 0, flex: 1 }}>
-        <Text fz="sm" fw={active ? 700 : 600} c={done || active ? 'slate.9' : 'slate.6'}>{title}</Text>
-        <Box mt={2}>{children}</Box>
+        <Group justify="space-between" gap="xs" wrap="nowrap" mih={26}>
+          <Box style={{ minWidth: 0 }}>
+            <Text fz="sm" fw={active ? 700 : 600} c={done || active ? 'slate.9' : 'slate.6'} lh={1.3}>{title}</Text>
+            {meta && <Text fz={11} c="slate.6" lh={1.3}>{meta}</Text>}
+          </Box>
+          {right}
+        </Group>
+        {children && <Box mt={4}>{children}</Box>}
       </Box>
     </Group>
   );
 }
 
 const Empty = ({ children }) => <Text fz="xs" c="slate.6">{children}</Text>;
+
+// Baris dokumen di dalam kelompok pembayaran: nama dokumen di kiri, nomornya di kanan.
+// Kolom kiri selebar tetap supaya ketiga baris (Faktur, Payment Request, Payment Voucher)
+// rata dan terbaca sebagai urutan.
+function SubRow({ label, children }) {
+  return (
+    <Group gap="sm" wrap="nowrap" align="flex-start" py={3}>
+      <Text fz={11} c="slate.6" w={104} style={{ flexShrink: 0 }} lh="20px">{label}</Text>
+      <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>{children}</Stack>
+    </Group>
+  );
+}
+const SubGroup = ({ children }) => (
+  <Box
+    px="sm"
+    py={6}
+    style={{ border: '1px solid var(--mantine-color-gray-2)', borderRadius: 'var(--mantine-radius-md)', background: 'var(--mantine-color-slate-0)' }}
+  >
+    {children}
+  </Box>
+);
+
+// Status uang muka dalam kata pendek, untuk pil di kanan judul langkah.
+const DP_PILL = {
+  belum_faktur: { label: 'Belum ditagih', color: 'orange' },
+  belum_bayar: { label: 'Belum dibayar', color: 'orange' },
+  lunas: { label: 'Lunas', color: 'green' },
+  dibatalkan: { label: 'Dibatalkan', color: 'gray' },
+};
+const Pill = ({ label, color }) => (
+  <Badge size="sm" radius="xl" variant="light" color={color} tt="none" fw={600} style={{ flexShrink: 0 }}>{label}</Badge>
+);
 
 // Telusuri rantai dokumen mulai dari dokumen yang sedang dibuka.
 // current = { kind: 'fppbj' | 'po' | 'receipt' | 'invoice' | 'pr' | 'voucher', id }
@@ -64,110 +123,150 @@ export function resolveChain(current, pb) {
   const prs = pb.prs.filter(
     (p) => p.status !== 'ditolak' && (poIds.includes(p.poId) || invoices.some((i) => p.invoiceIds?.includes(i.id))),
   );
+  // Uang muka dipisah dari pelunasan di setiap jenis dokumen: faktur, PR, dan PV.
+  const dpInvoices = invoices.filter(isDpInvoice);
+  const billInvoices = invoices.filter((i) => !isDpInvoice(i));
   const dps = prs.filter((p) => p.kind === 'dp');
   const pays = prs.filter((p) => p.kind !== 'dp');
   const vouchers = pb.vouchers.filter((v) => (v.prIds ?? []).some((x) => prs.some((p) => p.id === x)));
-  return { fppbj, pos, receipts, invoices, dps, pays, vouchers };
+  const isDpVoucher = (v) => (v.prIds ?? []).some((x) => dps.some((p) => p.id === x));
+  return {
+    fppbj,
+    pos,
+    receipts,
+    invoices,
+    dpInvoices,
+    billInvoices,
+    dps,
+    pays,
+    vouchers,
+    dpVouchers: vouchers.filter(isDpVoucher),
+    payVouchers: vouchers.filter((v) => !isDpVoucher(v)),
+  };
 }
 
 export default function PurchaseFlow({ pb, go, current, description = 'Dokumen yang saling terkait' }) {
-  const { fppbj, pos, receipts, invoices, dps, pays, vouchers } = resolveChain(current, pb);
+  const { fppbj, pos, receipts, dpInvoices, billInvoices, dps, pays, dpVouchers, payVouchers } = resolveChain(current, pb);
   const proc = fppbj?.procurement;
 
   const here = (kind, id) => current.kind === kind && current.id === id;
-  const mine = (kind, id) =>
-    here(kind, id) ? <Badge size="xs" radius="sm" variant="light" color="primary" tt="none">Dokumen ini</Badge> : null;
 
-  // Satu baris dokumen: nomor (klik = pindah halaman) + badge opsional.
-  const docRow = (key, route, id, number, extra) => (
-    <Group key={key} gap={6}>
+  // Satu baris dokumen: nomor (klik = pindah halaman) + penanda + status opsional.
+  const docRow = (route, id, number, extra) => (
+    <Group key={id} gap={6} wrap="nowrap">
       {here(route, id) ? (
         <Text fz="xs" fw={700} c="primary.9">{number}</Text>
       ) : (
-        <DocNumber onClick={() => go({ name: route === 'voucher' ? 'voucher' : route, id })}>{number}</DocNumber>
+        <DocNumber onClick={() => go({ name: route, id })}>{number}</DocNumber>
       )}
-      {mine(route, id)}
+      {here(route, id) && <Badge size="xs" radius="sm" variant="light" color="primary" tt="none">Dokumen ini</Badge>}
       {extra}
     </Group>
   );
+  const prRow = (p) => docRow('pr', p.id, p.number, <StatusPill map={PR_STATUS} status={p.status} size="xs" approval={{ doc: p, kind: 'pr' }} />);
+  const pvRow = (v) => docRow('voucher', v.id, v.number, <StatusPill map={PV_STATUS} status={pvStatus(v)} size="xs" />);
 
-  // Langkah "Bayar di muka" hanya ditampilkan kalau terminnya memang memuat pembayaran di
-  // muka. Pada CAD atau bayar penuh di akhir, langkah itu tidak akan pernah terjadi —
-  // menampilkannya sebagai "Tidak ada" hanya memanjangkan alur dan mengaburkan langkah yang
-  // benar-benar perlu dikerjakan.
-  //
-  // Terminnya dibaca dari pesanan. Selama pesanan belum terbit terminnya belum pasti, jadi
-  // langkahnya tetap ditampilkan; begitu PR uang muka sudah ada, ia selalu ditampilkan apa pun
-  // terminnya (dokumennya nyata, tidak boleh disembunyikan).
-  const showDp = dps.length > 0 || !pos.length || pos.some((p) => advancePct(p.term) > 0);
+  // --- Uang muka ---------------------------------------------------------------------------
+  // Ditampilkan bila termin pesanan memuat pembayaran di muka, atau dokumennya sudah ada
+  // (dokumen nyata tidak boleh disembunyikan). Sebelum pesanan terbit terminnya belum pasti,
+  // jadi langkahnya belum ditampilkan — alur cukup berhenti di Pesanan.
+  const dpPos = pos.filter((p) => advancePct(p.term) > 0);
+  const showDp = dpPos.length > 0 || dps.length > 0 || dpInvoices.length > 0;
+  const dpStates = dpPos.map((p) => dpState(p, pb.calc)).filter(Boolean);
+  // Beberapa pesanan sekaligus (dari satu permintaan): yang paling belum beres yang dilaporkan.
+  const RANK = ['belum_faktur', 'belum_bayar', 'lunas', 'dibatalkan'];
+  const dp = dpStates.length
+    ? dpStates.reduce((a, b) => (RANK.indexOf(b.state) < RANK.indexOf(a.state) ? b : a))
+    : dps.some((p) => p.status === 'dibayar') ? { state: 'lunas' } : { state: dps.length ? 'belum_bayar' : 'belum_faktur' };
+  const dpPct = dpPos.length ? advancePct(dpPos[0].term) : null;
+  const dpAmount = dpPos.reduce((n, p) => n + poDpAmount(p), 0);
+  // PR uang muka lama (sebelum ada faktur DP) tidak punya faktur; barisnya tidak ditampilkan
+  // agar tidak terbaca "belum dicatat" padahal memang tidak akan pernah ada.
+  const legacyDp = !dpInvoices.length && dps.length > 0;
+  // SPK tidak menunggu barang datang, dan termin progres / berkala tidak punya "pelunasan":
+  // tiap termin atau periode ditagih sendiri-sendiri.
+  const jasa = pos.length > 0 && pos.every(poAllJasa);
+  const split = pos.length ? termMechanics(pos[0].term).split : 'none';
+  const sebelum = jasa ? 'sebelum pekerjaan dimulai' : 'sebelum barang datang';
+  const tagihan = split === 'terms' ? 'termin' : split === 'periods' ? 'per periode' : showDp ? 'pelunasan' : null;
 
-  const state = {
-    fppbj: !fppbj ? 'pending' : pos.length || fppbj.status === 'selesai' ? 'done' : 'active',
-    // PO langsung tidak lewat permintaan/pengadaan: dua langkah pertama dibiarkan abu.
-    proc: !fppbj ? 'pending' : proc?.status === 'disetujui' || pos.length ? 'done' : fppbj.route ? 'active' : 'pending',
-    po: !pos.length ? 'pending' : pos.every((p) => p.sent) ? 'done' : 'active',
-    dp: dps.some((p) => p.status === 'dibayar') ? 'done' : dps.length ? 'active' : 'pending',
-    // Penerimaan sudah bisa dicatat sejak pesanannya ada, tidak menunggu dokumennya terkirim.
-    receipt: receipts.length ? 'done' : pos.length ? 'active' : 'pending',
-    invoice: invoices.length ? 'done' : receipts.length ? 'active' : 'pending',
-    pay: pays.length && pays.every((p) => p.status === 'dibayar') ? 'done' : pays.length ? 'active' : 'pending',
-    pv: vouchers.length ? 'done' : 'pending',
+  // --- Keadaan tiap langkah -------------------------------------------------------------------
+  const steps = [
+    { key: 'fppbj', done: !!fppbj && (pos.length > 0 || fppbj.status === 'selesai'), skipped: !fppbj },
+    { key: 'proc', done: !!fppbj && (proc?.status === 'disetujui' || pos.length > 0), skipped: !fppbj },
+    { key: 'po', done: pos.length > 0 && pos.every((p) => p.sent) },
+    showDp && { key: 'dp', done: dp.state === 'lunas' || dp.state === 'dibatalkan' },
+    { key: 'receipt', done: receipts.length > 0 },
+    { key: 'invoice', done: billInvoices.length > 0 },
+    { key: 'pay', done: pays.length > 0 && pays.every((p) => p.status === 'dibayar') },
+  ].filter(Boolean);
+  // Satu langkah saja yang menyala: yang pertama belum selesai. Langkah lain yang belum
+  // selesai tetap abu, supaya mata langsung tertuju ke pekerjaan berikutnya.
+  const next = steps.find((s) => !s.done && !s.skipped)?.key;
+  const stateOf = (key) => {
+    const s = steps.find((x) => x.key === key);
+    if (s.skipped) return 'skipped';
+    return s.done ? 'done' : key === next ? 'active' : 'pending';
   };
+  const indexOf = (key) => steps.findIndex((s) => s.key === key);
+  const lastKey = steps[steps.length - 1].key;
+  const step = (key, props, children) => (
+    <FlowStep index={indexOf(key)} state={stateOf(key)} last={key === lastKey} {...props}>{children}</FlowStep>
+  );
 
   return (
     <Section divided icon={TreeStructure} title="Alur pembelian" description={description}>
       <Stack gap={0}>
-        <FlowStep index={0} mark={fppbj ? undefined : '—'} state={state.fppbj} title="Permintaan Pembelian">
-          {fppbj
-            ? docRow(fppbj.id, 'fppbj', fppbj.id, fppbj.number)
-            : <Empty>Tanpa permintaan (PO langsung)</Empty>}
-        </FlowStep>
+        {step('fppbj', { title: 'Permintaan Pembelian' },
+          fppbj ? docRow('fppbj', fppbj.id, fppbj.number) : <Empty>Tanpa permintaan (PO langsung)</Empty>)}
 
-        <FlowStep index={1} mark={fppbj ? undefined : '—'} state={state.proc} title="Pengadaan">
-          {fppbj?.route ? (
+        {step('proc', { title: 'Pengadaan' },
+          fppbj?.route ? (
             <Text fz="xs" c="slate.6">
               {routeLabel(fppbj)}{proc?.status ? ` · ${PROC_STATUS[proc.status]?.label ?? proc.status}` : ''}
             </Text>
-          ) : <Empty>{fppbj ? 'Belum dimulai' : 'Dilewati'}</Empty>}
-        </FlowStep>
+          ) : <Empty>{fppbj ? 'Belum dimulai' : 'Dilewati'}</Empty>)}
 
-        <FlowStep index={2} state={state.po} title="Pesanan (PO / SPK)">
-          {pos.length
-            ? pos.map((p) => <Box key={p.id}>{docRow(p.id, 'po', p.id, p.number)}</Box>)
-            : <Empty>Belum dibuat</Empty>}
-        </FlowStep>
+        {step('po', { title: 'Pesanan (PO / SPK)' },
+          pos.length ? <Stack gap={2}>{pos.map((p) => docRow('po', p.id, p.number))}</Stack> : <Empty>Belum dibuat</Empty>)}
 
-        {showDp && (
-          <FlowStep index={3} mark="DP" state={state.dp} title="Bayar di muka">
-            {dps.length
-              ? dps.map((p) => <Box key={p.id}>{docRow(p.id, 'pr', p.id, p.number, <StatusPill map={PR_STATUS} status={p.status} size="xs" />)}</Box>)
-              : <Empty>Belum diajukan</Empty>}
-          </FlowStep>
-        )}
+        {showDp && step('dp', {
+          title: dpPct != null ? `Uang muka ${dpPct}%` : 'Uang muka',
+          meta: dpAmount > 0 ? `${rupiah(dpAmount)} · dibayar ${sebelum}` : `Dibayar ${sebelum}`,
+          right: <Pill {...DP_PILL[dp.state]} />,
+        }, dp.state === 'dibatalkan' ? (
+          <Empty>Ditagih penuh tanpa uang muka (disetujui Chief Finance)</Empty>
+        ) : (
+          <SubGroup>
+            {!legacyDp && (
+              <SubRow label="Faktur uang muka">
+                {dpInvoices.length ? dpInvoices.map((i) => docRow('invoice', i.id, i.number)) : <Empty>Belum dicatat</Empty>}
+              </SubRow>
+            )}
+            <SubRow label="Payment Request">
+              {dps.length ? dps.map(prRow) : <Empty>Belum diajukan</Empty>}
+            </SubRow>
+            <SubRow label="Payment Voucher">
+              {dpVouchers.length ? dpVouchers.map(pvRow) : <Empty>Belum terbit</Empty>}
+            </SubRow>
+          </SubGroup>
+        ))}
 
-        <FlowStep index={3} state={state.receipt} title="Penerimaan">
-          {receipts.length
-            ? receipts.map((r) => <Box key={r.id}>{docRow(r.id, 'receipt', r.id, r.number)}</Box>)
-            : <Empty>Belum ada</Empty>}
-        </FlowStep>
+        {step('receipt', { title: 'Penerimaan barang / jasa' },
+          receipts.length ? <Stack gap={2}>{receipts.map((r) => docRow('receipt', r.id, r.number))}</Stack> : <Empty>Belum ada</Empty>)}
 
-        <FlowStep index={4} state={state.invoice} title="Faktur">
-          {invoices.length
-            ? invoices.map((i) => <Box key={i.id}>{docRow(i.id, 'invoice', i.id, i.number)}</Box>)
-            : <Empty>Belum dibuat</Empty>}
-        </FlowStep>
+        {step('invoice', { title: tagihan ? `Faktur ${tagihan}` : 'Faktur' },
+          billInvoices.length ? <Stack gap={2}>{billInvoices.map((i) => docRow('invoice', i.id, i.number))}</Stack> : <Empty>Belum dibuat</Empty>)}
 
-        <FlowStep index={5} state={state.pay} title="Pelunasan">
-          {pays.length
-            ? pays.map((p) => <Box key={p.id}>{docRow(p.id, 'pr', p.id, p.number, <StatusPill map={PR_STATUS} status={p.status} size="xs" />)}</Box>)
-            : <Empty>Belum ada</Empty>}
-        </FlowStep>
-
-        <FlowStep index={6} mark="PV" state={state.pv} last title="Payment Voucher">
-          {vouchers.length
-            ? vouchers.map((v) => <Box key={v.id}>{docRow(v.id, 'voucher', v.id, v.number)}</Box>)
-            : <Empty>Belum terbit</Empty>}
-        </FlowStep>
+        {step('pay', { title: tagihan ? `Pembayaran ${tagihan}` : 'Pembayaran' },
+          <SubGroup>
+            <SubRow label="Payment Request">
+              {pays.length ? pays.map(prRow) : <Empty>Belum diajukan</Empty>}
+            </SubRow>
+            <SubRow label="Payment Voucher">
+              {payVouchers.length ? payVouchers.map(pvRow) : <Empty>Belum terbit</Empty>}
+            </SubRow>
+          </SubGroup>)}
       </Stack>
     </Section>
   );

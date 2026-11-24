@@ -1,22 +1,24 @@
 // Detail penerimaan: FPB (barang) atau BAPP (jasa) yang dicatat dari sebuah PO.
 import { Badge, Box, Button, Card, Grid, Group, SimpleGrid, Stack, Table, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
 import { Check, DownloadSimple, Info, Package, Paperclip, Receipt, Truck } from '@/components/Icon.jsx';
-import { BackLink, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section } from './components.jsx';
+import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section } from './components.jsx';
 import { approvalState, canCreate, hidesPrices, isApproverTurn, signApproval } from './permissions.js';
 import { landedUnitCost } from './landedCost.js';
 import { useData } from '@/lib/store.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
+import JournalCard from './JournalCard.jsx';
+import { receiptJournal } from './journal.js';
 import AttachmentList from './Attachments.jsx';
 import { downloadReceipt } from './receiptPdf.js';
 import { personLabel } from './data.js';
 import { toast } from './usePb.js';
-import { formatDate, INV_STATUS, invStatus, invTotals, invoicedQty, RECEIPT_STATUS, receiptConfirmed, rupiah, uninvoicedLines } from './utils.js';
+import { dpBlockReason, dpState, DP_STATE, formatDate, INV_STATUS, invStatus, invTotals, invoicedQty, RECEIPT_STATUS, receiptConfirmed, rupiah, uninvoicedLines } from './utils.js';
 import { StatusPill } from './components.jsx';
 
 const th = { th: { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 600, color: 'var(--mantine-color-slate-7)', whiteSpace: 'nowrap' } };
 
 export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
-  const { companySettings } = useData();
+  const { companySettings, stockMoves, products } = useData();
   const po = pb.posById[r.poId];
   const vendor = pb.vendorsById[r.vendorId];
   const isJasa = r.kind === 'jasa';
@@ -34,6 +36,9 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
     return bagian.join(' + ');
   };
   const open = uninvoicedLines(r, pb.invoices).length > 0;
+  // Faktur pelunasan menunggu uang muka pesanannya beres (lunas atau dibatalkan resmi).
+  const dp = dpState(po, pb.calc);
+  const dpTahan = dpBlockReason(dp);
   // BAPP jasa disetujui Atasan dulu (spesifikasi 2.2) sebelum Accounting bisa memfakturkan.
   // Approval BAPP berjenjang dua: Chief Finance lalu Building Manager.
   const ap = approvalState(r, 'bapp', { settled: confirmed });
@@ -71,7 +76,7 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
                 <Title order={2} fz={{ base: 20, md: 24 }} c="slate.9">{r.number}</Title>
                 <CopyIcon value={r.number} size={16} />
                 {!confirmed
-                  ? <StatusPill map={RECEIPT_STATUS} status={r.status} />
+                  ? <StatusPill map={RECEIPT_STATUS} status={r.status} approval={{ doc: r, kind: 'bapp' }} />
                   : <Badge size="sm" radius="sm" variant="light" color={open ? 'orange' : 'green'} fw={700} tt="none">{open ? 'Belum difaktur' : 'Sudah difaktur'}</Badge>}
               </Group>
               <Text fz="sm" c="slate.6">{formatDate(r.date)}</Text>
@@ -91,11 +96,22 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
               <Button radius="md" leftSection={<Check size={16} />} onClick={approveBast}>Setujui BAPP ({ap.done.length + 1}/{ap.total})</Button>
             ) : <Group gap={6}><Text fz="xs" c="slate.7">Menunggu</Text><RoleChip role={ap.next ?? 'cfo'} /></Group>)}
             {confirmed && open && (canCreate(pb.role, 'invoice') ? (
-              <Button radius="md" onClick={() => go({ name: 'invoice-new', receiptIds: [r.id] })}>Catat faktur</Button>
+              <Tooltip label={dpTahan} disabled={!dpTahan} withArrow fz="xs" multiline w={260}>
+                <Button radius="md" disabled={!!dpTahan} onClick={() => go({ name: 'invoice-new', receiptIds: [r.id] })}>Catat faktur</Button>
+              </Tooltip>
             ) : <Group gap={6}><Text fz="xs" c="slate.7">Faktur oleh</Text><RoleChip role="accounting" /></Group>)}
           </Group>
         </Group>
       </Card>
+
+      {confirmed && open && dpTahan && (
+        <Callout tone="warn" title={DP_STATE[dp.state].label}>
+          <Group gap={6} wrap="wrap">
+            <span>{dpTahan}. Faktur pelunasan untuk {docName} ini baru bisa dibuat setelah uang muka beres.</span>
+            {po && <DocNumber onClick={() => go({ name: 'po', id: po.id })}>Lihat {po.number}</DocNumber>}
+          </Group>
+        </Callout>
+      )}
 
       <Grid gutter="lg" align="flex-start">
         <Grid.Col span={{ base: 12, lg: 8.5 }}>
@@ -245,6 +261,12 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
                 </Text>
               )}
             </Card>
+            <JournalCard
+              lines={confirmed ? receiptJournal(r, pb, { stockMoves, products }) : []}
+              description={`Atas ${r.number}`}
+              onDetail={() => go({ name: 'journal', kind: 'receipt', id: r.id })}
+              empty={confirmed ? 'Penerimaan ini tidak bernilai, jadi tidak membentuk jurnal.' : 'Jurnal terbentuk setelah BAPP disetujui penuh.'}
+            />
             <PurchaseFlow pb={pb} go={go} current={{ kind: 'receipt', id: r.id }} />
           </Stack>
         </Grid.Col>

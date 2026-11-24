@@ -1,11 +1,12 @@
 // Detail Payment Voucher (PV / Bukti Kas Keluar): bukti kas benar-benar keluar, dasar jurnal kas keluar.
 import { Badge, Box, Button, Card, Grid, Group, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core';
-import { Calculator, CurrencyCircleDollar, Info, Paperclip, Receipt } from '@/components/Icon.jsx';
+import { CurrencyCircleDollar, Info, Paperclip, Receipt } from '@/components/Icon.jsx';
 import AttachmentList from './Attachments.jsx';
 import { BackLink, CardHead, CopyIcon, DataTable, DocNumber, Section } from './components.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
 import { bankLine, formatDate, PR_STATUS, proofFiles, PV_STATUS, pvPaid, pvStatus, rupiah } from './utils.js';
-import { journalTotals, voucherJournal } from './journal.js';
+import { voucherJournal } from './journal.js';
+import JournalCard from './JournalCard.jsx';
 import { canCreate } from './permissions.js';
 import { StatusPill } from './components.jsx';
 
@@ -41,7 +42,6 @@ export default function VoucherDetail({ voucher: v, pb, onBack, go, openDialog }
               <Group gap="xs" wrap="wrap">
                 <Title order={2} fz={{ base: 20, md: 24 }} c="slate.9">{v.number}</Title>
                 <CopyIcon value={v.number} size={16} />
-                <Badge size="sm" radius="sm" variant="light" color="green" fw={700} tt="none">Payment Voucher</Badge>
                 <StatusPill map={PV_STATUS} status={st} />
               </Group>
               {/* Cukup tanggal PV-nya; vendor dan PR-nya ada di kartu informasi dan tabel di bawah. */}
@@ -49,10 +49,6 @@ export default function VoucherDetail({ voucher: v, pb, onBack, go, openDialog }
             </Box>
           </Group>
           <Group gap="md" wrap="nowrap">
-            <Box ta="right">
-              <Text fz={11} c="slate.6">{paid ? 'Nilai dibayar' : 'Nilai diperintahkan'}</Text>
-              <Text fz={24} fw={700} c="slate.9" style={{ whiteSpace: 'nowrap' }}>{rupiah(v.amount)}</Text>
-            </Box>
             {!paid && canCreate(role, 'pv') && (
               <Button radius="md" onClick={() => openDialog({ type: 'pay', voucherId: v.id })}>Catat pembayaran</Button>
             )}
@@ -101,7 +97,7 @@ export default function VoucherDetail({ voucher: v, pb, onBack, go, openDialog }
                     <Table.Tr key={p.id}>
                       <Table.Td><DocNumber onClick={() => go({ name: 'pr', id: p.id })}>{p.number}</DocNumber></Table.Td>
                       <Table.Td fz="sm">{p.kind === 'dp' ? 'Di muka' : 'Pelunasan'}</Table.Td>
-                      <Table.Td><StatusPill map={PR_STATUS} status={p.status} size="xs" /></Table.Td>
+                      <Table.Td><StatusPill map={PR_STATUS} status={p.status} size="xs" approval={{ doc: p, kind: 'pr' }} /></Table.Td>
                       <Table.Td ta="right" fz="sm" fw={700}>{rupiah(p.amount)}</Table.Td>
                     </Table.Tr>
                   ))}
@@ -123,59 +119,12 @@ export default function VoucherDetail({ voucher: v, pb, onBack, go, openDialog }
                 mencetak judul 11px huruf besar, jadi kartu ini dulu terlihat lain sendiri.
                 "Debit" dan "Kredit" ditulis utuh: singkatan Dr/Cr hanya terbaca oleh yang
                 sudah terbiasa jurnal. */}
-            <Section
-              divided
-              flush
-              icon={Calculator}
-              title="Jurnal Transaksi"
+            <JournalCard
+              lines={jurnal}
               description={`Atas ${v.number}`}
-              right={
-                <Button size="compact-xs" radius="md" variant="light" onClick={() => go({ name: 'journal', id: v.id })}>
-                  Lihat detail
-                </Button>
-              }
-            >
-              {jurnal.map((l, i) => {
-                const dr = l.debit > 0;
-                return (
-                  <Group
-                    key={`${l.code}-${i}`}
-                    gap="md"
-                    wrap="nowrap"
-                    align="flex-start"
-                    px="lg"
-                    py="sm"
-                    style={{
-                      borderTop: i ? '1px solid var(--mantine-color-gray-2)' : undefined,
-                      borderLeft: `3px solid var(--mantine-color-${dr ? 'primary-6' : 'orange-5'})`,
-                    }}
-                  >
-                    <Box style={{ minWidth: 0, flex: 1 }}>
-                      <Text fz={10} fw={700} c={dr ? 'primary.7' : 'orange.8'} tt="uppercase" style={{ letterSpacing: 0.6 }}>
-                        {dr ? 'Debit' : 'Kredit'}
-                      </Text>
-                      <Group gap={6} wrap="nowrap" mt={2}>
-                        <Text fz={11} c="slate.5" ff="monospace" style={{ flexShrink: 0, letterSpacing: 0.3 }}>{l.code ?? '—'}</Text>
-                        <Text fz="xs" fw={600} c="slate.9" lh={1.3} truncate>{l.name}</Text>
-                      </Group>
-                      <Text fz="sm" fw={700} c={dr ? 'slate.9' : 'orange.8'} mt={4}>
-                        {rupiah(l.debit || l.credit)}
-                      </Text>
-                    </Box>
-                  </Group>
-                );
-              })}
-              <Group
-                justify="space-between"
-                px="lg"
-                py="sm"
-                bg="slate.0"
-                style={{ borderTop: '1px solid var(--mantine-color-gray-2)' }}
-              >
-                <Text fz={11} fw={700} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.4 }}>Nilai jurnal</Text>
-                <Text fz="sm" fw={700} c="slate.9">{rupiah(journalTotals(jurnal).debit)}</Text>
-              </Group>
-            </Section>
+              onDetail={() => go({ name: 'journal', kind: 'pv', id: v.id })}
+              empty="Jurnal kas keluar terbentuk saat pembayaran PV ini dicatat."
+            />
             <PurchaseFlow pb={pb} go={go} current={{ kind: 'voucher', id: v.id }} />
           </Stack>
         </Grid.Col>

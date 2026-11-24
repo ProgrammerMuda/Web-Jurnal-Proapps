@@ -14,7 +14,7 @@ import {
   Package,
 } from '@/components/Icon.jsx';
 import { PageIntro, ReferencePicker } from './components.jsx';
-import { CreditModal, DetailModal, PayModal, ReasonModal, ReturnModal, ReceiptModal, VoucherModal } from './Dialogs.jsx';
+import { CreditModal, DetailModal, DpInvoiceModal, PayModal, ReasonModal, ReturnModal, ReceiptModal, VoucherModal } from './Dialogs.jsx';
 import FppbjDetail from './FppbjDetail.jsx';
 import FppbjForm from './FppbjForm.jsx';
 import LaporanHutang from './LaporanHutang.jsx';
@@ -193,6 +193,7 @@ export default function Pembelian() {
         />
       )}
       {d?.type === 'receipt' && <ReceiptModal opened onClose={close} po={pb.posById[d.poId]} pb={pb} />}
+      {d?.type === 'dp-invoice' && <DpInvoiceModal opened onClose={close} po={pb.posById[d.poId]} pb={pb} onSaved={(id) => go({ name: 'invoice', id })} />}
       {d?.type === 'pv' && prDoc && <VoucherModal opened onClose={close} pr={prDoc} pb={pb} />}
       {d?.type === 'pay' && pb.vouchersById[d.voucherId] && <PayModal opened onClose={close} voucher={pb.vouchersById[d.voucherId]} pb={pb} />}
       {d?.type === 'pr-reject' && prDoc && (
@@ -264,6 +265,7 @@ export default function Pembelian() {
           pb={pb}
           initialReceiptIds={view.receiptIds}
           initialPoId={view.poId}
+          initialDpPoId={view.dpPoId}
           onBack={() => go({ name: 'tab', tab: 'bills' })}
           onSaved={(id) => go({ name: 'invoice', id })}
         />
@@ -279,10 +281,14 @@ export default function Pembelian() {
     );
   }
 
-  if (view.name === 'journal' && pb.vouchersById[view.id]) {
+  const journalDoc = view.name === 'journal'
+    ? ({ pv: pb.vouchersById, invoice: pb.invoicesById, receipt: pb.receiptsById }[view.kind ?? 'pv'] ?? {})[view.id]
+    : null;
+  if (view.name === 'journal' && journalDoc) {
+    const kembali = { pv: 'voucher', invoice: 'invoice', receipt: 'receipt' }[view.kind ?? 'pv'];
     return (
       <>
-        <JournalDetail voucher={pb.vouchersById[view.id]} pb={pb} onBack={() => go({ name: 'voucher', id: view.id })} go={go} />
+        <JournalDetail kind={view.kind ?? 'pv'} doc={journalDoc} pb={pb} onBack={() => go({ name: kembali, id: view.id })} go={go} />
         {dialogs}
       </>
     );

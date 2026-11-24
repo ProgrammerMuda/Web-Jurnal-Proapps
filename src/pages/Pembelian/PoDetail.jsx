@@ -1,19 +1,23 @@
 // Detail PO: penerimaan, faktur, payment request, dan retur yang turun dari dokumen ini.
 import { useState } from 'react';
-import { ActionIcon, Badge, Box, Button, Card, Divider, Grid, Group, Menu, Select, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core';
-import { ArrowCounterClockwise, Calculator, Check, DotsThreeVertical, DownloadSimple, Info, Money, Package, PaperPlaneTilt, Prohibit, Receipt, ShoppingCart, Truck, X } from '@/components/Icon.jsx';
+import { ActionIcon, Badge, Box, Button, Card, Divider, Grid, Group, Menu, Select, SimpleGrid, Stack, Table, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
+import { ArrowCounterClockwise, Calculator, Check, ClipboardText, DotsThreeVertical, DownloadSimple, Info, Money, Package, PaperPlaneTilt, Prohibit, Receipt, ShoppingCart, Truck, X } from '@/components/Icon.jsx';
 import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section, StatusPill } from './components.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
+import TermBreakdown from './TermBreakdown.jsx';
+import SpkScope from './SpkScope.jsx';
 import { ReasonModal, SendPoModal } from './Dialogs.jsx';
 import { personLabel, TODAY } from './data.js';
 import { freightShare } from './landedCost.js';
 import { freightCapitalized } from '@/pages/Pengaturan/settings.js';
 import { useData } from '@/lib/store.jsx';
 import { picName, warehouseById, warehouseOptions } from '@/pages/Gudang/data.js';
-import { approvalState, isApproverTurn, signApproval, canCreate, hidesPrices, prBlockedBySoD, receiptDoc } from './permissions.js';
+import { approvalState, isApproverTurn, signApproval, canApprove, canCreate, hidesPrices, prBlockedBySoD, receiptDoc } from './permissions.js';
 import {
   formatDate,
   INV_STATUS,
+  RECEIPT_STATUS,
+  receiptConfirmed,
   invStatus,
   invTotals,
   invoicedQty,
@@ -22,15 +26,20 @@ import {
   canReturn as canReturnInv,
   advancePct,
   advanceLabel,
+  dpInvoiceOf,
+  dpBlockReason,
+  dpBlocks,
+  dpState,
+  DP_STATE,
   poAllBarang,
   poAllJasa,
   poDocLabel,
   vendorEmail,
   poDpAmount,
   poStatus,
-  termText,
   poSubtotal,
   scheduleCount,
+  scheduleExcludesDp,
   poPpn,
   ppnLabel,
   poTotal,
@@ -119,6 +128,32 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   // Ada pembayaran di muka? CBD/DP (barang) maupun termin jasa yang menagih di awal.
   const hasDp = advancePct(po.term) > 0;
   const dpPr = prs.find((p) => p.kind === 'dp' && p.status !== 'ditolak');
+  // Uang muka ditagih vendor lewat faktur uang muka dulu; PR-nya dibuat dari faktur itu.
+  const dpInv = dpInvoiceOf(po.id, pb.invoices);
+  // Status uang muka bertahap: belum ditagih -> belum dibayar -> lunas (atau dibatalkan resmi).
+  const dp = dpState(po, pb.calc);
+  const waiver = po.dpWaiver;
+  const waiverPending = waiver?.status === 'diajukan';
+  // Jalan keluar resmi bila vendor tidak pernah menagih DP: selama faktur uang mukanya belum ada.
+  // Termin "DP di luar termin" tidak bisa: jadwal terminnya sudah dikurangi DP, jadi bagian
+  // DP tidak akan pernah tertagih. Pesanan seperti itu harus direvisi terminnya.
+  const canWaive = !po.closedAs && dp?.state === 'belum_faktur' && !waiverPending && !scheduleExcludesDp(po.term) && canCreate(role, 'invoice');
+  const canDecideWaiver = waiverPending && canApprove(role, 'dpWaiver');
+  const [waiverOpen, setWaiverOpen] = useState(false);
+  const [waiverReject, setWaiverReject] = useState(false);
+  const askWaiver = (note) => {
+    pb.update('pos', po.id, (d) => ({ ...d, dpWaiver: { status: 'diajukan', reason: note, by: personLabel(role), at: TODAY } }));
+    setWaiverOpen(false);
+    toast('Pembatalan uang muka diajukan ke Chief Finance.');
+  };
+  const decideWaiver = (ok, note) => {
+    pb.update('pos', po.id, (d) => ({
+      ...d,
+      dpWaiver: { ...d.dpWaiver, status: ok ? 'disetujui' : 'ditolak', decidedBy: personLabel(role), decidedAt: TODAY, ...(ok ? {} : { rejectNote: note }) },
+    }));
+    setWaiverReject(false);
+    toast(ok ? 'Uang muka dibatalkan. Pesanan ditagih penuh di faktur pelunasan.' : 'Pembatalan uang muka ditolak.');
+  };
   const anyRemaining = po.items.some((i) => remainingQty(po, i.id, pb.receipts) > 0);
   // Pesanan tanpa serah terima tidak pernah menghasilkan FPB/BAPP; fakturnya langsung dari sini.
   const pakaiTerima = poHasReceipt(po);
@@ -201,8 +236,17 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                 {po.sent ? 'Kirim ulang' : 'Kirim ke vendor'}
               </Button>
             ) : !po.sent && <RoleChip role="accounting" />)}
-            {!closed && po.sent && hasDp && !dpPr && canCreate(role, 'pr') && (
-              <Button radius="md" variant="light" onClick={() => go({ name: 'pr-new', poId: po.id })}>Buat Payment Request {advanceLabel(po.term)}</Button>
+            {canDecideWaiver && (
+              <>
+                <Button radius="md" variant="default" color="red" onClick={() => setWaiverReject(true)}>Tolak pembatalan DP</Button>
+                <Button radius="md" onClick={() => decideWaiver(true)}>Setujui pembatalan DP</Button>
+              </>
+            )}
+            {!closed && po.sent && dp?.state === 'belum_faktur' && !waiverPending && canCreate(role, 'invoice') && (
+              <Button radius="md" variant="light" onClick={() => go({ name: 'invoice-new', dpPoId: po.id })}>Catat faktur {advanceLabel(po.term) === 'DP' ? 'uang muka' : 'bayar di muka'}</Button>
+            )}
+            {!closed && dp?.state === 'belum_bayar' && !dpPr && dpInv && canCreate(role, 'pr') && (
+              <Button radius="md" variant="light" onClick={() => go({ name: 'pr-new', invoiceIds: [dpInv.id] })}>Buat Payment Request {advanceLabel(po.term)}</Button>
             )}
             {/* Tidak menunggu dokumen terkirim: barang sering datang duluan dan pekerjaan
                 sering sudah jalan sebelum PO/SPK-nya sempat dikirim. */}
@@ -210,16 +254,19 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               <Button radius="md" onClick={() => openDialog({ type: 'receipt', poId: po.id })}>{poAllJasa(po) ? 'Catat BAPP' : 'Catat penerimaan'}</Button>
             )}
             {openLines.length > 0 && canCreate(role, 'invoice') && (
+              <Tooltip label={dpBlockReason(dp)} disabled={!dpBlocks(dp)} withArrow fz="xs" multiline w={260}>
               <Button
                 radius="md"
+                disabled={dpBlocks(dp)}
                 onClick={() => (pakaiTerima
                   ? go({ name: 'invoice-new', receiptIds: receipts.filter((r) => uninvoicedLines(r, pb.invoices).length).map((r) => r.id) })
                   : go({ name: 'invoice-new', poId: po.id }))}
               >
                 Catat faktur
               </Button>
+              </Tooltip>
             )}
-            {canClose && (
+            {(canClose || canWaive) && (
               <>
                 <Divider orientation="vertical" mx={2} />
                 <Menu position="bottom-end" width={240} shadow="md" withinPortal>
@@ -229,9 +276,19 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                     </ActionIcon>
                   </Menu.Target>
                   <Menu.Dropdown>
-                    <Menu.Label>Hentikan pesanan</Menu.Label>
-                    <Menu.Item leftSection={<Prohibit size={16} />} onClick={() => setClosing('ditutup')}>Tutup pesanan</Menu.Item>
-                    <Menu.Item color="red" leftSection={<X size={16} />} onClick={() => setClosing('dibatalkan')}>Batalkan pesanan</Menu.Item>
+                    {canWaive && (
+                      <>
+                        <Menu.Label>Uang muka</Menu.Label>
+                        <Menu.Item leftSection={<Prohibit size={16} />} onClick={() => setWaiverOpen(true)}>Tagih tanpa uang muka</Menu.Item>
+                      </>
+                    )}
+                    {canClose && (
+                      <>
+                        <Menu.Label>Hentikan pesanan</Menu.Label>
+                        <Menu.Item leftSection={<Prohibit size={16} />} onClick={() => setClosing('ditutup')}>Tutup pesanan</Menu.Item>
+                        <Menu.Item color="red" leftSection={<X size={16} />} onClick={() => setClosing('dibatalkan')}>Batalkan pesanan</Menu.Item>
+                      </>
+                    )}
                   </Menu.Dropdown>
                 </Menu>
               </>
@@ -246,6 +303,24 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
           {po.closedBy && <> — {po.closedBy}</>}
         </Callout>
       )}
+
+      {dp && !closed && <DpStatusStrip dp={dp} po={po} go={go} />}
+      <ReasonModal
+        opened={waiverOpen}
+        onClose={() => setWaiverOpen(false)}
+        title="Tagih tanpa uang muka"
+        label="Alasan uang muka tidak ditagih (mis. vendor sudah kirim dan menagih penuh)"
+        confirmLabel="Ajukan ke Chief Finance"
+        onConfirm={askWaiver}
+      />
+      <ReasonModal
+        opened={waiverReject}
+        onClose={() => setWaiverReject(false)}
+        title="Tolak pembatalan uang muka"
+        label="Alasan penolakan"
+        confirmLabel="Tolak"
+        onConfirm={(note) => decideWaiver(false, note)}
+      />
 
       <SendPoModal opened={sendOpen} onClose={() => setSendOpen(false)} po={po} pb={pb} onConfirm={sendPo} />
       <ReasonModal
@@ -306,7 +381,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                       ),
                     ],
                   ['Dari permintaan', fppbj ? <DocNumber onClick={() => go({ name: 'fppbj', id: fppbj.id })}>{fppbj.number}</DocNumber> : '—'],
-                  ['Termin bayar', termText(po.term)],
+                  ['Termin bayar', <TermBreakdown key="term" po={po} noPrice={noPrice} />],
                   // Selalu ditampilkan: belum terkirim justru keadaan yang perlu terlihat.
                   [
                     'Dikirim ke vendor',
@@ -345,6 +420,11 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               </SimpleGrid>
             </Card>
 
+            {isJasa ? (
+              <Section divided flush icon={ClipboardText} title="Lingkup pekerjaan" description={pakaiTerima ? 'Jadwal tagihan, serah terima (BAPP), dan faktur per tahap' : 'Jadwal tagihan dan faktur per tahap'}>
+                <SpkScope po={po} pb={pb} receipts={receipts} pakaiTerima={pakaiTerima} noPrice={noPrice} />
+              </Section>
+            ) : (
             <Section divided flush icon={Package} title="Item pesanan" description={pakaiTerima ? 'Jumlah dipesan, diterima, dan difaktur per item' : 'Jumlah dipesan dan difaktur per item'} right={count(po.items.length, 'item')}>
               <Box style={{ overflow: 'auto' }}>
                 <Table verticalSpacing="xs" horizontalSpacing="sm" miw={560} styles={th}>
@@ -387,6 +467,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               </Box>
               {!poAllBarang(po) && <Box p="lg" pt={0}><Callout>Item jasa: lingkup, periode, dan milestone mengikuti penawaran pemenang.</Callout></Box>}
             </Section>
+            )}
 
             {/* Pesanan tanpa serah terima tidak akan pernah punya FPB/BAPP, jadi kartunya
                 tidak ditampilkan — bukan ditampilkan kosong. Kartu kosong mengundang
@@ -405,7 +486,9 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                         <Table.Td fz="sm" style={{ whiteSpace: 'nowrap' }}>{formatDate(r.date)}</Table.Td>
                         <Table.Td fz="sm">{r.doNumber}</Table.Td>
                         <Table.Td ta="right" fz="sm">{r.lines.reduce((n, l) => n + l.qty, 0)}</Table.Td>
-                        <Table.Td fz="xs" c={open ? 'orange.8' : 'green.8'} fw={600}>{open ? 'Belum difaktur' : 'Sudah difaktur'}</Table.Td>
+                        <Table.Td>{!receiptConfirmed(r)
+                          ? <StatusPill map={RECEIPT_STATUS} status={r.status} size="xs" approval={{ doc: r, kind: 'bapp' }} />
+                          : <Text fz="xs" c={open ? 'orange.8' : 'green.8'} fw={600}>{open ? 'Belum difaktur' : 'Sudah difaktur'}</Text>}</Table.Td>
                       </Table.Tr>
                     );
                   })}
@@ -447,14 +530,14 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
 
             <Section divided flush icon={Money} title="Payment Request" description="Pembayaran DP dan pelunasan ke vendor" right={count(prs.length, 'dokumen')}>
               {prs.length === 0 ? (
-                <Text fz="xs" c="slate.6" p="lg">{hasDp ? `Termin ini menagih di muka. Buat Payment Request ${advanceLabel(po.term)} dari tombol di atas.` : 'Payment Request pelunasan dibuat dari faktur.'}</Text>
+                <Text fz="xs" c="slate.6" p="lg">{hasDp ? (dpInv ? `Faktur uang muka ${dpInv.number} sudah dicatat. Buat Payment Request ${advanceLabel(po.term)} dari tombol di atas.` : 'Termin ini menagih di muka. Catat dulu faktur uang muka dari vendor, lalu ajukan Payment Request-nya.') : 'Payment Request pelunasan dibuat dari faktur.'}</Text>
               ) : (
                 <DataTable bare head={[{ label: 'Nomor' }, { label: 'Jenis' }, { label: 'Status' }, { label: 'Nominal', align: 'right' }, { label: '', w: 160 }]} minWidth={640}>
                   {prs.map((p) => (
                     <Table.Tr key={p.id}>
                       <Table.Td><DocNumber onClick={() => go({ name: 'pr', id: p.id })}>{p.number}</DocNumber></Table.Td>
                       <Table.Td fz="sm">{p.kind === 'dp' ? 'Di muka' : 'Pelunasan'}</Table.Td>
-                      <Table.Td><StatusPill map={PR_STATUS} status={p.status} size="xs" /></Table.Td>
+                      <Table.Td><StatusPill map={PR_STATUS} status={p.status} size="xs" approval={{ doc: p, kind: 'pr' }} /></Table.Td>
                       <Table.Td ta="right" fz="sm" fw={700}>{rupiah(p.amount)}</Table.Td>
                       <Table.Td ta="right"><PrActions pr={p} pb={pb} openDialog={openDialog} /></Table.Td>
                     </Table.Tr>
@@ -511,5 +594,51 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
         </Grid.Col>
       </Grid>
     </Stack>
+  );
+}
+
+// Status uang muka di bawah kepala halaman PO/SPK: tahap sekarang, siapa yang harus
+// bertindak, dan satu tautan ke dokumennya. Warnanya mengikuti tahap, bukan peran yang membaca.
+function DpStatusStrip({ dp, po, go }) {
+  const w = po.dpWaiver;
+  const tone = { belum_faktur: 'wait', belum_bayar: 'wait', lunas: 'ok', dibatalkan: 'info' }[dp.state];
+  const nominal = rupiah(poDpAmount(po));
+  const pct = advancePct(po.term);
+  const judul = `${pct >= 100 ? 'Bayar penuh di muka' : `Uang muka ${pct}%`} · ${nominal} — ${DP_STATE[dp.state].label}`;
+  const link = (doc, view) => <DocNumber onClick={() => go(view)}>{doc}</DocNumber>;
+  return (
+    <Callout tone={tone} title={judul}>
+      {dp.state === 'belum_faktur' && (w?.status === 'diajukan'
+        ? <>Pembatalan uang muka diajukan {w.by} ({w.reason}). Menunggu approval Chief Finance.</>
+        : <>
+          Vendor belum menagih uang muka. Penerimaan tetap bisa dicatat, tapi faktur pelunasan menunggu
+          uang muka ditagih dan dibayar
+          {scheduleExcludesDp(po.term)
+            ? '. Termin ini memisahkan DP dari jadwal termin, jadi uang mukanya tidak bisa dilewati — bila vendor tidak menagih DP, revisi terminnya.'
+            : <> — atau dibatalkan resmi lewat menu ⋮ “Tagih tanpa uang muka”.</>}
+          {w?.status === 'ditolak' && <> Pengajuan pembatalan sebelumnya ditolak{w.rejectNote ? `: ${w.rejectNote}` : ''}.</>}
+        </>)}
+      {dp.state === 'belum_bayar' && (
+        <Group gap={6} wrap="wrap">
+          <span>Ditagih lewat</span>
+          {dp.inv ? link(dp.inv.number, { name: 'invoice', id: dp.inv.id }) : null}
+          {dp.pr
+            ? <><span>· dibayar lewat</span>{link(dp.pr.number, { name: 'pr', id: dp.pr.id })}<span>({PR_STATUS[dp.pr.status]?.label})</span></>
+            : <span>· Payment Request belum diajukan.</span>}
+          <span>Faktur pelunasan menunggu uang muka ini lunas.</span>
+        </Group>
+      )}
+      {dp.state === 'lunas' && (
+        <Group gap={6} wrap="wrap">
+          <span>Dibayar lewat</span>
+          {dp.pr ? link(dp.pr.number, { name: 'pr', id: dp.pr.id }) : null}
+          {dp.inv && <><span>atas</span>{link(dp.inv.number, { name: 'invoice', id: dp.inv.id })}</>}
+          <span>. Dipotongkan otomatis di faktur pelunasan.</span>
+        </Group>
+      )}
+      {dp.state === 'dibatalkan' && (
+        <>Disetujui {w?.decidedBy}: {w?.reason}. Pesanan ditagih penuh di faktur pelunasan, tanpa potongan uang muka.</>
+      )}
+    </Callout>
   );
 }
