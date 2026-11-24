@@ -1,10 +1,12 @@
 // Detail PO: penerimaan, faktur, payment request, dan retur yang turun dari dokumen ini.
+import { approvalMessage, askConfirm } from './confirm.jsx';
 import { useState } from 'react';
 import { ActionIcon, Badge, Box, Button, Card, Divider, Grid, Group, Menu, Select, SimpleGrid, Stack, Table, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
-import { ArrowCounterClockwise, Calculator, Check, ClipboardText, DotsThreeVertical, DownloadSimple, Info, Money, Package, PaperPlaneTilt, Prohibit, Receipt, ShoppingCart, Truck, X } from '@/components/Icon.jsx';
+import { ArrowCounterClockwise, Calculator, Check, ClipboardText, CurrencyCircleDollar, DotsThreeVertical, DownloadSimple, Info, Money, Package, PaperPlaneTilt, Prohibit, Receipt, ShoppingCart, Truck, X } from '@/components/Icon.jsx';
 import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section, StatusPill } from './components.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
 import TermBreakdown from './TermBreakdown.jsx';
+import ApprovalLog from './ApprovalLog.jsx';
 import SpkScope from './SpkScope.jsx';
 import { ReasonModal, SendPoModal } from './Dialogs.jsx';
 import { personLabel, TODAY } from './data.js';
@@ -12,7 +14,7 @@ import { freightShare } from './landedCost.js';
 import { freightCapitalized } from '@/pages/Pengaturan/settings.js';
 import { useData } from '@/lib/store.jsx';
 import { picName, warehouseById, warehouseOptions } from '@/pages/Gudang/data.js';
-import { approvalState, isApproverTurn, signApproval, canApprove, canCreate, hidesPrices, prBlockedBySoD, receiptDoc } from './permissions.js';
+import { approvalState, isApproverTurn, signApproval, canApprove, canCreate, hidesPrices, prBlockedBySoD, receiptDoc, receiptKind, logEntry } from './permissions.js';
 import {
   formatDate,
   INV_STATUS,
@@ -51,6 +53,9 @@ import {
   poHasReceipt,
   uninvoicedLines,
   uninvoicedPoLines,
+  isRetentionRelease,
+  poRetention,
+  retentionDocName,
 } from './utils.js';
 import { downloadPo } from './poPdf.js';
 import { toast } from './usePb.js';
@@ -71,13 +76,18 @@ export function PrActions({ pr, pb, openDialog }) {
           size="compact-xs"
           radius="md"
           leftSection={<Check size={12} />}
-          onClick={() => {
-            pb.update('prs', pr.id, (d) => {
-              const { doc, complete } = signApproval(d, 'pr', role);
-              return complete ? { ...doc, status: 'disetujui', approvedAt: TODAY } : doc;
-            });
-            toast('Approval dicatat.');
-          }}
+          onClick={() => askConfirm({
+            title: `Setujui ${pr.number}?`,
+            message: approvalMessage(ap, { final: 'Ini approval terakhir: Payment Request disetujui penuh dan siap diterbitkan Payment Voucher.' }),
+            confirmLabel: 'Ya, setujui',
+            onConfirm: () => {
+              pb.update('prs', pr.id, (d) => {
+                const { doc, complete } = signApproval(d, 'pr', role);
+                return complete ? { ...doc, status: 'disetujui', approvedAt: TODAY } : doc;
+              });
+              toast('Approval dicatat.');
+            },
+          })}
         >
           Setujui ({ap.done.length + 1}/{ap.total})
         </Button>
@@ -88,7 +98,7 @@ export function PrActions({ pr, pb, openDialog }) {
   }
   if (pr.status === 'disetujui') {
     return canCreate(role, 'pv') ? (
-      <Button size="compact-xs" radius="md" onClick={() => openDialog({ type: 'pv', prId: pr.id })}>Terbitkan PV</Button>
+      <Button size="compact-xs" radius="md" leftSection={<CurrencyCircleDollar size={12} />} onClick={() => openDialog({ type: 'pv', prId: pr.id })}>Terbitkan PV</Button>
     ) : (
       <RoleChip role="kasir" />
     );
@@ -123,6 +133,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const fppbj = pb.fppbjById[po.fppbjId];
   const receipts = receiptsOf(po, pb.receipts);
   const invoices = pb.invoices.filter((i) => i.poId === po.id || i.lines.some((l) => l.poId === po.id));
+  const retensi = poRetention(po, pb.invoices);
   const prs = pb.prs.filter((p) => p.poId === po.id);
   const returns = pb.returns.filter((r) => invoices.some((i) => i.id === r.invoiceId));
   // Ada pembayaran di muka? CBD/DP (barang) maupun termin jasa yang menagih di awal.
@@ -142,14 +153,14 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const [waiverOpen, setWaiverOpen] = useState(false);
   const [waiverReject, setWaiverReject] = useState(false);
   const askWaiver = (note) => {
-    pb.update('pos', po.id, (d) => ({ ...d, dpWaiver: { status: 'diajukan', reason: note, by: personLabel(role), at: TODAY } }));
+    pb.update('pos', po.id, (d) => ({ ...d, dpWaiver: { status: 'diajukan', reason: note, by: personLabel(role), at: TODAY, log: [...(d.dpWaiver?.log ?? []), logEntry(role, 'ajukan', { note })] } }));
     setWaiverOpen(false);
     toast('Pembatalan uang muka diajukan ke Chief Finance.');
   };
   const decideWaiver = (ok, note) => {
     pb.update('pos', po.id, (d) => ({
       ...d,
-      dpWaiver: { ...d.dpWaiver, status: ok ? 'disetujui' : 'ditolak', decidedBy: personLabel(role), decidedAt: TODAY, ...(ok ? {} : { rejectNote: note }) },
+      dpWaiver: { ...d.dpWaiver, status: ok ? 'disetujui' : 'ditolak', decidedBy: personLabel(role), decidedAt: TODAY, ...(ok ? {} : { rejectNote: note }), log: [...(d.dpWaiver?.log ?? []), logEntry(role, ok ? 'setuju' : 'tolak', { step: 'cfo', ...(ok ? {} : { note }) })] },
     }));
     setWaiverReject(false);
     toast(ok ? 'Uang muka dibatalkan. Pesanan ditagih penuh di faktur pelunasan.' : 'Pembatalan uang muka ditolak.');
@@ -236,27 +247,30 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                 {po.sent ? 'Kirim ulang' : 'Kirim ke vendor'}
               </Button>
             ) : !po.sent && <RoleChip role="accounting" />)}
+            {/* Faktur uang muka tidak menunggu PO/SPK terkirim: tagihan DP vendor sering terbit
+                begitu pesanan disepakati. Ia jadi aksi utama di sebelah tombol kirim. */}
+            {!closed && dp?.state === 'belum_faktur' && !waiverPending && canCreate(role, 'invoice') && (
+              <Button radius="md" leftSection={<Receipt size={16} />} onClick={() => go({ name: 'invoice-new', dpPoId: po.id })}>Catat faktur {advanceLabel(po.term) === 'DP' ? 'uang muka' : 'bayar di muka'}</Button>
+            )}
             {canDecideWaiver && (
               <>
-                <Button radius="md" variant="default" color="red" onClick={() => setWaiverReject(true)}>Tolak pembatalan DP</Button>
-                <Button radius="md" onClick={() => decideWaiver(true)}>Setujui pembatalan DP</Button>
+                <Button radius="md" variant="default" color="red" leftSection={<X size={16} />} onClick={() => setWaiverReject(true)}>Tolak pembatalan DP</Button>
+                <Button radius="md" leftSection={<Check size={16} />} onClick={() => askConfirm({ title: 'Setujui pembatalan uang muka?', message: `${po.number} tidak lagi menagih uang muka; seluruh nilainya ditagih di faktur pelunasan. Keputusan ini tercatat di log approval dan tidak bisa dibatalkan.`, confirmLabel: 'Ya, setujui', onConfirm: () => decideWaiver(true) })}>Setujui pembatalan DP</Button>
               </>
             )}
-            {!closed && po.sent && dp?.state === 'belum_faktur' && !waiverPending && canCreate(role, 'invoice') && (
-              <Button radius="md" variant="light" onClick={() => go({ name: 'invoice-new', dpPoId: po.id })}>Catat faktur {advanceLabel(po.term) === 'DP' ? 'uang muka' : 'bayar di muka'}</Button>
-            )}
             {!closed && dp?.state === 'belum_bayar' && !dpPr && dpInv && canCreate(role, 'pr') && (
-              <Button radius="md" variant="light" onClick={() => go({ name: 'pr-new', invoiceIds: [dpInv.id] })}>Buat Payment Request {advanceLabel(po.term)}</Button>
+              <Button radius="md" variant="light" leftSection={<Money size={16} />} onClick={() => go({ name: 'pr-new', invoiceIds: [dpInv.id] })}>Buat Payment Request {advanceLabel(po.term)}</Button>
             )}
             {/* Tidak menunggu dokumen terkirim: barang sering datang duluan dan pekerjaan
                 sering sudah jalan sebelum PO/SPK-nya sempat dikirim. */}
             {!closed && pakaiTerima && anyRemaining && canCreate(role, receiptDoc(isJasa)) && (
-              <Button radius="md" onClick={() => openDialog({ type: 'receipt', poId: po.id })}>{poAllJasa(po) ? 'Catat BAPP' : 'Catat penerimaan'}</Button>
+              <Button radius="md" leftSection={<Truck size={16} />} onClick={() => openDialog({ type: 'receipt', poId: po.id })}>{poAllJasa(po) ? 'Catat BAPP' : 'Catat penerimaan'}</Button>
             )}
             {openLines.length > 0 && canCreate(role, 'invoice') && (
               <Tooltip label={dpBlockReason(dp)} disabled={!dpBlocks(dp)} withArrow fz="xs" multiline w={260}>
               <Button
                 radius="md"
+                leftSection={<Receipt size={16} />}
                 disabled={dpBlocks(dp)}
                 onClick={() => (pakaiTerima
                   ? go({ name: 'invoice-new', receiptIds: receipts.filter((r) => uninvoicedLines(r, pb.invoices).length).map((r) => r.id) })
@@ -347,7 +361,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               <Box px="lg" py="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
                 <CardHead icon={Info} desc={isJasa ? 'Vendor, target selesai, jadwal tagihan, dan termin bayar' : 'Vendor, perkiraan tiba, gudang, dan termin bayar'}>Informasi {label}</CardHead>
               </Box>
-              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={0}>
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={1} verticalSpacing={1} bg="gray.2">
                 {[
                   ['Vendor', vendor?.name],
                   // SPK tidak mengirim barang ke gudang: istilahnya target selesai, bukan perkiraan tiba.
@@ -402,15 +416,17 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                       <Text fz="sm" fw={700} c="orange.8" component="span">Belum dikirim</Text>
                     ),
                   ],
-                ].map(([k, v], i) => (
+                ].map(([k, v], i, all) => (
                   <Box
                     key={k}
                     px="lg"
                     py="md"
                     style={{
                       minWidth: 0,
-                      borderTop: i >= 2 ? '1px solid var(--mantine-color-gray-2)' : undefined,
-                      borderLeft: i % 2 ? '1px solid var(--mantine-color-gray-2)' : undefined,
+                      // Garis antar sel digambar oleh celah 1px di atas latar abu-abu, jadi selalu
+                      // utuh. Sel terakhir yang sendirian melebar penuh supaya tidak ada sel kosong.
+                      background: 'white',
+                      gridColumn: i === all.length - 1 && i % 2 === 0 ? '1 / -1' : undefined,
                     }}
                   >
                     <Text fz={11} fw={600} c="slate.6">{k}</Text>
@@ -487,7 +503,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                         <Table.Td fz="sm">{r.doNumber}</Table.Td>
                         <Table.Td ta="right" fz="sm">{r.lines.reduce((n, l) => n + l.qty, 0)}</Table.Td>
                         <Table.Td>{!receiptConfirmed(r)
-                          ? <StatusPill map={RECEIPT_STATUS} status={r.status} size="xs" approval={{ doc: r, kind: 'bapp' }} />
+                          ? <StatusPill map={RECEIPT_STATUS} status={r.status} size="xs" approval={{ doc: r, kind: receiptKind(r) }} />
                           : <Text fz="xs" c={open ? 'orange.8' : 'green.8'} fw={600}>{open ? 'Belum difaktur' : 'Sudah difaktur'}</Text>}</Table.Td>
                       </Table.Tr>
                     );
@@ -497,6 +513,61 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
             </Section>
             )}
 
+            {retensi && (
+              <Section
+                divided
+                flush
+                icon={Receipt}
+                title={`Retensi ${retensi.pct}%`}
+                description={`Ditahan dari tiap faktur termin, dilepas setelah masa pemeliharaan ${retensi.months} bulan (${retentionDocName(po)})`}
+                // Bukan tempat tombolnya: pelepasan dikerjakan dari tugas "Lepas retensi" di Perlu
+                // tindakan (atau Buat baru). Di sini cukup keadaannya dan hitung mundurnya.
+                right={retensi.balance <= 0
+                  ? <Badge size="sm" radius="sm" variant="light" color="green" tt="none">Sudah dilepas</Badge>
+                  : !retensi.billedAll
+                    ? <Badge size="sm" radius="sm" variant="light" color="gray" tt="none">Menunggu termin terakhir</Badge>
+                    : <Badge size="sm" radius="sm" variant="light" color={retensi.maintenanceEnd <= TODAY ? 'green' : 'violet'} tt="none">{retensi.maintenanceEnd <= TODAY ? 'Bisa dilepas' : `Dilepas ${formatDate(retensi.maintenanceEnd)}`}</Badge>}
+              >
+                <SimpleGrid cols={{ base: 2, sm: 4 }} spacing={1} verticalSpacing={1} bg="gray.2">
+                  {[
+                    ['Total retensi', rupiah(retensi.target)],
+                    ['Sudah ditahan', rupiah(retensi.held)],
+                    ['Sudah dilepas', rupiah(retensi.released)],
+                    ['Saldo Hutang Retensi', rupiah(retensi.balance)],
+                  ].map(([k, v]) => (
+                    <Box key={k} px="lg" py="sm" bg="white">
+                      <Text fz={11} fw={600} c="slate.6">{k}</Text>
+                      <Text fz="sm" fw={700} c="slate.9">{v}</Text>
+                    </Box>
+                  ))}
+                </SimpleGrid>
+                <Text fz="xs" c="slate.6" px="lg" py="sm" style={{ borderTop: '1px solid var(--mantine-color-gray-2)' }}>
+                  {!retensi.billedAll
+                    ? 'Masa pemeliharaan mulai dihitung setelah termin terakhir difaktur.'
+                    : retensi.balance > 0
+                      ? retensi.maintenanceEnd <= TODAY
+                        ? <>Masa pemeliharaan sudah selesai. Tugas &quot;Lepas retensi&quot; menunggu di Perlu tindakan{canCreate(role, 'invoice') && <>{' · '}<Text span fz="inherit" fw={700} c="primary.9" style={{ cursor: 'pointer' }} onClick={() => openDialog({ type: 'retention-release', poId: po.id })}>Kerjakan sekarang</Text></>}</>
+                        : `Masa pemeliharaan selesai ${formatDate(retensi.maintenanceEnd)}. Pengingat minta ${retentionDocName(po)} muncul di Perlu tindakan 30 hari sebelumnya, lalu retensinya dilepas ke Hutang Usaha dan diajukan Payment Request.`
+                      : 'Retensi sudah dilepas seluruhnya.'}
+                </Text>
+                {retensi.releases.length > 0 && (
+                  <DataTable bare head={[{ label: 'Pelepasan' }, { label: `No. ${retentionDocName(po)}` }, { label: 'Status' }, { label: 'Sisa hutang', align: 'right' }]} minWidth={520}>
+                    {retensi.releases.map((i) => {
+                      const t = invTotals(i, pb.calc);
+                      return (
+                        <Table.Tr key={i.id}>
+                          <Table.Td><DocNumber onClick={() => go({ name: 'invoice', id: i.id })}>{i.number}</DocNumber><Text fz={11} c="slate.6">{formatDate(i.date)}</Text></Table.Td>
+                          <Table.Td fz="sm">{i.bastNo}</Table.Td>
+                          <Table.Td><StatusPill map={INV_STATUS} status={invStatus(i, t)} size="xs" /></Table.Td>
+                          <Table.Td ta="right" fz="sm" fw={700}>{rupiah(t.balance)}</Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </DataTable>
+                )}
+              </Section>
+            )}
+
             <Section divided flush icon={Receipt} title="Faktur pembelian" description={pakaiTerima ? 'Tagihan vendor yang dibuat dari penerimaan' : `Tagihan vendor yang dibuat langsung dari ${label}`} right={count(invoices.length, 'faktur')}>
               {invoices.length === 0 ? (
                 <Text fz="xs" c="slate.6" p="lg">{pakaiTerima
@@ -504,7 +575,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                   : `Pesanan ini tanpa serah terima, jadi fakturnya dibuat langsung dari ${label}.`}</Text>
               ) : (
                 <DataTable bare head={[{ label: 'Nomor' }, { label: 'Jatuh tempo' }, { label: 'Status' }, { label: 'Sisa hutang', align: 'right' }, { label: '', w: 190 }]} minWidth={700}>
-                  {invoices.map((i) => {
+                  {invoices.filter((i) => !isRetentionRelease(i)).map((i) => {
                     const t = invTotals(i, pb.calc);
                     const canReturn = canReturnInv(i, po, pb.returns);
                     return (
@@ -588,6 +659,23 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                 <Text fz="lg" fw={700} c="primary.9">{rupiah(poTotal(po))}</Text>
               </Group>
             </Card>
+            )}
+            {/* Pembatalan uang muka satu-satunya approval di PO/SPK; kartunya muncul begitu diajukan. */}
+            {po.dpWaiver && (
+              <ApprovalLog
+                title="Log pembatalan uang muka"
+                steps={[{
+                  key: 'dw',
+                  verb: 'Approval',
+                  role: 'cfo',
+                  done: po.dpWaiver.status === 'disetujui' ? { by: po.dpWaiver.decidedBy, at: po.dpWaiver.decidedAt } : null,
+                  state: { disetujui: 'done', ditolak: 'rejected', diajukan: 'current' }[po.dpWaiver.status] ?? 'idle',
+                }]}
+                log={po.dpWaiver.log ?? [
+                  { action: 'ajukan', role: 'accounting', by: po.dpWaiver.by, at: po.dpWaiver.at, note: po.dpWaiver.reason },
+                  ...(po.dpWaiver.decidedAt ? [{ action: po.dpWaiver.status === 'disetujui' ? 'setuju' : 'tolak', role: 'cfo', step: 'cfo', by: po.dpWaiver.decidedBy, at: po.dpWaiver.decidedAt, note: po.dpWaiver.rejectNote }] : []),
+                ]}
+              />
             )}
             <PurchaseFlow pb={pb} go={go} current={{ kind: 'po', id: po.id }} />
           </Stack>

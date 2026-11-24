@@ -8,7 +8,8 @@
 // Empat saklar itu:
 //   advance  'none' | 'partial' | 'full'   -> berapa yang dibayar di muka
 //   split    'none' | 'terms' | 'periods'  -> nilai dipecah jadi berapa tagihan
-//   dpOutOfSchedule  true                  -> uang muka dikeluarkan dari nilai yang dibagi
+//   dpOutOfSchedule  true                  -> (lama) uang muka dikeluarkan dari nilai yang dibagi.
+//                                             Termin baru memotong DP proporsional di tiap faktur.
 //   retention        true                  -> sebagian ditahan sampai masa pemeliharaan habis
 //   due              true                  -> faktur punya jatuh tempo (hari)
 //   dueFrom  'receipt' | 'invoice'          -> jatuh tempo dihitung dari tanggal mana
@@ -74,7 +75,7 @@ export const paymentTermsSeed = [
   starter({
     id: 'dp-progres', label: 'DP + termin progres', scope: 'jasa',
     hint: 'Uang muka di awal, sisanya dibagi per milestone', example: 'Konstruksi, renovasi besar',
-    advance: 'partial', split: 'terms', dpOutOfSchedule: true, due: true,
+    advance: 'partial', split: 'terms', due: true,
     defaults: { dpPct: 20, terms: 4, dueDays: 30 },
   }),
   starter({
@@ -82,6 +83,26 @@ export const paymentTermsSeed = [
     hint: 'Per milestone, sebagian ditahan selama masa pemeliharaan', example: 'Konstruksi, instalasi mesin, MEP',
     advance: 'none', split: 'terms', retention: true, due: true,
     defaults: { terms: 3, retentionPct: 5, retentionMonths: 6, dueDays: 30 },
+  }),
+  // Varian retensi: sebagian nilai ditahan sampai masa pemeliharaan habis, ditagih sebagai
+  // baris "Retensi" tersendiri di SPK. Mekanisnya sama dengan termin di atas + saklar retensi.
+  starter({
+    id: 'penuh-retensi', label: 'Bayar penuh di akhir + retensi', scope: 'jasa',
+    hint: 'Sekali tagih setelah BAPP, sebagian ditahan selama masa pemeliharaan', example: 'Instalasi AC, pengecatan gedung, pemasangan pompa',
+    advance: 'none', split: 'none', retention: true, due: true,
+    defaults: { retentionPct: 5, retentionMonths: 6, dueDays: 30 },
+  }),
+  starter({
+    id: 'dp-progres-retensi', label: 'DP + termin progres + retensi', scope: 'jasa',
+    hint: 'Uang muka di awal, sisanya per milestone, sebagian ditahan selama masa pemeliharaan', example: 'Konstruksi besar, renovasi total lantai',
+    advance: 'partial', split: 'terms', retention: true, due: true,
+    defaults: { dpPct: 20, terms: 4, retentionPct: 5, retentionMonths: 12, dueDays: 30 },
+  }),
+  starter({
+    id: 'retensi-10', label: 'Termin progres + retensi 10%', scope: 'jasa',
+    hint: 'Per milestone, 10% ditahan selama setahun masa pemeliharaan', example: 'Instalasi lift, genset, sistem pemadam kebakaran',
+    advance: 'none', split: 'terms', retention: true, due: true,
+    defaults: { terms: 3, retentionPct: 10, retentionMonths: 12, dueDays: 30 },
   }),
   starter({
     id: 'bulanan-12', label: 'Berkala per periode', scope: 'jasa',

@@ -27,6 +27,7 @@ import { useData } from '@/lib/store.jsx';
 import { defaultWarehouseId, warehouseOptions } from '@/pages/Gudang/data.js';
 import { formatDate, iomFiles, nextNumber, uid } from './utils.js';
 import { toast } from './usePb.js';
+import { logEntry, withLog } from './permissions.js';
 
 const blank = (extra = {}) => ({
   id: uid('it'),
@@ -123,12 +124,13 @@ export default function FppbjForm({ pb, editing, onBack, onSaved }) {
         status: submit ? 'diajukan' : d.status,
         submittedAt: submit ? TODAY : d.submittedAt,
         returnNote: submit ? '' : d.returnNote,
+        ...(submit ? { log: [...(d.log ?? []), logEntry(pb.role, 'ajukan', { note: 'Diajukan ulang' })] } : {}),
       }));
       toast(submit ? 'Permintaan diperbarui dan diajukan ulang.' : 'Perubahan permintaan disimpan.');
       onSaved(editing.id);
       return;
     }
-    const doc = {
+    const doc0 = {
       id: uid('fppbj'),
       number: nextNumber('FPPBJ', pb.fppbj),
       date: f.date,
@@ -148,6 +150,7 @@ export default function FppbjForm({ pb, editing, onBack, onSaved }) {
       procurement: null,
       requester: personLabel(pb.role),
     };
+    const doc = submit ? withLog(doc0, logEntry(pb.role, 'ajukan')) : doc0;
     pb.add('fppbj', doc);
     toast(submit ? 'Permintaan diajukan. Menunggu verifikasi.' : 'Permintaan disimpan sebagai draf.');
     onSaved(doc.id);

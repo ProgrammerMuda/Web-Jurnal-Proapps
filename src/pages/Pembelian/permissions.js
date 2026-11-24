@@ -44,7 +44,8 @@ export const verifierRoles = (doc = 'fppbj') => VERIFY[doc] ?? [];
 // keputusan membelanjakan uang. Cukup Accounting.
 const APPROVE = {
   procurement: ['cfo', 'bm'], // hasil bidding & vendor tunggal
-  bapp: ['cfo', 'bm'],
+  fpb: ['cfo', 'bm'], // penerimaan barang
+  bapp: ['cfo', 'bm'], // serah terima jasa
   pr: ['cfo', 'bm'], // PR DP, pelunasan, retensi
   // Membatalkan uang muka mengubah syarat bayar yang disepakati di pengadaan: cukup Chief Finance.
   dpWaiver: ['cfo'],
@@ -66,13 +67,30 @@ export function approvalState(doc, kind, { settled = false } = {}) {
 export const isApproverTurn = (role, doc, kind) =>
   isSuperadmin(role) ? !approvalState(doc, kind).complete : approvalState(doc, kind).next === role;
 
+// --- Log approval & verifikasi ------------------------------------------------------------------
+// Setiap ajukan / verifikasi / kembalikan / setujui / tolak dicatat sebagai satu baris log pada
+// dokumennya: siapa (nama + peran), kapan (tanggal + jam), langkah yang mana, dan alasannya bila
+// ditolak. Log hanya ditambah, tidak pernah diubah, supaya riwayat keputusan bisa dirunut.
+// Tanggal memakai TODAY (tanggal prototipe), jamnya jam saat tindakan dilakukan.
+export const nowStamp = () => {
+  const d = new Date();
+  return `${TODAY}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+// action: 'ajukan' | 'verifikasi' | 'kembalikan' | 'setuju' | 'tolak'
+// step: peran yang ditunggu pada langkah itu (mis. 'cfo'); berbeda dari `role` bila
+// Superadmin mengisi slot orang lain.
+export const logEntry = (role, action, extra = {}) => ({ action, role, by: personLabel(role), at: nowStamp(), ...extra });
+export const withLog = (doc, entry) => ({ ...doc, log: [...(doc?.log ?? []), entry] });
+
 // Satu tanda tangan dibubuhkan. Mengembalikan dokumen baru + apakah approval-nya sudah genap.
 export function signApproval(doc, kind, role) {
   const { next } = approvalState(doc, kind);
   const slot = isSuperadmin(role) ? next : role;
   if (!slot) return { doc, complete: true };
-  const approvals = { ...(doc.approvals ?? {}), [slot]: { by: personLabel(role), at: TODAY } };
-  return { doc: { ...doc, approvals }, complete: approvalState({ approvals }, kind).complete };
+  const at = nowStamp();
+  const approvals = { ...(doc.approvals ?? {}), [slot]: { by: personLabel(role), role, at } };
+  const signed = withLog({ ...doc, approvals }, { ...logEntry(role, 'setuju', { step: slot }), at });
+  return { doc: signed, complete: approvalState({ approvals }, kind).complete };
 }
 
 export const canCreate = (role, doc) => isSuperadmin(role) || (CREATE[doc] ?? []).includes(role);
@@ -85,6 +103,10 @@ export const pendingApprover = (doc, kind) => approvalState(doc, kind).next;
 
 // Penerimaan: barang lewat FPB (Gudang), jasa lewat BAPP (PIC jasa).
 export const receiptDoc = (isJasa) => (isJasa ? 'bapp' : 'fpb');
+// Jenis approval untuk satu dokumen penerimaan yang sudah tersimpan: FPB dan BAPP punya
+// rantai approval masing-masing (saat ini sama: Chief Finance lalu Building Manager).
+export const receiptKind = (r) => (r?.kind === 'jasa' || r?.number?.startsWith('BAPP') ? 'bapp' : 'fpb');
+export const receiptName = (r) => (receiptKind(r) === 'bapp' ? 'BAPP' : 'FPB');
 
 // Gudang melihat pesanan dan tanggal kirim, tanpa harga.
 export const hidesPrices = (role) => role === 'gudang';

@@ -1,13 +1,14 @@
 // Detail Payment Voucher (PV / Bukti Kas Keluar): bukti kas benar-benar keluar, dasar jurnal kas keluar.
 import { Badge, Box, Button, Card, Grid, Group, SimpleGrid, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core';
-import { CurrencyCircleDollar, Info, Paperclip, Receipt } from '@/components/Icon.jsx';
+import { CurrencyCircleDollar, Info, Money, Paperclip, Receipt } from '@/components/Icon.jsx';
 import AttachmentList from './Attachments.jsx';
-import { BackLink, CardHead, CopyIcon, DataTable, DocNumber, Section } from './components.jsx';
+import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, Section } from './components.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
-import { bankLine, formatDate, PR_STATUS, proofFiles, PV_STATUS, pvPaid, pvStatus, rupiah } from './utils.js';
+import { bankLine, formatDate, poRetention, poStatus, PR_STATUS, proofFiles, PV_STATUS, pvPaid, pvStatus, retentionDocName, rupiah } from './utils.js';
 import { voucherJournal } from './journal.js';
 import JournalCard from './JournalCard.jsx';
 import { canCreate } from './permissions.js';
+import { TODAY } from './data.js';
 import { StatusPill } from './components.jsx';
 
 export default function VoucherDetail({ voucher: v, pb, onBack, go, openDialog }) {
@@ -18,6 +19,12 @@ export default function VoucherDetail({ voucher: v, pb, onBack, go, openDialog }
   const vendor = pb.vendorsById[v.vendorId];
   const prs = (v.prIds ?? []).map((id) => pb.prsById[id]).filter(Boolean);
   const proofs = proofFiles(v);
+  // Pembayaran ini melunasi termin terakhir, tapi retensinya masih ditahan: beri tahu saat itu
+  // juga, supaya accounting tahu ada sisa hutang yang baru cair setelah masa pemeliharaan.
+  const poIds = [...new Set(prs.flatMap((p) => [p.poId, ...(p.invoiceIds ?? []).map((id) => pb.invoicesById[id]?.poId)]).filter(Boolean))];
+  const tertahan = paid
+    ? poIds.map((id) => pb.posById[id]).filter((po) => po && poStatus(po, pb.calc) === 'pemeliharaan').map((po) => ({ po, rt: poRetention(po, pb.invoices) }))
+    : [];
   const count = (n, unit) => <Badge size="sm" radius="sm" variant="light" color="slate" tt="none">{n} {unit}</Badge>;
 
   const cells = [
@@ -50,11 +57,20 @@ export default function VoucherDetail({ voucher: v, pb, onBack, go, openDialog }
           </Group>
           <Group gap="md" wrap="nowrap">
             {!paid && canCreate(role, 'pv') && (
-              <Button radius="md" onClick={() => openDialog({ type: 'pay', voucherId: v.id })}>Catat pembayaran</Button>
+              <Button radius="md" leftSection={<Money size={16} />} onClick={() => openDialog({ type: 'pay', voucherId: v.id })}>Catat pembayaran</Button>
             )}
           </Group>
         </Group>
       </Card>
+
+      {tertahan.map(({ po, rt }) => (
+        <Callout key={po.id} tone="info" title={`Termin ${po.number} lunas, retensi ${rupiah(rt.balance)} masih ditahan`}>
+          {rt.maintenanceEnd <= TODAY
+            ? `Masa pemeliharaan sudah selesai ${formatDate(rt.maintenanceEnd)}. Tugas "Lepas retensi" menunggu di Perlu tindakan. `
+            : `Retensi ${rt.pct}% baru bisa dilepas setelah masa pemeliharaan selesai ${formatDate(rt.maintenanceEnd)} dan ${retentionDocName(po)} ditandatangani. Pengingatnya muncul di Perlu tindakan 30 hari sebelumnya. `}
+          <Text span fz="inherit" fw={700} c="primary.9" style={{ cursor: 'pointer' }} onClick={() => go({ name: 'po', id: po.id })}>Lihat {po.number}</Text>
+        </Callout>
+      ))}
 
       <Grid gutter="lg" align="flex-start">
         <Grid.Col span={{ base: 12, lg: 8.5 }}>
@@ -63,16 +79,18 @@ export default function VoucherDetail({ voucher: v, pb, onBack, go, openDialog }
               <Box px="lg" py="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
                 <CardHead icon={Info} desc="Sumber dana, tujuan, dan referensi transfer">Informasi pembayaran</CardHead>
               </Box>
-              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={0}>
-                {cells.map(([k, val], i) => (
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={1} verticalSpacing={1} bg="gray.2">
+                {cells.map(([k, val], i, all) => (
                   <Box
                     key={k}
                     px="lg"
                     py="md"
                     style={{
                       minWidth: 0,
-                      borderTop: i >= 2 ? '1px solid var(--mantine-color-gray-2)' : undefined,
-                      borderLeft: i % 2 ? '1px solid var(--mantine-color-gray-2)' : undefined,
+                      // Garis antar sel digambar oleh celah 1px di atas latar abu-abu, jadi selalu
+                      // utuh. Sel terakhir yang sendirian melebar penuh supaya tidak ada sel kosong.
+                      background: 'white',
+                      gridColumn: i === all.length - 1 && i % 2 === 0 ? '1 / -1' : undefined,
                     }}
                   >
                     <Text fz={11} fw={600} c="slate.6">{k}</Text>

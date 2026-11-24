@@ -1,23 +1,25 @@
 // Detail penerimaan: FPB (barang) atau BAPP (jasa) yang dicatat dari sebuah PO.
+import { approvalMessage, askConfirm } from './confirm.jsx';
 import { Badge, Box, Button, Card, Grid, Group, SimpleGrid, Stack, Table, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
-import { Check, DownloadSimple, Info, Package, Paperclip, Receipt, Truck } from '@/components/Icon.jsx';
+import { ArrowCounterClockwise, Check, DownloadSimple, Info, Package, Paperclip, Receipt, Truck, X } from '@/components/Icon.jsx';
 import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section } from './components.jsx';
-import { approvalState, canCreate, hidesPrices, isApproverTurn, signApproval } from './permissions.js';
+import { approvalState, canCreate, hidesPrices, isApproverTurn, receiptDoc } from './permissions.js';
+import { useApproveReceipt } from './Dialogs.jsx';
 import { landedUnitCost } from './landedCost.js';
 import { useData } from '@/lib/store.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
 import JournalCard from './JournalCard.jsx';
+import ApprovalLog, { chainSteps, legacyLog } from './ApprovalLog.jsx';
 import { receiptJournal } from './journal.js';
 import AttachmentList from './Attachments.jsx';
 import { downloadReceipt } from './receiptPdf.js';
-import { personLabel } from './data.js';
 import { toast } from './usePb.js';
 import { dpBlockReason, dpState, DP_STATE, formatDate, INV_STATUS, invStatus, invTotals, invoicedQty, RECEIPT_STATUS, receiptConfirmed, rupiah, uninvoicedLines } from './utils.js';
 import { StatusPill } from './components.jsx';
 
 const th = { th: { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 600, color: 'var(--mantine-color-slate-7)', whiteSpace: 'nowrap' } };
 
-export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
+export default function ReceiptDetail({ receipt: r, pb, onBack, go, openDialog }) {
   const { companySettings, stockMoves, products } = useData();
   const po = pb.posById[r.poId];
   const vendor = pb.vendorsById[r.vendorId];
@@ -25,6 +27,11 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
   const docName = isJasa ? 'BAPP' : 'FPB';
   const itemOf = (id) => po?.items.find((i) => i.id === id);
   const confirmed = receiptConfirmed(r);
+  const pending = r.status === 'draf';
+  const rejected = r.status === 'ditolak';
+  const cancelled = r.status === 'dibatalkan';
+  // Pencatat (Gudang untuk FPB, PIC jasa untuk BAPP) yang memperbaiki dokumen yang ditolak.
+  const isCreator = canCreate(pb.role, receiptDoc(isJasa));
   // Harga perolehan per unit: DPP ditambah ongkir dan PPN sejauh keduanya
   // dikapitalisasi. Angka inilah yang masuk persediaan, bukan harga PO.
   const showCost = !isJasa && !hidesPrices(pb.role);
@@ -39,15 +46,14 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
   // Faktur pelunasan menunggu uang muka pesanannya beres (lunas atau dibatalkan resmi).
   const dp = dpState(po, pb.calc);
   const dpTahan = dpBlockReason(dp);
-  // BAPP jasa disetujui Atasan dulu (spesifikasi 2.2) sebelum Accounting bisa memfakturkan.
-  // Approval BAPP berjenjang dua: Chief Finance lalu Building Manager.
-  const ap = approvalState(r, 'bapp', { settled: confirmed });
+  // FPB dan BAPP disetujui dulu sebelum Accounting bisa memfakturkan.
+  // Approval berjenjang dua: Chief Finance lalu Building Manager.
+  const kind = isJasa ? 'bapp' : 'fpb';
+  const ap = approvalState(r, kind, { settled: confirmed });
+  const approveReceipt = useApproveReceipt(pb);
   const approveBast = () => {
-    pb.update('receipts', r.id, (d) => {
-      const { doc, complete } = signApproval(d, 'bapp', pb.role);
-      return complete ? { ...doc, status: 'dikonfirmasi', approvedBy: personLabel(pb.role) } : doc;
-    });
-    toast(ap.done.length + 1 >= ap.total ? 'BAPP disetujui penuh. Sudah bisa difaktur.' : `Approval ${ap.done.length + 1} dari ${ap.total} dicatat.`);
+    approveReceipt(r, pb.role);
+    toast(ap.done.length + 1 >= ap.total ? `${docName} disetujui penuh. Sudah bisa difaktur.` : `Approval ${ap.done.length + 1} dari ${ap.total} dicatat.`);
   };
   const invoices = pb.invoices.filter((i) => i.lines.some((l) => l.receiptId === r.id));
   const totalQty = r.lines.reduce((n, l) => n + l.qty, 0);
@@ -76,7 +82,7 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
                 <Title order={2} fz={{ base: 20, md: 24 }} c="slate.9">{r.number}</Title>
                 <CopyIcon value={r.number} size={16} />
                 {!confirmed
-                  ? <StatusPill map={RECEIPT_STATUS} status={r.status} approval={{ doc: r, kind: 'bapp' }} />
+                  ? <StatusPill map={RECEIPT_STATUS} status={r.status} approval={{ doc: r, kind }} />
                   : <Badge size="sm" radius="sm" variant="light" color={open ? 'orange' : 'green'} fw={700} tt="none">{open ? 'Belum difaktur' : 'Sudah difaktur'}</Badge>}
               </Group>
               <Text fz="sm" c="slate.6">{formatDate(r.date)}</Text>
@@ -92,17 +98,46 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
             >
               Unduh PDF
             </Button>
-            {!confirmed && (isApproverTurn(pb.role, r, 'bapp') ? (
-              <Button radius="md" leftSection={<Check size={16} />} onClick={approveBast}>Setujui BAPP ({ap.done.length + 1}/{ap.total})</Button>
+            {pending && (isApproverTurn(pb.role, r, kind) ? (
+              <>
+                <Button radius="md" variant="default" c="red.8" leftSection={<X size={16} />} onClick={() => openDialog({ type: 'receipt-reject', receiptId: r.id })}>Tolak</Button>
+                <Button
+                  radius="md"
+                  leftSection={<Check size={16} />}
+                  onClick={() => askConfirm({
+                    title: `Setujui ${r.number}?`,
+                    message: approvalMessage(ap, { final: isJasa ? 'Ini approval terakhir: BAPP sah, beban dan jurnalnya terbentuk, dan sudah bisa difaktur.' : 'Ini approval terakhir: FPB sah, stok masuk gudang, jurnal terbentuk, dan sudah bisa difaktur.' }),
+                    confirmLabel: 'Ya, setujui',
+                    onConfirm: approveBast,
+                  })}
+                >Setujui {docName} ({ap.done.length + 1}/{ap.total})</Button>
+              </>
             ) : <Group gap={6}><Text fz="xs" c="slate.7">Menunggu</Text><RoleChip role={ap.next ?? 'cfo'} /></Group>)}
+            {rejected && (isCreator ? (
+              <>
+                <Button radius="md" variant="default" c="red.8" leftSection={<X size={16} />} onClick={() => openDialog({ type: 'receipt-cancel', receiptId: r.id })}>Batalkan</Button>
+                <Button radius="md" leftSection={<ArrowCounterClockwise size={16} />} onClick={() => openDialog({ type: 'receipt', poId: r.poId, receiptId: r.id })}>Ajukan ulang</Button>
+              </>
+            ) : <Group gap={6}><Text fz="xs" c="slate.7">Diperbaiki oleh</Text><RoleChip role="gudang" /></Group>)}
             {confirmed && open && (canCreate(pb.role, 'invoice') ? (
               <Tooltip label={dpTahan} disabled={!dpTahan} withArrow fz="xs" multiline w={260}>
-                <Button radius="md" disabled={!!dpTahan} onClick={() => go({ name: 'invoice-new', receiptIds: [r.id] })}>Catat faktur</Button>
+                <Button radius="md" leftSection={<Receipt size={16} />} disabled={!!dpTahan} onClick={() => go({ name: 'invoice-new', receiptIds: [r.id] })}>Catat faktur</Button>
               </Tooltip>
             ) : <Group gap={6}><Text fz="xs" c="slate.7">Faktur oleh</Text><RoleChip role="accounting" /></Group>)}
           </Group>
         </Group>
       </Card>
+
+      {rejected && (
+        <Callout tone="stop" title={`${docName} ditolak`}>
+          {(r.rejectNote || 'Tanpa alasan').replace(/[.\s]*$/, '.')} Qty pada {docName} ini tetap tertahan sampai diajukan ulang atau dibatalkan. Stok dan jurnal belum bergerak.
+        </Callout>
+      )}
+      {cancelled && (
+        <Callout tone="info" title={`${docName} dibatalkan`}>
+          {r.cancelNote ? `${r.cancelNote.replace(/[.\s]*$/, '')}. ` : ''}Qty-nya sudah dilepas dan bisa dicatat di {docName} lain.
+        </Callout>
+      )}
 
       {confirmed && open && dpTahan && (
         <Callout tone="warn" title={DP_STATE[dp.state].label}>
@@ -120,16 +155,18 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
               <Box px="lg" py="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
                 <CardHead icon={Info} desc={`Vendor, pencatat, pesanan asal, dan nomor ${isJasa ? 'berita acara' : 'surat jalan'}`}>Informasi {docName}</CardHead>
               </Box>
-              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={0}>
-                {cells.map(([k, v], i) => (
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={1} verticalSpacing={1} bg="gray.2">
+                {cells.map(([k, v], i, all) => (
                   <Box
                     key={k}
                     px="lg"
                     py="md"
                     style={{
                       minWidth: 0,
-                      borderTop: i >= 2 ? '1px solid var(--mantine-color-gray-2)' : undefined,
-                      borderLeft: i % 2 ? '1px solid var(--mantine-color-gray-2)' : undefined,
+                      // Garis antar sel digambar oleh celah 1px di atas latar abu-abu, jadi selalu
+                      // utuh. Sel terakhir yang sendirian melebar penuh supaya tidak ada sel kosong.
+                      background: 'white',
+                      gridColumn: i === all.length - 1 && i % 2 === 0 ? '1 / -1' : undefined,
                     }}
                   >
                     <Text fz={11} fw={600} c="slate.6">{k}</Text>
@@ -261,11 +298,12 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go }) {
                 </Text>
               )}
             </Card>
+            <ApprovalLog steps={chainSteps(r, kind, { settled: confirmed, rejected, active: !cancelled })} log={legacyLog(r)} />
             <JournalCard
               lines={confirmed ? receiptJournal(r, pb, { stockMoves, products }) : []}
               description={`Atas ${r.number}`}
               onDetail={() => go({ name: 'journal', kind: 'receipt', id: r.id })}
-              empty={confirmed ? 'Penerimaan ini tidak bernilai, jadi tidak membentuk jurnal.' : 'Jurnal terbentuk setelah BAPP disetujui penuh.'}
+              empty={confirmed ? 'Penerimaan ini tidak bernilai, jadi tidak membentuk jurnal.' : `Jurnal terbentuk setelah ${docName} disetujui penuh.`}
             />
             <PurchaseFlow pb={pb} go={go} current={{ kind: 'receipt', id: r.id }} />
           </Stack>

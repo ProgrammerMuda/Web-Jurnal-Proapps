@@ -2,8 +2,8 @@
 import { Badge, Box, Button, Card, Grid, Group, Progress, RingProgress, SimpleGrid, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
 import { CheckCircle, ArrowRight, Warning } from '@/components/Icon.jsx';
 import { Callout, RoleChip } from './components.jsx';
-import { actionsFor, aging, daysLate, pipeline } from './selectors.js';
-import { roleOf } from './data.js';
+import { actionsFor, aging, daysLate, pipeline, readiness } from './selectors.js';
+import { roleOf, TODAY } from './data.js';
 import { invTotals, rupiah, rupiahShort, sum, formatDate } from './utils.js';
 
 function Stat({ label, value, hint, right }) {
@@ -21,7 +21,7 @@ function Stat({ label, value, hint, right }) {
   );
 }
 
-export default function Overview({ pb, go }) {
+export default function Overview({ pb, go, openDialog }) {
   const role = pb.role;
   const live = pb.invoices.map((i) => ({ i, t: invTotals(i, pb.calc) })).filter((x) => x.t.balance > 0);
   const debt = sum(live, (x) => x.t.balance);
@@ -32,6 +32,14 @@ export default function Overview({ pb, go }) {
   // Tugas yang sudah lewat batas wajar: ini yang perlu menonjol di dashboard peran ini.
   const telat = todo.filter((a) => a.late > 0);
   const flow = pipeline(pb);
+  // Retensi yang masih ditahan setelah termin terakhir: dipantau di sini selama masa
+  // pemeliharaan, supaya tidak hanya terlihat kalau orang membuka PO-nya.
+  const retensi = readiness(pb).retention;
+  const retensiTotal = sum(retensi, (x) => x.rt.balance);
+  const bulanLagi = (iso) => {
+    const d = daysLate(iso) * -1;
+    return d <= 0 ? 'Bisa dilepas' : d < 31 ? `${d} hari lagi` : `${Math.round(d / 30)} bulan lagi`;
+  };
   const buckets = aging(pb);
   const agingTotal = sum(buckets, (b) => b.value);
   const late = pb.fppbj.filter((f) => f.neededBy < '2026-11-04' && !pb.pos.some((p) => p.fppbjId === f.id) && f.status !== 'draft' && f.status !== 'dibatalkan');
@@ -122,7 +130,7 @@ export default function Overview({ pb, go }) {
                         a.waiting != null && a.waiting > 0 && <Text fz={11} c="slate.5">Menunggu {a.waiting} hari</Text>
                       )}
                     </Box>
-                    <Button size="compact-xs" radius="md" variant={a.late > 0 ? 'filled' : 'light'} color={a.late > 0 ? 'red' : undefined} onClick={() => go(a.to)}>{a.cta}</Button>
+                    <Button size="compact-xs" radius="md" variant={a.late > 0 ? 'filled' : 'light'} color={a.late > 0 ? 'red' : undefined} onClick={() => { go(a.to); if (a.dialog) openDialog?.(a.dialog); }}>{a.cta}</Button>
                   </Group>
                 ))}
                 {todo.length > 8 && <Text fz="xs" c="slate.6" pt="sm">+{todo.length - 8} tindakan lain</Text>}
@@ -133,6 +141,36 @@ export default function Overview({ pb, go }) {
 
         <Grid.Col span={{ base: 12, lg: 4 }}>
           <Stack gap="lg">
+            {retensi.length > 0 && (
+              <Card withBorder radius="lg" padding="lg" bg="white">
+                <Group justify="space-between" align="flex-start" wrap="nowrap">
+                  <Box>
+                    <Text fw={700} fz="sm" c="slate.9">Retensi ditahan</Text>
+                    <Text fz="xs" c="slate.6">Termin sudah lunas, menunggu masa pemeliharaan selesai</Text>
+                  </Box>
+                  <Text fz="sm" fw={700} c="violet.8" style={{ whiteSpace: 'nowrap' }}>{rupiahShort(retensiTotal)}</Text>
+                </Group>
+                <Stack gap={0} mt="sm">
+                  {retensi.slice(0, 5).map(({ po, rt }) => {
+                    const due = rt.maintenanceEnd <= TODAY;
+                    return (
+                      <UnstyledButton key={po.id} onClick={() => go({ name: 'po', id: po.id })} py={8} style={{ borderTop: '1px solid var(--mantine-color-gray-2)' }}>
+                        <Group justify="space-between" wrap="nowrap" gap="sm">
+                          <Box style={{ minWidth: 0 }}>
+                            <Text fz="xs" fw={600} c="primary.9" truncate>{po.number}</Text>
+                            <Text fz={11} c="slate.6" truncate>{pb.vendorsById[po.vendorId]?.name} · {rupiah(rt.balance)}</Text>
+                          </Box>
+                          <Badge size="sm" radius="sm" variant="light" color={due ? 'green' : 'violet'} tt="none" style={{ flexShrink: 0 }}>
+                            {bulanLagi(rt.maintenanceEnd)}
+                          </Badge>
+                        </Group>
+                      </UnstyledButton>
+                    );
+                  })}
+                </Stack>
+                {retensi.length > 5 && <Text fz="xs" c="slate.6" pt="xs">+{retensi.length - 5} pesanan lain</Text>}
+              </Card>
+            )}
             <Card withBorder radius="lg" padding="lg" bg="white">
               <Text fw={700} fz="sm" c="slate.9">Umur hutang</Text>
               <Text fz="xs" c="slate.6" mb="sm">Sisa hutang menurut lama jatuh tempo</Text>

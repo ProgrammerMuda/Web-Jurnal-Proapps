@@ -173,10 +173,12 @@ export function invoicePdfBlob(inv, { vendor, po, posById = {}, receiptsById = {
   const rows = inv.cancelled
     ? [['Nilai sebelum dibatalkan', rp(invDpp(inv) + invPpn(inv))]]
     : [
-        ['DPP', rp(t.dpp)],
+        [t.dpDpp > 0 ? 'Nilai tagihan' : 'DPP', rp(t.dpp)],
+        ...(t.dpDpp > 0 ? [['Potongan uang muka', `-${rp(t.dpDpp)}`], ['DPP', rp(t.dpp - t.dpDpp)]] : []),
         [ppnLabel(inv.lines), rp(t.ppn)],
+        ...(t.retensi > 0 ? [['Retensi ditahan', `-${rp(t.retensi)}`]] : []),
         ...(t.pph > 0 ? [[`Potongan PPh ${inv.pphPct}%`, `-${rp(t.pph)}`]] : []),
-        ...(t.dp > 0 ? [['Potongan uang muka', `-${rp(t.dp)}`]] : []),
+        ...(t.dp - (t.dpDpp ?? 0) > 0 ? [['Potongan uang muka', `-${rp(t.dp - (t.dpDpp ?? 0))}`]] : []),
         ...(t.ret > 0 ? [['Potongan retur', `-${rp(t.ret)}`]] : []),
         ...(t.credit > 0 ? [['Alokasi kredit vendor', `-${rp(t.credit)}`]] : []),
         ['Nilai tagihan', rp(t.total)],

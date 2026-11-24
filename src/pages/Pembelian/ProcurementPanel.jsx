@@ -1,10 +1,11 @@
 // Pengadaan di dalam detail permintaan: panduan langkah, penawaran vendor, pemenang, ajukan & setujui.
 // Jalur pengadaan dipilih di sini, setelah permintaan lolos verifikasi; penawaran vendor menyusul.
+import { approvalMessage, askConfirm } from './confirm.jsx';
 import { useState } from 'react';
 import { Badge, Box, Button, Card, Group, Text } from '@mantine/core';
 import { ConfirmDeleteQuoteModal, QuoteDetailModal, QuoteModal, ReasonModal, SwitchRouteModal } from './Dialogs.jsx';
 import { SuccessModal } from './components.jsx';
-import { approvalState, canCreate, signApproval } from './permissions.js';
+import { approvalState, canCreate, logEntry, signApproval } from './permissions.js';
 import { BiddingSection, Hint, ProcGuide, RouteSelector, SingleSection } from './procurement.jsx';
 import { TODAY } from './data.js';
 import { toast } from './usePb.js';
@@ -103,19 +104,26 @@ export default function ProcurementPanel({ f, pb, role, go }) {
   };
 
   const submitProc = () => {
-    patchProc({ status: 'diajukan', note: '', submittedAt: TODAY });
+    patchProc({ status: 'diajukan', note: '', submittedAt: TODAY, log: [...(f.procurement?.log ?? []), logEntry(role, 'ajukan')] });
     toast('Diajukan ke approver.');
   };
   // Approval pengadaan berjenjang dua: Chief Finance lalu Building Manager. PO/SPK baru
   // terbit setelah tanda tangan kedua — bukan setelah yang pertama.
-  const approve = () => {
+  const approve = () => askConfirm({
+    title: `Setujui pengadaan ${f.number}?`,
+    message: approvalMessage(approvalState(f.procurement ?? {}, 'procurement'), { final: 'Ini approval terakhir: pengadaan disetujui dan PO/SPK langsung diterbitkan.' }),
+    confirmLabel: 'Ya, setujui',
+    onConfirm: approveNow,
+  });
+  const approveNow = () => {
     const { doc, complete } = signApproval(f.procurement ?? {}, 'procurement', role);
     patchProc(complete ? { ...doc, status: 'disetujui' } : doc);
     if (complete) setApprovedPos(pos.length === 0 ? createPOs(f, pb) : pos);
     else toast(`Approval ${approvalState(doc, 'procurement').done.length} dari ${approvalState(doc, 'procurement').total} dicatat. Menunggu approval berikutnya.`);
   };
   const rejectProc = (note) => {
-    patchProc({ status: 'ditolak', note });
+    const { next } = approvalState(f.procurement, 'procurement');
+    patchProc({ status: 'ditolak', note, log: [...(f.procurement?.log ?? []), logEntry(role, 'tolak', { step: next, note })] });
     setRejectOpen(false);
   };
   // Belum diverifikasi: penawaran vendor belum bisa diunggah.

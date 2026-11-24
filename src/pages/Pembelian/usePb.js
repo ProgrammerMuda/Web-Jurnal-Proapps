@@ -25,6 +25,8 @@ export function usePb() {
       vouchersById: byId('vouchers'),
       // Payment Voucher yang memuat satu Payment Request tertentu.
       voucherOfPr: (prId) => pb.vouchers.find((v) => v.prIds?.includes(prId)),
+      // PR multi-vendor menerbitkan satu PV per vendor.
+      vouchersOfPr: (prId) => pb.vouchers.filter((v) => v.prIds?.includes(prId)),
       add: (kind, doc) => setPb((s) => ({ ...s, [kind]: [doc, ...s[kind]] })),
       update: (kind, id, fn) =>
         setPb((s) => ({ ...s, [kind]: s[kind].map((d) => (d.id === id ? fn(d) : d)) })),

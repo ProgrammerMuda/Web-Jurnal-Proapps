@@ -1,5 +1,6 @@
 // Daftar dokumen per tab (permintaan, PO, Penerimaan, Faktur, Pembayaran, Retur) dengan pola tabel seperti halaman Kontak.
-import { Badge, Button, Select, Table, Text, Tooltip } from '@mantine/core';
+import { approvalMessage, askConfirm } from './confirm.jsx';
+import { Badge, Box, Button, Group, Select, Stack, Table, Text, Tooltip } from '@mantine/core';
 import { useState } from 'react';
 import {
   ArrowCounterClockwise,
@@ -15,7 +16,7 @@ import {
   X,
 } from '@/components/Icon.jsx';
 import { DocNumber, EmptyState, ListShell, RowMenu, StatusPill } from './components.jsx';
-import { TODAY, personLabel } from './data.js';
+import { TODAY } from './data.js';
 import { ROUTE_OPTIONS } from './procurement.jsx';
 import {
   formatDate,
@@ -35,13 +36,17 @@ import {
   returnValue,
   RECEIPT_STATUS,
   receiptConfirmed,
+  receiptPending,
   pvPaid,
+  pvStatus,
+  PV_STATUS,
   rupiah,
   sum,
   uninvoicedLines,
 } from './utils.js';
-import { approvalState, canCreate, hidesPrices, isApproverTurn, prBlockedBySoD, receiptDoc, signApproval } from './permissions.js';
+import { approvalState, canCreate, hidesPrices, isApproverTurn, prBlockedBySoD, receiptDoc, receiptKind, receiptName, signApproval } from './permissions.js';
 import { toast } from './usePb.js';
+import { useApproveReceipt } from './Dialogs.jsx';
 
 const Money = ({ children, c }) => (
   <Text fz="sm" fw={700} c={c ?? 'slate.9'} ta="right" style={{ whiteSpace: 'nowrap' }}>{children}</Text>
@@ -67,6 +72,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
   const [status, setStatus] = useState(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState('10');
+  const approveReceipt = useApproveReceipt(pb);
   // Setiap perubahan pencarian/filter mengembalikan ke halaman pertama.
   const reset = (fn) => (v) => {
     fn(v);
@@ -177,12 +183,12 @@ export default function ListTab({ tab, pb, go, openDialog }) {
               <Table.Td fz="sm">{r.doNumber}</Table.Td>
               <Table.Td><Money>{r.lines.reduce((n, l) => n + l.qty, 0)}</Money></Table.Td>
               <Table.Td>{!receiptConfirmed(r)
-                ? <StatusPill map={RECEIPT_STATUS} status={r.status} size="xs" approval={{ doc: r, kind: 'bapp' }} />
+                ? <StatusPill map={RECEIPT_STATUS} status={r.status} size="xs" approval={{ doc: r, kind: receiptKind(r) }} />
                 : <Badge size="xs" radius="sm" variant="light" color={open ? 'orange' : 'green'} fw={700} tt="none">{open ? 'Belum difaktur' : 'Sudah difaktur'}</Badge>}</Table.Td>
               <Table.Td ta="right">
                 <RowMenu label={r.number} items={[
                   { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'receipt', id: r.id }) },
-                  !receiptConfirmed(r) && isApproverTurn(role, r, 'bapp') && { label: `Setujui BAPP (${approvalState(r, 'bapp').done.length + 1}/${approvalState(r, 'bapp').total})`, icon: Check, onClick: () => { pb.update('receipts', r.id, (d) => { const { doc, complete } = signApproval(d, 'bapp', role); return complete ? { ...doc, status: 'dikonfirmasi', approvedBy: personLabel(role) } : doc; }); toast('Approval dicatat.'); } },
+                  receiptPending(r) && isApproverTurn(role, r, receiptKind(r)) && { label: `Setujui ${receiptName(r)} (${approvalState(r, receiptKind(r)).done.length + 1}/${approvalState(r, receiptKind(r)).total})`, icon: Check, onClick: () => askConfirm({ title: `Setujui ${r.number}?`, message: approvalMessage(approvalState(r, receiptKind(r))), confirmLabel: 'Ya, setujui', onConfirm: () => { approveReceipt(r, role); toast('Approval dicatat.'); } }) },
                   receiptConfirmed(r) && open && canCreate(role, 'invoice') && { label: 'Buat Faktur', icon: Invoice, onClick: () => go({ name: 'invoice-new', receiptIds: [r.id] }) },
                 ]} />
               </Table.Td>
@@ -245,7 +251,8 @@ export default function ListTab({ tab, pb, go, openDialog }) {
   }
 
   if (tab === 'payments') {
-    const rows = pb.prs.filter((p) => match(q, p.number, vendor(p.vendorId), p.note) && (!status || p.status === status));
+    const vendorsOf = (p) => (p.vendorIds?.length ? p.vendorIds : [p.vendorId]);
+    const rows = pb.prs.filter((p) => match(q, p.number, ...vendorsOf(p).map(vendor), p.note) && (!status || p.status === status));
     return (
       <ListShell
         {...shell}
@@ -256,20 +263,42 @@ export default function ListTab({ tab, pb, go, openDialog }) {
         minWidth={1100}
         empty={pb.prs.length === 0 ? <EmptyState icon={Wallet} title="Belum ada Payment Request" text="Payment Request DP dibuat dari PO, pelunasan dibuat dari faktur. Approver menyetujui, Finance membayar." /> : undefined}
         rows={rows.map((p) => {
-          const pv = pb.voucherOfPr(p.id);
+          const pvs = pb.vouchersOfPr(p.id);
+          const pv = pvs[0];
+          const vids = vendorsOf(p);
+          const unpaid = pvs.filter((x) => !pvPaid(x));
           return (
           <Table.Tr key={p.id}>
             <Table.Td>
               <DocNumber onClick={() => go({ name: 'pr', id: p.id })}>{p.number}</DocNumber>
               <Sub>{formatDate(p.date)}</Sub>
             </Table.Td>
-            <Table.Td fz="sm" fw={600} c="slate.9">{vendor(p.vendorId)}</Table.Td>
+            <Table.Td>
+              {vids.length > 1 ? (
+                <>
+                  <Text fz="sm" fw={600} c="slate.9">{vids.length} vendor</Text>
+                  <Sub>{vids.map(vendor).join(', ')}</Sub>
+                </>
+              ) : <Text fz="sm" fw={600} c="slate.9">{vendor(p.vendorId)}</Text>}
+            </Table.Td>
             <Table.Td fz="sm">{p.kind === 'dp' ? 'Di muka' : 'Pelunasan'}</Table.Td>
             <Table.Td>
               <Tooltip label={p.note} disabled={p.status !== 'ditolak' || !p.note} withArrow fz="xs"><span><StatusPill map={PR_STATUS} status={p.status} size="xs" approval={{ doc: p, kind: 'pr' }} /></span></Tooltip>
             </Table.Td>
             <Table.Td>
-              {pv ? (
+              {pvs.length > 1 ? (
+                <Stack gap={4}>
+                  {pvs.map((x) => (
+                    <Box key={x.id}>
+                      <Group gap={6} wrap="nowrap">
+                        <DocNumber onClick={() => go({ name: 'voucher', id: x.id })}>{x.number}</DocNumber>
+                        <StatusPill map={PV_STATUS} status={pvStatus(x)} size="xs" />
+                      </Group>
+                      <Sub>{vendor(x.vendorId)} · {rupiah(x.amount)}</Sub>
+                    </Box>
+                  ))}
+                </Stack>
+              ) : pv ? (
                 <>
                   <DocNumber onClick={() => go({ name: 'voucher', id: pv.id })}>{pv.number}</DocNumber>
                   <Sub>{formatDate(pv.date)}</Sub>
@@ -282,11 +311,11 @@ export default function ListTab({ tab, pb, go, openDialog }) {
             <Table.Td ta="right">
               <RowMenu label={p.number} items={[
                 { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'pr', id: p.id }) },
-                p.status === 'diajukan' && isApproverTurn(role, p, 'pr') && !prBlockedBySoD(role, p) && { label: `Setujui (${approvalState(p, 'pr').done.length + 1}/${approvalState(p, 'pr').total})`, icon: Check, onClick: () => { pb.update('prs', p.id, (d) => { const { doc, complete } = signApproval(d, 'pr', role); return complete ? { ...doc, status: 'disetujui', approvedAt: TODAY } : doc; }); toast('Approval dicatat.'); } },
+                p.status === 'diajukan' && isApproverTurn(role, p, 'pr') && !prBlockedBySoD(role, p) && { label: `Setujui (${approvalState(p, 'pr').done.length + 1}/${approvalState(p, 'pr').total})`, icon: Check, onClick: () => askConfirm({ title: `Setujui ${p.number}?`, message: approvalMessage(approvalState(p, 'pr')), confirmLabel: 'Ya, setujui', onConfirm: () => { pb.update('prs', p.id, (d) => { const { doc, complete } = signApproval(d, 'pr', role); return complete ? { ...doc, status: 'disetujui', approvedAt: TODAY } : doc; }); toast('Approval dicatat.'); } }) },
                 p.status === 'diajukan' && isApproverTurn(role, p, 'pr') && !prBlockedBySoD(role, p) && { label: 'Tolak', icon: X, color: 'red', onClick: () => openDialog({ type: 'pr-reject', prId: p.id }) },
                 p.status === 'disetujui' && canCreate(role, 'pv') && { label: 'Terbitkan Payment Voucher', icon: CurrencyCircleDollar, onClick: () => openDialog({ type: 'pv', prId: p.id }) },
-                pv && !pvPaid(pv) && canCreate(role, 'pv') && { label: 'Catat pembayaran', icon: CurrencyCircleDollar, onClick: () => openDialog({ type: 'pay', voucherId: pv.id }) },
-                pv && { label: 'Lihat Payment Voucher', icon: CurrencyCircleDollar, onClick: () => go({ name: 'voucher', id: pv.id }) },
+                ...(canCreate(role, 'pv') ? unpaid.map((x) => ({ label: pvs.length > 1 ? `Catat pembayaran ${x.number} (${vendor(x.vendorId)})` : 'Catat pembayaran', icon: CurrencyCircleDollar, onClick: () => openDialog({ type: 'pay', voucherId: x.id }) })) : []),
+                ...pvs.map((x) => ({ label: pvs.length > 1 ? `Lihat ${x.number}` : 'Lihat Payment Voucher', icon: CurrencyCircleDollar, onClick: () => go({ name: 'voucher', id: x.id }) })),
               ]} />
             </Table.Td>
           </Table.Tr>

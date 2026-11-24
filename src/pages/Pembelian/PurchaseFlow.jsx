@@ -11,18 +11,23 @@ import { Badge, Box, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { Check, TreeStructure } from '@/components/Icon.jsx';
 import { DocNumber, Section, StatusPill } from './components.jsx';
 import { termMechanics } from './paymentTerms.js';
+import { TODAY } from './data.js';
 import {
   advancePct,
   dpState,
   poAllJasa,
   isDpInvoice,
+  isRetentionRelease,
+  formatDate,
   poDpAmount,
+  poRetention,
   PR_STATUS,
   PROC_STATUS,
   PV_STATUS,
   pvStatus,
   routeLabel,
   rupiah,
+  retentionDocName,
 } from './utils.js';
 
 // Satu langkah: titik status + judul (+ status di kanan) + isi.
@@ -125,11 +130,16 @@ export function resolveChain(current, pb) {
   );
   // Uang muka dipisah dari pelunasan di setiap jenis dokumen: faktur, PR, dan PV.
   const dpInvoices = invoices.filter(isDpInvoice);
-  const billInvoices = invoices.filter((i) => !isDpInvoice(i));
+  // Pelepasan retensi punya langkahnya sendiri di ujung alur, terpisah dari faktur termin.
+  const releases = invoices.filter(isRetentionRelease);
+  const billInvoices = invoices.filter((i) => !isDpInvoice(i) && !isRetentionRelease(i));
   const dps = prs.filter((p) => p.kind === 'dp');
-  const pays = prs.filter((p) => p.kind !== 'dp');
+  const touchesRelease = (p) => (p.invoiceIds ?? []).some((x) => releases.some((r) => r.id === x));
+  const retPrs = prs.filter((p) => p.kind !== 'dp' && touchesRelease(p));
+  const pays = prs.filter((p) => p.kind !== 'dp' && !touchesRelease(p));
   const vouchers = pb.vouchers.filter((v) => (v.prIds ?? []).some((x) => prs.some((p) => p.id === x)));
   const isDpVoucher = (v) => (v.prIds ?? []).some((x) => dps.some((p) => p.id === x));
+  const isRetVoucher = (v) => (v.prIds ?? []).some((x) => retPrs.some((p) => p.id === x));
   return {
     fppbj,
     pos,
@@ -140,13 +150,16 @@ export function resolveChain(current, pb) {
     dps,
     pays,
     vouchers,
+    releases,
+    retPrs,
     dpVouchers: vouchers.filter(isDpVoucher),
-    payVouchers: vouchers.filter((v) => !isDpVoucher(v)),
+    retVouchers: vouchers.filter(isRetVoucher),
+    payVouchers: vouchers.filter((v) => !isDpVoucher(v) && !isRetVoucher(v)),
   };
 }
 
 export default function PurchaseFlow({ pb, go, current, description = 'Dokumen yang saling terkait' }) {
-  const { fppbj, pos, receipts, dpInvoices, billInvoices, dps, pays, dpVouchers, payVouchers } = resolveChain(current, pb);
+  const { fppbj, pos, receipts, dpInvoices, billInvoices, dps, pays, dpVouchers, payVouchers, releases, retPrs, retVouchers } = resolveChain(current, pb);
   const proc = fppbj?.procurement;
 
   const here = (kind, id) => current.kind === kind && current.id === id;
@@ -190,6 +203,12 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
   const sebelum = jasa ? 'sebelum pekerjaan dimulai' : 'sebelum barang datang';
   const tagihan = split === 'terms' ? 'termin' : split === 'periods' ? 'per periode' : showDp ? 'pelunasan' : null;
 
+  // Retensi: langkah terakhir, selama masa pemeliharaan berjalan pesanan belum tuntas.
+  const retensi = pos.length === 1 ? poRetention(pos[0], pb.invoices) : null;
+  const sisaBulan = retensi?.maintenanceEnd
+    ? Math.max(0, Math.round((new Date(retensi.maintenanceEnd) - new Date(TODAY)) / (30.44 * 864e5)))
+    : null;
+
   // --- Keadaan tiap langkah -------------------------------------------------------------------
   const steps = [
     { key: 'fppbj', done: !!fppbj && (pos.length > 0 || fppbj.status === 'selesai'), skipped: !fppbj },
@@ -199,6 +218,7 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
     { key: 'receipt', done: receipts.length > 0 },
     { key: 'invoice', done: billInvoices.length > 0 },
     { key: 'pay', done: pays.length > 0 && pays.every((p) => p.status === 'dibayar') },
+    retensi && { key: 'ret', done: retensi.balance <= 0 && retPrs.length > 0 && retPrs.every((p) => p.status === 'dibayar') },
   ].filter(Boolean);
   // Satu langkah saja yang menyala: yang pertama belum selesai. Langkah lain yang belum
   // selesai tetap abu, supaya mata langsung tertuju ke pekerjaan berikutnya.
@@ -267,6 +287,27 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
               {payVouchers.length ? payVouchers.map(pvRow) : <Empty>Belum terbit</Empty>}
             </SubRow>
           </SubGroup>)}
+
+        {retensi && step('ret', {
+          title: `Pelepasan retensi ${retensi.pct}%`,
+          meta: `${rupiah(retensi.target)} · setelah masa pemeliharaan ${retensi.months} bulan`,
+          right: retensi.balance <= 0 && retensi.released > 0
+            ? <Pill label="Dilepas" color="green" />
+            : retensi.maintenanceEnd
+              ? <Pill label={sisaBulan > 0 ? `${sisaBulan} bulan lagi` : 'Bisa dilepas'} color="violet" />
+              : <Pill label="Menunggu termin" color="gray" />,
+        },
+        <SubGroup>
+          <SubRow label={`Pelepasan (${retentionDocName(pos[0])})`}>
+            {releases.length ? releases.map((i) => docRow('invoice', i.id, i.number)) : <Empty>{retensi.maintenanceEnd ? `Tersedia ${formatDate(retensi.maintenanceEnd)}` : 'Setelah termin terakhir difaktur'}</Empty>}
+          </SubRow>
+          <SubRow label="Payment Request">
+            {retPrs.length ? retPrs.map(prRow) : <Empty>Belum diajukan</Empty>}
+          </SubRow>
+          <SubRow label="Payment Voucher">
+            {retVouchers.length ? retVouchers.map(pvRow) : <Empty>Belum terbit</Empty>}
+          </SubRow>
+        </SubGroup>)}
       </Stack>
     </Section>
   );

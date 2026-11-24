@@ -19,14 +19,15 @@ import {
   dpAmortization,
   invDpDeduct,
   invDpp,
-  invPph,
   invPpn,
+  isRetentionRelease,
   invTotals,
   isDpInvoice,
   lineRate,
   poDocLabel,
   pvPaid,
   rupiah,
+  retentionDocName,
 } from './utils.js';
 
 // Akun dicari lewat kode atau namanya di daftar akun, bukan disalin ke modul ini: kode akun
@@ -50,20 +51,34 @@ export const AKUN = {
   beban: '6-10000', // Beban Operasional — cadangan bila produk tidak menyebut akun pembeliannya
   uangMuka: 'Uang Muka Pembelian',
   hutangPph: 'Hutang PPh Pasal 23',
+  hutangRetensi: 'Hutang Retensi',
   kas: 'Kas dan Setara Kas',
 };
+
+// Rekening sumber pembayaran PV dan akun Kas & Bank-nya. Kas keluar dijurnal ke akun rekening
+// yang benar-benar dipakai, bukan ke induk "Kas dan Setara Kas", supaya saldo per rekening dan
+// rekonsiliasi bank cocok.
+export const SOURCE_ACCOUNTS = [
+  { label: 'BCA 288-123-9001 · Kas Operasional', account: '1-10004' },
+  { label: 'Mandiri 101-00-5577 · Kas Proyek', account: '1-10003' },
+  { label: 'Kas kecil', account: '1-10001' },
+];
+// PV lama hanya menyimpan label rekeningnya; cocokkan dari situ, kalau tidak dikenal pakai induk.
+export const sourceAccountOf = (v) => v?.sourceAccount ?? SOURCE_ACCOUNTS.find((x) => x.label === v?.source)?.account ?? AKUN.kas;
 
 const r = (n) => Math.round(n || 0);
 const dr = (account, v, memo) => ({ account, debit: r(v), credit: 0, memo });
 const cr = (account, v, memo) => ({ account, debit: 0, credit: r(v), memo });
 
 // Gabungkan baris akun + sisi yang sama, buang yang nol, lalu beri kode & nama akun.
-function finish(lines) {
+// byMemo: baris dengan akun sama tapi keterangan berbeda tetap terpisah (mis. pelunasan per
+// faktur di PV), supaya buku besar hutang bisa ditelusuri ke fakturnya.
+function finish(lines, { byMemo = false } = {}) {
   const map = new Map();
   for (const l of lines) {
     if (!r(l.debit) && !r(l.credit)) continue;
     const side = l.debit ? 'd' : 'c';
-    const key = `${accountOf(l.account).code ?? l.account}|${side}`;
+    const key = `${accountOf(l.account).code ?? l.account}|${side}${byMemo ? `|${l.memo ?? ''}` : ''}`;
     const cur = map.get(key);
     if (cur) {
       cur.debit += r(l.debit);
@@ -139,11 +154,29 @@ export function invoiceJournal(inv, pb, ctx = {}) {
   const vendor = pb.vendorsById?.[inv.vendorId]?.name ?? 'vendor';
 
   // Faktur uang muka: hak tagih ke vendor lahir, hutangnya juga. Kas belum keluar.
+  // Model PDF: DPP uang muka ke Uang Muka Pembelian, PPN-nya langsung jadi PPN Masukan (faktur
+  // pajak uang muka), dan PPh dipotong atas uang yang dibayar. Faktur uang muka lama hanya
+  // punya satu baris bruto tanpa PPN, jadi hasilnya sama dengan sebelumnya.
   if (isDpInvoice(inv)) {
-    const nilai = invDpp(inv) + invPpn(inv);
+    const dpp = invDpp(inv);
+    const ppn = invPpn(inv);
+    const pph = Math.round((dpp * (inv.pphPct || 0)) / 100);
     return finish([
-      dr(AKUN.uangMuka, nilai, `Uang muka ke ${vendor}`),
-      cr(AKUN.hutangUsaha, nilai, `Hutang uang muka ${inv.number}`),
+      dr(AKUN.uangMuka, dpp, `Uang muka ke ${vendor}`),
+      ...(ppn ? [dr(AKUN.ppnMasukan, ppn, 'PPN atas uang muka')] : []),
+      ...(pph ? [cr(AKUN.hutangPph, pph, `PPh ${inv.pphPct}% atas uang muka`)] : []),
+      cr(AKUN.hutangUsaha, dpp + ppn - pph, `Hutang uang muka ${inv.number}`),
+    ]);
+  }
+
+  // Pelepasan retensi: saldo yang ditahan dari faktur termin pindah ke Hutang Usaha, dipotong
+  // PPh atas porsi retensi. Tanpa PPN — sudah ikut di faktur termin.
+  if (isRetentionRelease(inv)) {
+    const t = invTotals(inv, { pos: pb.pos ?? [], prs: pb.prs ?? [], returns: [], invoices: pb.invoices ?? [] });
+    return finish([
+      dr(AKUN.hutangRetensi, inv.amount, `Pelepasan retensi ${pb.posById?.[inv.poId]?.number ?? ''}`.trim()),
+      ...(t.pph ? [cr(AKUN.hutangPph, t.pph, `PPh ${inv.pphPct}% atas retensi`)] : []),
+      cr(AKUN.hutangUsaha, t.total, `Hutang ke ${vendor}`),
     ]);
   }
 
@@ -179,11 +212,18 @@ export function invoiceJournal(inv, pb, ctx = {}) {
       didebit += ppn;
     }
   }
+  const dpp = invDpp(inv);
+  const tot = invTotals(inv, { pos: pb.pos ?? [], prs: pb.prs ?? [], returns: [], invoices: pb.invoices ?? [] });
+  // PPN atas porsi uang muka sudah diakui di faktur uang muka (model PDF): yang diakui di sini
+  // hanya PPN atas (nilai termin - potongan DP).
+  const ppnCut = invPpn(inv) - tot.ppn;
+  ppnMasukan -= ppnCut;
+  didebit -= ppnCut;
+  const ppn = tot.ppn;
   if (r(ppnMasukan)) lines.push(dr(AKUN.ppnMasukan, ppnMasukan, 'PPN atas faktur'));
 
-  const dpp = invDpp(inv);
-  const ppn = invPpn(inv);
-  const pph = invPph(inv);
+  const pph = tot.pph;
+  const retensi = tot.retensi;
   const dp = invDpDeduct(inv, pb.pos ?? [], pb.prs ?? [], pb.invoices ?? []);
   const credit = inv.credit ?? 0;
 
@@ -210,10 +250,11 @@ export function invoiceJournal(inv, pb, ctx = {}) {
     lines.push(cr(AKUN.uangMuka, a.amount, 'Pemakaian uang muka'));
   }
 
-  if (pph) lines.push(cr(AKUN.hutangPph, pph, `PPh 23 ${inv.pphPct}%`));
-  if (dp) lines.push(cr(AKUN.uangMuka, dp, 'Kompensasi uang muka'));
+  if (retensi) lines.push(cr(AKUN.hutangRetensi, retensi, 'Retensi ditahan sampai masa pemeliharaan selesai'));
+  if (pph) lines.push(cr(AKUN.hutangPph, pph, `PPh ${inv.pphPct}%`));
+  if (dp) lines.push(cr(AKUN.uangMuka, dp, 'Potongan uang muka'));
   if (credit) lines.push(cr(AKUN.uangMuka, credit, 'Alokasi kredit vendor'));
-  lines.push(cr(AKUN.hutangUsaha, dpp + ppn - pph - dp - credit, `Hutang ke ${vendor}`));
+  lines.push(cr(AKUN.hutangUsaha, dpp + ppn - pph - dp - credit - retensi, `Hutang ke ${vendor}`));
   return finish(lines);
 }
 
@@ -224,12 +265,23 @@ export function invoiceJournal(inv, pb, ctx = {}) {
 // Kas baru keluar saat pembayaran PV dicatat; sebelum itu PV hanya perintah bayar, belum ada jurnal.
 export function voucherJournal(v, pb) {
   if (!v || !pvPaid(v)) return [];
-  const pr = pb.prsById?.[(v.prIds ?? [])[0]];
+  const prs = (v.prIds ?? []).map((id) => pb.prsById?.[id]).filter(Boolean);
+  const pr = prs[0];
   const dpTanpaFaktur = pr?.kind === 'dp' && !(pr.invoiceIds ?? []).length;
-  return finish([
-    dr(dpTanpaFaktur ? AKUN.uangMuka : AKUN.hutangUsaha, v.amount),
-    cr(AKUN.kas, v.amount),
-  ]);
+  const kas = cr(sourceAccountOf(v), v.amount, v.source ? `Dibayar dari ${v.source}` : undefined);
+  if (dpTanpaFaktur) return finish([dr(AKUN.uangMuka, v.amount, `Uang muka ${pb.posById?.[pr.poId]?.number ?? ''}`.trim()), kas]);
+  // Satu baris debit per faktur yang dilunasi, sebesar alokasinya di PR. PR multi-vendor
+  // menerbitkan satu PV per vendor, jadi hanya faktur vendor PV ini yang diambil.
+  const bagian = prs.flatMap((p) => (p.invoiceIds ?? [])
+    .map((id) => pb.invoicesById?.[id])
+    .filter((i) => i && (!v.vendorId || i.vendorId === v.vendorId))
+    .map((i) => ({ inv: i, amount: p.alloc?.[i.id] ?? ((p.invoiceIds ?? []).length === 1 ? p.amount : 0) })))
+    .filter((x) => x.amount > 0);
+  const cocok = bagian.length > 0 && Math.abs(bagian.reduce((n, x) => n + x.amount, 0) - v.amount) <= 1;
+  const debit = cocok
+    ? bagian.map((x) => dr(AKUN.hutangUsaha, x.amount, `${isDpInvoice(x.inv) ? 'Uang muka' : 'Pelunasan'} ${x.inv.number}`))
+    : [dr(AKUN.hutangUsaha, v.amount)];
+  return finish([...debit, kas], { byMemo: true });
 }
 
 // Keterangan singkat jurnalnya, untuk ringkasan satu baris.
@@ -274,6 +326,24 @@ export function journalEntry(kind, doc, pb, ctx = {}) {
   if (kind === 'invoice') {
     const po = pb.posById?.[doc.poId];
     const dp = isDpInvoice(doc);
+    if (isRetentionRelease(doc)) {
+      return {
+        kind,
+        typeLabel: 'Pelepasan retensi',
+        date: doc.date,
+        lines: invoiceJournal(doc, pb, ctx),
+        note: `Pelepasan retensi ${po?.number ?? ''} ke ${vendor}`,
+        source: { label: doc.number, view: { name: 'invoice', id: doc.id } },
+        party: vendor,
+        basisLabel: 'Atas pesanan',
+        basis: po ? [{ label: po.number, view: { name: 'po', id: po.id } }] : [],
+        extra: [[`No. ${retentionDocName(po)}`, doc.bastNo || '—']],
+        by: doc.createdBy || 'Staff Accounting',
+        files: (doc.files ?? []).filter(Boolean),
+        filesLabel: `Berkas ${retentionDocName(po)}`,
+        back: { name: 'invoice', id: doc.id },
+      };
+    }
     return {
       kind,
       typeLabel: dp ? 'Faktur uang muka' : 'Faktur pembelian',

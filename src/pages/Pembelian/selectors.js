@@ -1,10 +1,10 @@
 // Turunan data untuk menu "Buat baru" (dokumen siap dilanjutkan) dan halaman Ringkasan.
 import { TODAY } from './data.js';
-import { blockedBySoD, approvalState, canApprove, isApproverTurn, canCreate, canVerify, prBlockedBySoD, receiptDoc } from './permissions.js';
+import { blockedBySoD, approvalState, canApprove, isApproverTurn, canCreate, canVerify, prBlockedBySoD, receiptDoc, receiptKind, receiptName } from './permissions.js';
 import {
   canReturn,
   poAllBarang,
-  receiptConfirmed,
+  receiptPending,
   poAllJasa,
   advancePct,
   dpInvoiceOf,
@@ -20,14 +20,17 @@ import {
   poHasReceipt,
   pvPaid,
   uninvoicedLines,
+  poRetention,
+  addDays,
+  retentionDocName,
+  rupiahShort,
 } from './utils.js';
 
 export function readiness(pb) {
   const c = pb.calc;
-  // PO yang dibatalkan atau ditutup tidak lagi menunggu penerimaan maupun DP.
-  const sentPos = pb.pos.filter((p) => p.sent && !p.closedAs);
-  // Penerimaan tidak menunggu dokumen terkirim: barang bisa datang lebih dulu. Uang muka
-  // tetap menunggu, karena menagih DP atas pesanan yang belum dikirim itu tidak berdasar.
+  // Penerimaan dan faktur uang muka tidak menunggu dokumen terkirim: barang bisa datang
+  // lebih dulu, dan tagihan DP vendor sering terbit begitu pesanan disepakati, sebelum
+  // PO/SPK-nya sempat dikirim resmi.
   const livePos = pb.pos.filter((p) => !p.closedAs);
   const r = {
     // Penawaran: permintaan terverifikasi / dalam pengadaan jalur bidding yang belum disetujui.
@@ -47,7 +50,7 @@ export function readiness(pb) {
     invoice: pb.receipts.filter((r) => uninvoicedLines(r, pb.invoices).length > 0 && !dpBlocks(dpState(pb.posById[r.poId], c))),
     // Pesanan beruang muka yang faktur uang mukanya belum dicatat (PR DP lama tanpa faktur
     // tetap dihitung sudah diajukan).
-    prDp: sentPos.filter(
+    prDp: livePos.filter(
       (p) => advancePct(p.term) > 0
         && !dpInvoiceOf(p.id, pb.invoices)
         && !pb.prs.some((x) => x.kind === 'dp' && x.poId === p.id && x.status !== 'ditolak'),
@@ -59,6 +62,13 @@ export function readiness(pb) {
   };
   // Payment Request gabungan DP/CBD + pelunasan.
   r.pr = [...r.prDp, ...r.prPay];
+  // Retensi yang masih ditahan setelah semua termin difaktur, urut dari yang paling dulu
+  // selesai masa pemeliharaannya. `due`: yang sudah boleh dilepas hari ini.
+  r.retention = pb.pos
+    .map((p) => ({ po: p, rt: poRetention(p, pb.invoices) }))
+    .filter(({ rt }) => rt && rt.balance > 0 && rt.billedAll && rt.maintenanceEnd)
+    .sort((a, b) => a.rt.maintenanceEnd.localeCompare(b.rt.maintenanceEnd));
+  r.retentionDue = r.retention.filter(({ rt }) => rt.maintenanceEnd <= TODAY);
   return r;
 }
 
@@ -200,17 +210,28 @@ export function actionsFor(role, pb) {
     r.prPay
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
       .forEach((i) => add(hotTask({ id: `b-${i.id}`, title: isDpInvoice(i) ? 'Ajukan pembayaran uang muka' : 'Ajukan pembayaran faktur', sub: `${i.number} · jatuh tempo ${formatDate(i.dueDate)}`, cta: 'Buka', to: { name: isDpInvoice(i) ? 'invoice' : 'po', id: isDpInvoice(i) ? i.id : i.poId }, due: i.dueDate }, isDpInvoice(i) ? i.poId : null)));
+    // Retensi dua tahap. H-30: minta dokumen serah terima akhir ke vendor/PIC supaya sudah
+    // di tangan saat jatuh waktu. Hari H dan sesudahnya: lepas retensinya — tombol tugas ini
+    // langsung membuka modal pelepasan, tidak perlu mencari PO-nya.
+    r.retention
+      .filter(({ rt }) => rt.maintenanceEnd > TODAY && addDays(rt.maintenanceEnd, -30) <= TODAY)
+      .forEach(({ po: p, rt }) => add({ id: `rb-${p.id}`, title: `Minta ${retentionDocName(p)}`, sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name} · retensi bisa dilepas ${formatDate(rt.maintenanceEnd)}`, cta: 'Buka', to: { name: 'po', id: p.id }, due: rt.maintenanceEnd }));
+    r.retentionDue.forEach(({ po: p, rt }) => add({ id: `rl-${p.id}`, title: `Lepas retensi ${rupiahShort(rt.balance)}`, sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name} · pemeliharaan selesai ${formatDate(rt.maintenanceEnd)}`, cta: 'Lepas', to: { name: 'po', id: p.id }, dialog: { type: 'retention-release', poId: p.id }, since: rt.maintenanceEnd, limit: SLA.invoice }));
   }
   // FPB untuk barang ke Gudang, BAPP untuk jasa ke PIC jasa.
   r.receipt
     .filter((p) => canCreate(role, receiptDoc(poAllJasa(p))))
     .forEach((p) => add({ id: `r-${p.id}`, title: poAllJasa(p) ? 'Catat BAPP' : poAllBarang(p) ? 'Catat penerimaan barang' : 'Catat penerimaan (FPB/BAPP)', sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name}`, cta: 'Catat', to: { name: 'po', id: p.id }, since: p.sentAt ?? p.date, due: p.expectedAt }));
-  // BAPP jasa yang menunggu approval berjenjang.
-  if (canApprove(role, 'bapp')) {
+  // FPB dan BAPP yang menunggu approval berjenjang.
+  if (canApprove(role, 'bapp') || canApprove(role, 'fpb')) {
     pb.receipts
-      .filter((x) => !receiptConfirmed(x) && isApproverTurn(role, x, 'bapp'))
-      .forEach((x) => add({ id: `ba-${x.id}`, title: `Setujui BAPP (${approvalState(x, 'bapp').done.length + 1}/${approvalState(x, 'bapp').total})`, sub: `${x.number} · ${pb.vendorsById[x.vendorId]?.name}`, cta: 'Tinjau', to: { name: 'receipt', id: x.id }, since: x.date, limit: SLA.bapp }));
+      .filter((x) => receiptPending(x) && canApprove(role, receiptKind(x)) && isApproverTurn(role, x, receiptKind(x)))
+      .forEach((x) => add({ id: `ba-${x.id}`, title: `Setujui ${receiptName(x)} (${approvalState(x, receiptKind(x)).done.length + 1}/${approvalState(x, receiptKind(x)).total})`, sub: `${x.number} · ${pb.vendorsById[x.vendorId]?.name}`, cta: 'Tinjau', to: { name: 'receipt', id: x.id }, since: x.date, limit: SLA.bapp }));
   }
+  // FPB/BAPP yang ditolak kembali ke pencatatnya untuk diajukan ulang atau dibatalkan.
+  pb.receipts
+    .filter((x) => x.status === 'ditolak' && canCreate(role, receiptDoc(receiptKind(x) === 'bapp')))
+    .forEach((x) => add({ id: `rt-${x.id}`, title: `${receiptName(x)} ditolak`, sub: `${x.number} · ${x.rejectNote ?? ''}`, cta: 'Buka', to: { name: 'receipt', id: x.id }, since: x.rejectedAt?.slice(0, 10) ?? x.date, limit: SLA.returned }));
   if (canCreate(role, 'fppbj')) {
     pb.fppbj.filter((f) => f.status === 'dikembalikan').forEach((f) => add({ id: `k-${f.id}`, title: 'Permintaan dikembalikan', sub: `${f.number} · ${f.returnNote}`, cta: 'Buka', to: { name: 'fppbj', id: f.id }, since: f.returnedAt ?? f.date, limit: SLA.returned }));
     pb.fppbj.filter((f) => f.status === 'draft').forEach((f) => add({ id: `dr-${f.id}`, title: 'Draf permintaan belum diajukan', sub: f.number, cta: 'Buka', to: { name: 'fppbj', id: f.id }, since: f.date, limit: SLA.draft }));
@@ -240,8 +261,8 @@ export { receiptsOf };
 // tugas di actionsFor, supaya badge angka di sidebar menunjuk ke daftar yang benar.
 const ACTION_MENU = {
   v: 'fppbj', j: 'fppbj', p: 'fppbj', g: 'fppbj', ap: 'fppbj', k: 'fppbj', dr: 'fppbj',
-  s: 'orders', d: 'orders', dw: 'orders',
-  r: 'receipts', ba: 'receipts',
+  s: 'orders', d: 'orders', dw: 'orders', rl: 'orders', rb: 'orders',
+  r: 'receipts', ba: 'receipts', rt: 'receipts',
   f: 'bills', b: 'bills',
   ar: 'payments', fp: 'payments', pv: 'payments',
 };

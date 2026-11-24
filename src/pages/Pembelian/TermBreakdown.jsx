@@ -5,7 +5,7 @@
 import { Box, Group, Stack, Text } from '@mantine/core';
 import { termMechanics } from './paymentTerms.js';
 import { periodOptions } from './data.js';
-import { advancePct, dueDaysOf, poAllJasa, poTotal, rupiah, scheduleCount, termPcts } from './utils.js';
+import { advancePct, dueDaysOf, poAllJasa, poSubtotal, poTotal, rupiah, scheduleCount, termPcts } from './utils.js';
 
 // Batas termin yang dirinci satu per satu; lebih dari ini diringkas jadi satu baris.
 const MAX_ROWS = 4;
@@ -19,7 +19,7 @@ function dueText(t, mech, jasa) {
 
 // Dipakai untuk PO/SPK maupun penawaran vendor: cukup termin, nilai total, dan apakah
 // isinya jasa semua (menentukan sebutan "BAPP" vs "barang diterima").
-export function termStages({ term: t, total = 0, jasa = false }) {
+export function termStages({ term: t, total = 0, jasa = false, dppRatio = 1 }) {
   if (!t) return [];
   const mech = termMechanics(t);
   const pct = advancePct(t);
@@ -39,7 +39,11 @@ export function termStages({ term: t, total = 0, jasa = false }) {
   // Termin yang jadwalnya sudah mengeluarkan DP: total PO = sisa setelah DP. Selain itu sisa
   // = total dikurangi DP.
   const rest = mech.dpOutOfSchedule ? total : total - dp;
-  const ret = mech.retention ? Math.round((rest * (t.retentionPct ?? 0)) / 100) : 0;
+  // Retensi dihitung dari nilai kontrak penuh (sama dengan invRetention), bukan dari sisa
+  // setelah DP: DP 20% + retensi 5% atas kontrak Rp 100 jt = retensi Rp 5 jt, bukan Rp 4 jt.
+  const contract = mech.dpOutOfSchedule ? total + dp : total;
+  // Retensi ditahan dari DPP (tanpa PPN), sama dengan invRetention.
+  const ret = mech.retention ? Math.round((contract * dppRatio * (t.retentionPct ?? 0)) / 100) : 0;
   const paid = rest - ret;
   const due = dueText(t, mech, jasa);
 
@@ -47,7 +51,7 @@ export function termStages({ term: t, total = 0, jasa = false }) {
     const n = scheduleCount(t);
     const pcts = termPcts(t);
     if (n <= MAX_ROWS) {
-      pcts.forEach((p, i) => stages.push({ key: `t${i}`, label: `Termin ${i + 1}`, pct: p, sub: dp > 0 ? 'dari sisa setelah DP' : null, amount: Math.round((paid * p) / 100), due }));
+      pcts.forEach((p, i) => stages.push({ key: `t${i}`, label: `Termin ${i + 1}`, pct: p, sub: [dp > 0 && (mech.dpOutOfSchedule ? 'dari sisa setelah DP' : `dipotong DP ${pct}%`), ret > 0 && `retensi ${t.retentionPct}% ditahan`].filter(Boolean).join(' · ') || null, amount: Math.round((paid * p) / 100), due }));
     } else {
       stages.push({ key: 'terms', label: `${n} termin progres`, sub: 'sesuai progres pekerjaan', amount: paid, due });
     }
@@ -56,11 +60,14 @@ export function termStages({ term: t, total = 0, jasa = false }) {
     const unit = periodOptions.find((o) => o.value === t.period)?.label ?? t.period ?? 'periode';
     stages.push({ key: 'per', label: `Tagihan ${unit.toLowerCase()}`, sub: `${n} kali`, amount: Math.round(paid / n), amountSuffix: ` / ${t.period ?? 'periode'}`, due });
   } else {
-    stages.push({ key: 'rest', label: dp > 0 ? 'Pelunasan' : 'Pembayaran penuh', pct: dp > 0 && !mech.dpOutOfSchedule ? 100 - pct : dp > 0 ? null : 100, amount: paid, due });
+    // Dengan retensi, tagihan utamanya bukan lagi 100%: sebagian ditahan dan ditagih belakangan.
+    const label = dp > 0 ? 'Pelunasan' : ret > 0 ? 'Pembayaran utama' : 'Pembayaran penuh';
+    const restPct = dp > 0 && !mech.dpOutOfSchedule ? 100 - pct : dp > 0 ? null : 100 - (ret > 0 ? t.retentionPct ?? 0 : 0);
+    stages.push({ key: 'rest', label, pct: restPct, amount: paid, due });
   }
 
   if (ret > 0) {
-    stages.push({ key: 'ret', label: 'Retensi', pct: t.retentionPct, amount: ret, due: `setelah masa pemeliharaan ${t.retentionMonths ?? 0} bulan` });
+    stages.push({ key: 'ret', label: 'Pelepasan retensi', pct: t.retentionPct, sub: 'ditahan dari tiap tagihan', amount: ret, due: `setelah masa pemeliharaan ${t.retentionMonths ?? 0} bulan (${jasa ? 'BAST akhir' : 'berita acara akhir garansi'})` });
   }
   return stages;
 }
@@ -70,7 +77,7 @@ export default function TermBreakdown({ po, term, total, jasa, noPrice = false }
   const t = po ? po.term : term;
   const mech = termMechanics(t);
   const name = (mech.label ?? t?.type ?? '—').split(' (')[0];
-  const stages = termStages(po ? { term: t, total: poTotal(po), jasa: poAllJasa(po) } : { term: t, total, jasa });
+  const stages = termStages(po ? { term: t, total: poTotal(po), jasa: poAllJasa(po), dppRatio: poTotal(po) ? poSubtotal(po) / poTotal(po) : 1 } : { term: t, total, jasa });
   return (
     <Stack gap={8}>
       <Text fz="sm" fw={700} c="slate.9">{name}</Text>

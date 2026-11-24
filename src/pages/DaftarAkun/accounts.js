@@ -883,6 +883,20 @@ export const accounts = [
     parent: '2-10000',
   },
   {
+    // Bagian tagihan termin yang ditahan sampai masa pemeliharaan selesai (BAST 2).
+    code: '2-10160',
+    name: 'Hutang Retensi',
+    category: 'Akun Hutang',
+    normal: 'kredit',
+    locked: false,
+    allUsers: true,
+    bankCash: false,
+    contra: false,
+    tax: null,
+    balance: 0,
+    parent: '2-10000',
+  },
+  {
     code: '2-10200',
     name: 'Hutang Lainnya',
     category: 'Akun Hutang',

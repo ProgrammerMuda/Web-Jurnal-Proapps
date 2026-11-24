@@ -22,12 +22,15 @@ import {
   invStatus,
   invLineDesc,
   invTotals,
+  isDpInvoice,
+  isRetentionRelease,
   PR_STATUS,
   poDocLabel,
   ppnLabel,
   returnedQty,
   rupiah,
   vendorCredit,
+  retentionDocName,
 } from './utils.js';
 
 const th = { th: { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 600, color: 'var(--mantine-color-slate-7)', whiteSpace: 'nowrap' } };
@@ -59,7 +62,18 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
   const itemOf = (l) => (pb.posById[l.poId ?? inv.poId] ?? po)?.items.find((i) => i.id === l.itemId);
   const count = (n, unit) => <Badge size="sm" radius="sm" variant="light" color="slate" tt="none">{n} {unit}</Badge>;
 
-  const cells = [
+  // Pelepasan retensi: bukan faktur baru dari vendor, melainkan saldo Hutang Retensi yang
+  // dicairkan setelah masa pemeliharaan selesai.
+  const release = isRetentionRelease(inv);
+  const heldBy = release ? (inv.sources ?? []).map((x) => ({ ...x, doc: pb.invoicesById[x.invoiceId] })).filter((x) => x.doc) : [];
+  const cells = release ? [
+    ['Vendor', vendor?.name],
+    [`No. ${retentionDocName(po)}`, inv.bastNo || '—'],
+    ['Tanggal pelepasan', formatDate(inv.date)],
+    ['Jatuh tempo', <Text key="d" span fz="sm" fw={700} c={overdue ? 'red.7' : 'slate.9'}>{formatDate(inv.dueDate)}{overdue && ' · lewat jatuh tempo'}</Text>],
+    [po ? poDocLabel(po) : 'Pesanan', po ? <DocNumber onClick={() => go({ name: 'po', id: po.id })}>{po.number}</DocNumber> : '—'],
+    ['Masa pemeliharaan selesai', inv.maintenanceEnd ? formatDate(inv.maintenanceEnd) : '—'],
+  ] : [
     ['Vendor', vendor?.name],
     ['No. invoice vendor', inv.vendorNo || '—'],
     ['Tanggal faktur', formatDate(inv.date)],
@@ -89,6 +103,7 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
                 <CopyIcon value={inv.number} size={16} />
                 {/* Status sudah berbunyi "Jatuh tempo" sendiri; badge kedua cuma mengulang. */}
                 <StatusPill map={INV_STATUS} status={status} />
+                {release && <Badge size="sm" radius="sm" variant="light" color="violet" tt="none" fw={700}>Pelepasan retensi</Badge>}
               </Group>
               {/* Cukup tanggal dokumennya — vendor, no. invoice vendor, dan pesanan asalnya
                   sudah tertera di kartu Informasi faktur. */}
@@ -118,7 +133,7 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
                     Ajukan Pembayaran
                   </Button>
                 )}
-                {(credit > 0 || canReturn || canCancel) && (
+                {!release && (credit > 0 || canReturn || canCancel) && (
                   <Menu position="bottom-end" width={230} shadow="md" withinPortal>
                     <Menu.Target>
                       <ActionIcon variant="default" size={36} radius="md" aria-label="Aksi lainnya">
@@ -174,18 +189,20 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
           <Stack gap="lg">
             <Card withBorder radius="lg" padding={0} bg="white">
               <Box px="lg" py="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
-                <CardHead icon={Info} desc="Vendor, tanggal, dan dokumen asalnya">Informasi faktur</CardHead>
+                <CardHead icon={Info} desc={release ? `Vendor, ${retentionDocName(po)}, dan pesanan asalnya` : 'Vendor, tanggal, dan dokumen asalnya'}>{release ? 'Informasi pelepasan retensi' : 'Informasi faktur'}</CardHead>
               </Box>
-              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={0}>
-                {cells.map(([k, v], i) => (
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={1} verticalSpacing={1} bg="gray.2">
+                {cells.map(([k, v], i, all) => (
                   <Box
                     key={k}
                     px="lg"
                     py="md"
                     style={{
                       minWidth: 0,
-                      borderTop: i >= 2 ? '1px solid var(--mantine-color-gray-2)' : undefined,
-                      borderLeft: i % 2 ? '1px solid var(--mantine-color-gray-2)' : undefined,
+                      // Garis antar sel digambar oleh celah 1px di atas latar abu-abu, jadi selalu
+                      // utuh. Sel terakhir yang sendirian melebar penuh supaya tidak ada sel kosong.
+                      background: 'white',
+                      gridColumn: i === all.length - 1 && i % 2 === 0 ? '1 / -1' : undefined,
                     }}
                   >
                     <Text fz={11} fw={600} c="slate.6">{k}</Text>
@@ -195,6 +212,19 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
               </SimpleGrid>
             </Card>
 
+            {release ? (
+            <Section divided flush icon={Package} title="Retensi yang dilepas" description="Ditahan dari faktur termin; PPN-nya sudah ikut di faktur tersebut" right={count(heldBy.length, 'faktur')}>
+              <DataTable bare head={[{ label: 'Faktur termin' }, { label: 'Tanggal' }, { label: 'Retensi ditahan', align: 'right' }]} minWidth={420}>
+                {heldBy.map((x) => (
+                  <Table.Tr key={x.invoiceId}>
+                    <Table.Td><DocNumber onClick={() => go({ name: 'invoice', id: x.invoiceId })}>{x.doc.number}</DocNumber></Table.Td>
+                    <Table.Td fz="sm">{formatDate(x.doc.date)}</Table.Td>
+                    <Table.Td ta="right" fz="sm" fw={700}>{rupiah(x.amount)}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </DataTable>
+            </Section>
+            ) : (
             <Section divided flush icon={Package} title="Item difaktur" description="Qty dan harga yang ditagih vendor" right={count(inv.lines.length, 'item')}>
               <Box style={{ overflow: 'auto' }}>
                 <Table verticalSpacing="xs" horizontalSpacing="sm" miw={560} styles={th}>
@@ -233,6 +263,7 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
                 </Table>
               </Box>
             </Section>
+            )}
 
             <Section divided flush icon={Money} title="Pembayaran" description="Payment Request yang melunasi faktur ini" right={count(prs.length, 'dokumen')}>
               {prs.length === 0 ? (
@@ -282,13 +313,20 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
                 <CardHead icon={Calculator} desc="Nilai tagihan dan sisa hutang">Ringkasan biaya</CardHead>
               </Box>
               <Stack gap={6} p="lg">
-                {lineRow('DPP', rupiah(t.dpp))}
-                {lineRow(ppnLabel(inv.lines), rupiah(t.ppn))}
-                {t.pph > 0 && lineRow(`Potongan PPh ${inv.pphPct}%`, `-${rupiah(t.pph)}`, { c: 'red.7' })}
-                {t.dp > 0 && lineRow('Potongan uang muka', `-${rupiah(t.dp)}`, { c: 'red.7' })}
+                {/* Urutan sama dengan invoice vendor: nilai, potongan DP, DPP, PPN, retensi, PPh. */}
+                {release
+                  ? lineRow('Retensi dilepas', rupiah(t.dpp))
+                  : lineRow(isDpInvoice(inv) ? 'Uang muka (DPP)' : t.dpDpp > 0 ? 'Nilai tagihan' : 'DPP', rupiah(t.dpp))}
+                {t.dpDpp > 0 && lineRow('Potongan uang muka', `-${rupiah(t.dpDpp)}`, { c: 'red.7' })}
+                {t.dpDpp > 0 && lineRow('DPP', rupiah(t.dpp - t.dpDpp))}
+                {!release && lineRow(ppnLabel(inv.lines), rupiah(t.ppn))}
+                {t.retensi > 0 && lineRow(`Retensi ${pb.posById[inv.poId]?.term?.retentionPct ?? ''}% ditahan`, `-${rupiah(t.retensi)}`, { c: 'red.7' })}
+                {t.pph > 0 && lineRow(`PPh ${inv.pphPct}%${t.retensi > 0 || t.dpDpp > 0 ? ' atas nilai dibayar' : ''}`, `-${rupiah(t.pph)}`, { c: 'red.7' })}
+                {t.dp - t.dpDpp > 0 && lineRow('Potongan uang muka', `-${rupiah(t.dp - t.dpDpp)}`, { c: 'red.7' })}
                 {t.ret > 0 && lineRow('Potongan retur', `-${rupiah(t.ret)}`, { c: 'red.7' })}
                 {t.credit > 0 && lineRow('Alokasi kredit vendor', `-${rupiah(t.credit)}`, { c: 'red.7' })}
-                {lineRow('Nilai tagihan', rupiah(t.total), { fw: 700 })}
+                {lineRow('Dibayar ke vendor', rupiah(t.total), { fw: 700 })}
+                {inv.vendorTotal > 0 && Math.abs(inv.vendorTotal - t.total) > 1 && lineRow('Total di invoice vendor', rupiah(inv.vendorTotal), { c: 'orange.8' })}
                 {lineRow('Sudah dibayar', rupiah(t.paid), { c: 'green.8' })}
               </Stack>
               <Group

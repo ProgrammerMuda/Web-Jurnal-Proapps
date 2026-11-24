@@ -62,12 +62,13 @@ import {
   advancePct,
   dueDaysOf,
   formatDate,
-  invDpp,
-  invPpn,
   invTotals,
   nextNumber,
   poDocLabel,
   poDpAmount,
+  poDpDpp,
+  poPpnRate,
+  poPphPct,
   poDue,
   poTotal,
   ppnLabel,
@@ -200,7 +201,7 @@ function SourceListModal({ opened, onClose, docs, fromPo, vendor, pb }) {
 // Kaki angka faktur: menurun dan rata kanan seperti kaki faktur cetak, tiap baris memotong
 // baris di atasnya, dan Hutang Usaha jadi angka terakhir yang dibaca. Baris bernilai nol
 // disembunyikan — "-Rp 0,00" hanya menambah baris tanpa menambah keterangan.
-function TotalsBand({ rows, totalLabel, total }) {
+function TotalsBand({ rows, totalLabel, total, children }) {
   return (
     <Box px="lg" py="md" bg="slate.0" style={{ borderTop: '1px solid var(--mantine-color-gray-3)' }}>
       <Box ml="auto" w={{ base: '100%', sm: 340 }}>
@@ -215,6 +216,7 @@ function TotalsBand({ rows, totalLabel, total }) {
           <Text fz="sm" fw={700} c="primary.9">{totalLabel}</Text>
           <Text fz={20} fw={700} c="primary.9" lh={1.2} style={{ whiteSpace: 'nowrap' }}>{rupiah(total)}</Text>
         </Group>
+        {children}
       </Box>
     </Box>
   );
@@ -446,9 +448,9 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   // penerimaan dihitung per FPB/BAPP (`invoicedQty`), sisa pesanan per PO (`invoicedQtyOfPo`).
   // Vendor bisa tertagih dua kali untuk barang yang sama.
   const readyPos = pb.pos.filter((p) => uninvoicedPoLines(p, pb.invoices).length > 0);
-  // Pesanan yang menunggu faktur uang muka: sudah dikirim, terminnya ber-DP, belum ada
-  // faktur DP-nya, dan tidak sedang diajukan tagih tanpa uang muka.
-  const readyDpPos = pb.pos.filter((p) => p.sent
+  // Pesanan yang menunggu faktur uang muka: masih berjalan (tidak harus sudah dikirim),
+  // terminnya ber-DP, belum ada faktur DP-nya, dan tidak sedang diajukan tagih tanpa uang muka.
+  const readyDpPos = pb.pos.filter((p) => !p.closedAs
     && dpState(p, pb.calc)?.state === 'belum_faktur'
     && p.dpWaiver?.status !== 'diajukan');
   // Pilihan awal dari alamat halaman disaring: vendor dan termin harus sama dengan
@@ -559,14 +561,14 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   // penerimaan bisa berubah tanpa membuang angka yang sudah disesuaikan.
   const [qtys, setQtys] = useState({});
   const dpPo = isDp ? orders[0] : null;
-  const dpBase = dpPo ? poDpAmount(dpPo) : 0;
+  // Uang muka dicatat sebagai DPP + PPN terpisah (faktur pajak uang muka), seperti invoice
+  // vendor. Faktur termin berikutnya memotong DPP-nya dan hanya mengenakan PPN atas sisanya.
+  const dpBase = dpPo ? poDpDpp(dpPo) : 0;
   const dpAmount = dpInput ?? dpBase;
-  // Satu baris bernilai bruto. PPN atas uang muka belum dipisah (keputusan terbuka #3 di
-  // spesifikasi jurnal), jadi tarifnya 0 dan PPN diakui penuh di faktur pelunasan.
   const dpLine = dpPo && {
     key: 'dp', kind: 'dp', poId: dpPo.id, sourceNo: dpPo.number,
     desc: `${dpLabelOf(dpPo)} atas ${poDocLabel(dpPo)} ${dpPo.number}`,
-    unit: 'ls', qty: 1, price: dpAmount, ppnRate: 0, pphRate: 0,
+    unit: 'ls', qty: 1, price: dpAmount, ppnRate: poPpnRate(dpPo), pphRate: poPphPct(dpPo) / 100,
   };
   const lines = isDp
     ? (dpLine ? [dpLine] : [])
@@ -599,13 +601,21 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   const autoPph = baseDpp
     ? Math.round((activeLines.reduce((n, l) => n + l.qty * l.price * (l.pphRate ?? 0), 0) / baseDpp) * 10000) / 100
     : 0;
-  const pph = isDp ? 0 : (pphInput ?? autoPph);
-  const draft = { lines: lines.map((l) => ({ ...l })), pphPct: pph, poId: lines[0]?.poId };
-  const dpp = invDpp(draft);
-  const ppn = invPpn(draft);
-  const pphVal = Math.round((dpp * (pph || 0)) / 100);
-  const dpDeduct = isDp ? 0 : invTotals({ ...draft }, { pos: pb.pos, prs: pb.prs, returns: [], invoices: pb.invoices }).dp;
-  const total = dpp + ppn - pphVal - dpDeduct;
+  const pph = pphInput ?? autoPph;
+  const draft = { ...(isDp && { type: 'dp' }), lines: lines.map((l) => ({ ...l })), pphPct: pph, poId: lines[0]?.poId };
+  // Satu sumber angka dengan detail faktur dan jurnalnya: potongan DP, PPN atas sisa,
+  // retensi, dan PPh atas nilai yang dibayar dihitung oleh invTotals.
+  const draftTotals = invTotals({ ...draft }, { pos: pb.pos, prs: pb.prs, returns: [], invoices: pb.invoices });
+  const dpp = draftTotals.dpp;
+  const ppn = draftTotals.ppn;
+  const retensi = draftTotals.retensi;
+  const pphVal = draftTotals.pph;
+  const dpDpp = draftTotals.dpDpp;
+  const dpGross = draftTotals.dp - dpDpp;
+  const total = draftTotals.total;
+  // Total yang tertulis di invoice vendor, untuk dicocokkan dengan hitungan aplikasi.
+  const [vendorTotal, setVendorTotal] = useState(null);
+  const selisihVendor = vendorTotal > 0 ? vendorTotal - total : 0;
 
   // --- isian wajib per langkah ---
   const required = {
@@ -659,8 +669,8 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
         vendorId: dpPo.vendorId,
         date,
         dueDate,
-        lines: [{ kind: 'dp', desc: dpLine.desc, unit: 'ls', qty: 1, price: dpAmount, ppnRate: 0 }],
-        pphPct: 0,
+        lines: [{ kind: 'dp', desc: dpLine.desc, unit: 'ls', qty: 1, price: dpAmount, ppnRate: dpLine.ppnRate }],
+        pphPct: pph || 0,
         files: [inv, tax].filter(Boolean),
         createdBy: personLabel(pb.role),
       };
@@ -683,6 +693,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
         ? { productId: l.productId, kind: l.kind, desc: l.desc.trim(), spec: l.spec.trim(), unit: l.unit, qty: l.qty, price: l.price, ppnRate: l.ppnRate, received: !!l.received }
         : { ...(l.receiptId ? { receiptId: l.receiptId } : {}), poId: l.poId, itemId: l.itemId, qty: l.qty, price: l.price, ppnRate: l.ppnRate })),
       pphPct: pph || 0,
+      ...(vendorTotal > 0 && { vendorTotal }),
       files: [inv, tax],
     };
     pb.add('invoices', doc);
@@ -996,13 +1007,13 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
                   onChange={(e) => setDueInput(e.currentTarget.value)}
                 />
               </Grid.Col>
-              {!isDp && <Grid.Col span={{ base: 12, sm: 2 }}>
+              {<Grid.Col span={{ base: 12, sm: 2 }}>
                 <NumberField label="Potongan PPh" suffix=" %" size="sm" radius="md" min={0} max={100} decimalScale={2} value={pph} onChange={(v) => setPphInput(Number(v) || 0)} />
               </Grid.Col>}
               {isDp && dpPo && (
                 <Grid.Col span={{ base: 12, sm: 4 }}>
                   <NumberField
-                    label="Nilai uang muka"
+                    label="Nilai uang muka (DPP)"
                     withAsterisk
                     money
                     size="sm"
@@ -1047,14 +1058,45 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
         {step.value === 'items' && (
           <TotalsBand
             rows={[
-              { label: isDp ? 'Uang muka' : 'DPP', value: rupiah(dpp) },
+              // Urutannya meniru invoice vendor: nilai, potongan DP, DPP, PPN, retensi, PPh.
+              { label: isDp ? 'Uang muka (DPP)' : dpDpp > 0 ? 'Nilai tagihan' : 'DPP', value: rupiah(dpp) },
+              dpDpp > 0 && { label: 'Potongan uang muka', value: `-${rupiah(dpDpp)}`, color: 'red.7' },
+              dpDpp > 0 && { label: 'DPP', value: rupiah(dpp - dpDpp) },
               ppn > 0 && { label: ppnLabel(activeLines), value: `+${rupiah(ppn)}` },
-              pphVal > 0 && { label: 'Potongan PPh', value: `-${rupiah(pphVal)}`, color: 'red.7' },
-              dpDeduct > 0 && { label: 'Potongan uang muka', value: `-${rupiah(dpDeduct)}`, color: 'red.7' },
+              retensi > 0 && { label: `Retensi ${pb.posById[draft.poId]?.term?.retentionPct ?? ''}% ditahan`, value: `-${rupiah(retensi)}`, color: 'red.7' },
+              pphVal > 0 && { label: `PPh ${pph}%${retensi > 0 || dpDpp > 0 ? ' atas nilai dibayar' : ''}`, value: `-${rupiah(pphVal)}`, color: 'red.7' },
+              dpGross > 0 && { label: 'Potongan uang muka', value: `-${rupiah(dpGross)}`, color: 'red.7' },
             ]}
             totalLabel="Hutang ke vendor"
             total={total}
-          />
+          >
+            {/* Harga dan totalnya sudah otomatis dari PO + FPB/BAPP. Kolom ini hanya alat cek:
+                ketik angka bawah invoice vendor kalau mau dicocokkan, boleh dilewati. */}
+            <Box mt="sm" pt="sm" style={{ borderTop: '1px dashed var(--mantine-color-gray-3)' }}>
+              <NumberField
+                label="Cek dengan invoice vendor (opsional)"
+                description="Total sudah dihitung otomatis. Isi angka total di invoice vendor hanya kalau mau dicocokkan."
+                placeholder={rupiah(total)}
+                money
+                prefix="Rp "
+                size="xs"
+                radius="md"
+                value={vendorTotal ?? ''}
+                onChange={(v) => setVendorTotal(Number(v) || null)}
+              />
+              {vendorTotal > 0 && (
+                <Box mt={8}>
+                  {Math.abs(selisihVendor) <= 1 ? (
+                    <Callout tone="ok" title="Cocok dengan invoice vendor">Hutang ke vendor {rupiah(total)}.</Callout>
+                  ) : (
+                    <Callout tone="warn" title={`Selisih ${rupiah(Math.abs(selisihVendor))}`}>
+                      Invoice vendor {selisihVendor > 0 ? 'lebih besar' : 'lebih kecil'} dari hitungan aplikasi ({rupiah(total)}). Cek potongan uang muka, retensi, dan PPh-nya.
+                    </Callout>
+                  )}
+                </Box>
+              )}
+            </Box>
+          </TotalsBand>
         )}
 
         <Group justify="space-between" gap="sm" px="lg" py="md" bg="white" style={{ borderTop: '1px solid var(--mantine-color-gray-3)' }}>

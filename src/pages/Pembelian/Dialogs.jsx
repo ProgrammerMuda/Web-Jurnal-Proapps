@@ -1,7 +1,9 @@
 // Dialog pembuatan dokumen lanjutan (penawaran, penerimaan, faktur, payment request, retur, dll).
+import { accountLabel, SOURCE_ACCOUNTS } from './journal.js';
 import {
   Badge,
   Box,
+  Divider,
   Checkbox,
   Button,
   Group,
@@ -33,6 +35,7 @@ import AttachmentList from './Attachments.jsx';
 import { Callout, CopyIcon, Field, FormModal, blockedProps } from './components.jsx';
 import TermBreakdown from './TermBreakdown.jsx';
 import { periodOptions, personLabel, TODAY } from './data.js';
+import { logEntry, receiptKind, signApproval } from './permissions.js';
 import { snapshotTerm, termFields } from './paymentTerms.js';
 import {
   addDays,
@@ -42,7 +45,10 @@ import {
   dpBlocks,
   dpState,
   DP_STATE,
-  poDpAmount,
+  poDpDpp,
+  poSubtotal,
+  poPpnRate,
+  poPphPct,
   termText,
   bappJournalDate,
   bappProgress,
@@ -76,6 +82,11 @@ import {
   uid,
   vendorCredit,
   vendorEmail,
+  poRetention,
+  KUNCI_PERIODE,
+  dueDaysOf,
+  retentionDocName,
+  pvPaid,
 } from './utils.js';
 import { toast } from './usePb.js';
 import { useData } from '@/lib/store.jsx';
@@ -84,6 +95,7 @@ import { frozenMessage } from '@/pages/Gudang/opname.js';
 import { freightShare, landedUnitCost } from './landedCost.js';
 import { freightCapitalized } from '@/pages/Pengaturan/settings.js';
 import { DropField, MAX_UPLOAD_MB } from '@/components/DropField.jsx';
+import { legacyLog } from './ApprovalLog.jsx';
 
 export { DropField, MAX_UPLOAD_MB };
 
@@ -217,7 +229,7 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
   };
   const pcts = f.termPcts.slice(0, f.terms);
   const pctSum = Math.round(pcts.reduce((n, p) => n + (Number(p) || 0), 0) * 10) / 10;
-  // Nilai yang dibagi ke termin: total penawaran dikurangi uang muka dan retensi.
+  // Nilai yang dibagi ke termin: total penawaran dikurangi uang muka (retensi ditahan di faktur).
   const quoteGross = fppbj.items.reduce((n, i) => n + i.qty * (lines[i.id]?.price || 0), 0);
   // Diskon persen mengikuti subtotal; diskon rupiah dipakai apa adanya. Keduanya opsional.
   const discRp =
@@ -583,8 +595,8 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
                   <Text fz="xs" c="slate.6">
                     {scheduleExcludesDp(buildTerm(f, spec))
                       ? `Dihitung dari nilai setelah dikurangi uang muka ${f.dpPct}%`
-                      : 'Dihitung dari nilai penawaran'}
-                    {needs('retention') ? ` dan retensi ${f.retentionPct}%` : ''}
+                      : f.dpPct > 0 && needs('dp') ? `Dihitung dari nilai penawaran · DP ${f.dpPct}% dipotong proporsional di tiap termin` : 'Dihitung dari nilai penawaran'}
+                    {needs('retention') ? ` · retensi ${f.retentionPct}% ditahan dari tiap termin` : ''}
                     {base > 0 ? ` · ${rupiah(base)}` : ''}
                   </Text>
                   <Text fz="xs" fw={700} c={Math.abs(pctSum - 100) > 0.05 ? 'red.7' : 'slate.9'}>Total {pctSum}%</Text>
@@ -643,6 +655,22 @@ const productOfItem = (products, item) => {
     products.find((p) => p.name.toLowerCase() === nama)
   );
 };
+
+// Satu tanda tangan approval FPB/BAPP. Saat approval genap, dokumen jadi terkonfirmasi dan
+// barang yang dilacak stoknya masuk ke gudang tujuan PO (jasa tidak punya persediaan).
+export function useApproveReceipt(pb) {
+  const { postStock, products, companySettings } = useData();
+  return (r, role) => {
+    const kind = receiptKind(r);
+    const { doc, complete } = signApproval(r, kind, role);
+    pb.update('receipts', r.id, () => (complete ? { ...doc, status: 'dikonfirmasi', approvedBy: personLabel(role) } : doc));
+    const po = pb.posById[r.poId];
+    if (complete && po) {
+      postReceiptStock({ receiptId: r.id, number: r.number, date: r.date, po, lines: r.lines, postStock, products, by: personLabel(role), settings: companySettings });
+    }
+    return complete;
+  };
+}
 
 function postReceiptStock({ receiptId, number, date, po, lines, postStock, products, by, settings, doc }) {
   if (!po.warehouseId) return;
@@ -745,8 +773,14 @@ function postReturnStock({ returnId, number, date, po, lines, postStock, product
   if (out.length) postStock({ moves: out });
 }
 
-export function ReceiptModal({ opened, onClose, po, pb }) {
-  const { postStock, products, companySettings, stockOpnames, warehouses } = useData();
+export function ReceiptModal({ opened, onClose, po, pb, editing = null }) {
+  // `editing`: FPB/BAPP yang ditolak dan diajukan ulang. Isiannya dibawa dari dokumen lama
+  // (qty, tanggal, nomor, berkas) dan qty-nya tidak dihitung sebagai "sudah diterima" di
+  // sisa pesanan, supaya bisa dikoreksi tanpa terbentur batasnya sendiri.
+  const others = editing ? pb.receipts.filter((x) => x.id !== editing.id) : pb.receipts;
+  const prevQty = (id) => editing?.lines.find((l) => l.itemId === id);
+  const prevIds = editing ? editing.lines.map((l) => l.itemId) : [];
+  const { stockOpnames, warehouses } = useData();
   // O4: gudang yang sedang diopname tidak boleh menerima barang — saldo bukunya
   // sudah dibekukan, jadi penerimaan di tengah hitungan membuat angkanya meleset.
   const beku = frozenMessage(
@@ -754,17 +788,17 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
     po?.warehouseId,
     warehouses.find((w) => w.id === po?.warehouseId)?.name ?? 'Gudang tujuan',
   );
-  const [date, setDate] = useState(TODAY);
-  const [doNo, setDoNo] = useState('');
-  const [note, setNote] = useState('');
+  const [date, setDate] = useState(editing?.date ?? TODAY);
+  const [doNo, setDoNo] = useState(editing?.doNumber ?? '');
+  const [note, setNote] = useState(editing?.note ?? '');
   const scheduled = scheduleCount(po.term) > 1 || po.items.some((i) => i.unit === 'retensi');
   // Semua qty mulai dari 0 — yang dicatat harus apa yang betul-betul diterima, bukan angka
   // pesanan yang tinggal disetujui. Mengisi penuh otomatis memancing pencatatan asal setuju.
   const [rows, setRows] = useState(() =>
-    Object.fromEntries(po.items.map((i) => [i.id, { qty: 0, rejected: 0 }])),
+    Object.fromEntries(po.items.map((i) => [i.id, { qty: prevQty(i.id)?.qty ?? 0, rejected: prevQty(i.id)?.rejected ?? 0 }])),
   );
   const [sub, setSub] = useState(false);
-  const [file, setFile] = useState('');
+  const [file, setFile] = useState(editing?.file ?? '');
   // Error dibuka begitu form disentuh — tombol simpan nonaktif selama belum sah, jadi
   // submit() tidak pernah menyalakan `sub` sendiri.
   const touch = (fn) => (v) => { setSub(true); fn(v); };
@@ -781,13 +815,13 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
   // ikut BAPP ini dan tetap terbuka — sama seperti termin yang belum selesai pada SPK
   // bertermin. Tidak ada kolom "ditolak": menolak berarti belum menerima, dan sisa SPK-nya
   // memang tetap terbuka sampai pekerjaannya diterima.
-  const [pickedWork, setPickedWork] = useState([]);
+  const [pickedWork, setPickedWork] = useState(prevIds);
   const accepted = po.items.filter((i) => pickedWork.includes(i.id));
   const acceptedValue = accepted.reduce((n, i) => n + i.qty * i.price, 0);
-  const [picked, setPicked] = useState([]);
-  const sched = bappMode ? scheduleRows(po, pb.receipts, TODAY, picked) : [];
+  const [picked, setPicked] = useState(prevIds);
+  const sched = bappMode ? scheduleRows(po, others, TODAY, picked) : [];
   const pickedValue = po.items.filter((i) => picked.includes(i.id)).reduce((n, i) => n + i.qty * i.price, 0);
-  const progress = bappMode ? bappProgress(po, pb.receipts, picked) : null;
+  const progress = bappMode ? bappProgress(po, others, picked) : null;
   const journalDate = bappMode ? bappJournalDate(po, picked, date) : date;
   const total = bappMode ? picked.length : bappPlain ? accepted.length : po.items.reduce((n, i) => n + (rows[i.id].qty || 0), 0);
   const totalRejected = bappMode || bappPlain ? 0 : po.items.reduce((n, i) => n + (rows[i.id].rejected || 0), 0);
@@ -796,7 +830,7 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
   const rowsFilled = bappMode || bappPlain ? 0 : po.items.filter((i) => (rows[i.id].qty || 0) + (rows[i.id].rejected || 0) > 0).length;
   const sisaSetelah = bappMode || bappPlain
     ? 0
-    : po.items.reduce((n, i) => n + Math.max(remainingQty(po, i.id, pb.receipts) - (rows[i.id].qty || 0) - (rows[i.id].rejected || 0), 0), 0);
+    : po.items.reduce((n, i) => n + Math.max(remainingQty(po, i.id, others) - (rows[i.id].qty || 0) - (rows[i.id].rejected || 0), 0), 0);
   const err = {
     doNo: !doNo.trim() && (isJasa ? 'No. BAPP wajib diisi' : mixed ? 'No. surat jalan / BAPP wajib diisi' : 'No. surat jalan wajib diisi'),
     date: (!date && `Tanggal ${isJasa ? 'BAPP' : 'terima'} wajib diisi`)
@@ -824,6 +858,30 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
           .map((i) => ({ itemId: i.id, qty: rows[i.id].qty || 0, rejected: rows[i.id].rejected || 0 }))
           .filter((l) => l.qty > 0 || l.rejected > 0);
     const prefix = lines.every((l) => itemKind(po, l.itemId) === 'jasa') ? 'BAPP' : 'FPB';
+    if (editing) {
+      // Dokumen yang sama diajukan ulang: nomornya tetap, tanda tangan lama dihapus dan
+      // approval mulai lagi dari Chief Finance. Riwayatnya tetap utuh di log.
+      pb.update('receipts', editing.id, (x) => {
+        const rest = { ...x };
+        delete rest.rejectNote;
+        delete rest.rejectedAt;
+        return {
+          ...rest,
+          date,
+          doNumber: doNo,
+          journalDate: prefix === 'BAPP' ? journalDate : date,
+          file,
+          lines,
+          note,
+          status: 'draf',
+          approvals: {},
+          log: [...legacyLog(x), logEntry(pb.role, 'ajukan', { note: 'Diajukan ulang' })],
+        };
+      });
+      toast(`${editing.number} diajukan ulang. Approval mulai lagi dari Chief Finance.`);
+      onClose();
+      return;
+    }
     const receiptId = uid('fpb');
     const number = nextNumber(prefix, pb.receipts);
     pb.add('receipts', {
@@ -834,9 +892,9 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
       date,
       doNumber: doNo,
       kind: prefix === 'BAPP' ? 'jasa' : 'barang',
-      // BAPP jasa perlu persetujuan Atasan sebelum bisa difaktur (spesifikasi 2.2 & 3.8).
-      // FPB barang langsung terkonfirmasi: approval Kepala Gudang opsional dan nonaktif default.
-      status: prefix === 'BAPP' ? 'draf' : 'dikonfirmasi',
+      // FPB dan BAPP sama-sama perlu approval Chief Finance lalu Building Manager sebelum
+      // bisa difaktur dan membentuk jurnal.
+      status: 'draf',
       createdBy: personLabel(pb.role),
       // Tanggal pengakuan beban. Berbeda dari tanggal dokumen pada termin berkala: bebannya
       // milik periode yang di-BAPP, bukan hari dokumennya diketik.
@@ -845,24 +903,13 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
       file,
       lines,
       note,
+      log: [logEntry(pb.role, 'ajukan', { note: 'Dicatat' })],
     });
-    // Barang yang diterima langsung menambah stok di gudang tujuan PO. Hanya produk
-    // yang dilacak stoknya yang bergerak (M12); jasa tidak punya persediaan.
-    postReceiptStock({
-      receiptId,
-      number,
-      date,
-      po,
-      lines,
-      postStock,
-      products,
-      by: personLabel(pb.role),
-      settings: companySettings,
-    });
+    // Stok belum bergerak di sini: FPB masih menunggu approval. Mutasi masuknya dicatat
+    // saat approval terakhir dibubuhkan (useApproveReceipt), bersamaan dengan jurnalnya,
+    // supaya kartu stok dan buku besar tidak pernah berbeda.
     toast(
-      prefix === 'BAPP'
-        ? 'BAPP dicatat. Menunggu approval Chief Finance lalu Building Manager sebelum bisa difaktur.'
-        : `${prefix} dicatat. Sisa qty yang belum diterima tetap terbuka.`,
+      `${prefix} dicatat. Menunggu approval Chief Finance lalu Building Manager sebelum bisa difaktur.`,
     );
     onClose();
   };
@@ -872,17 +919,22 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
       onClose={onClose}
       size={760}
       icon={Truck}
-      title={isJasa ? 'Catat BAPP' : mixed ? 'Catat penerimaan (FPB / BAPP)' : 'Catat penerimaan barang (FPB)'}
+      title={editing ? `Ajukan ulang ${editing.number}` : isJasa ? 'Catat BAPP' : mixed ? 'Catat penerimaan (FPB / BAPP)' : 'Catat penerimaan barang (FPB)'}
       subtitle={`${po.number} · ${pb.vendorsById[po.vendorId]?.name}`}
       footer={
         <>
           <Cancel onClick={onClose} />
           <Button radius="md" disabled={invalid} onClick={submit}>
-            Simpan {isJasa ? 'BAPP' : mixed ? 'penerimaan' : 'FPB'}
+            {editing ? 'Ajukan ulang' : `Simpan ${isJasa ? 'BAPP' : mixed ? 'penerimaan' : 'FPB'}`}
           </Button>
         </>
       }
     >
+      {editing?.rejectNote && (
+        <Callout tone="stop" title="Alasan ditolak">
+          {editing.rejectNote.replace(/[.\s]*$/, '')}. Isian di bawah dibawa dari pengajuan sebelumnya; perbaiki yang perlu lalu ajukan ulang.
+        </Callout>
+      )}
       {dpBlocks(dpState(po, pb.calc)) && (
         <Callout tone="warn" title={DP_STATE[dpState(po, pb.calc).state].label}>
           {dpBlockReason(dpState(po, pb.calc))}. Penerimaan tetap bisa disimpan — barang yang sudah
@@ -994,7 +1046,7 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
               dengan BAPP bertermin, karena pertanyaannya memang sama. */}
           <Box style={tableFrame}>
             {po.items.map((i, idx) => {
-              const selesai = remainingQty(po, i.id, pb.receipts) === 0;
+              const selesai = remainingQty(po, i.id, others) === 0;
               const checked = pickedWork.includes(i.id);
               return (
                 <Group
@@ -1066,7 +1118,7 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
           </Table.Thead>
           <Table.Tbody>
             {po.items.map((i) => {
-              const rem = remainingQty(po, i.id, pb.receipts);
+              const rem = remainingQty(po, i.id, others);
               // Diterima + ditolak tidak boleh melebihi sisa pesanan: tiap kolom dibatasi sisa dikurangi kolom satunya.
               // Kolom Sisa ikut berkurang saat diketik, dan kolom yang jatahnya habis dimatikan sampai kolom lain dikurangi.
               const row = rows[i.id];
@@ -1137,7 +1189,6 @@ export function ReceiptModal({ opened, onClose, po, pb }) {
 }
 
 // --- Pembayaran ke vendor ----------------------------------------------------------------------
-const SOURCE_ACCOUNTS = ['BCA 288-123-9001 · Kas Operasional', 'Mandiri 101-00-5577 · Kas Proyek', 'Kas kecil'];
 
 // Strip "Dibayarkan ke": dipakai PV maupun modal pembayaran.
 // "Atas nama" menempel di bawah nomor rekening — itu satu kesatuan saat mengetik transfer,
@@ -1193,15 +1244,13 @@ export function VoucherModal({ opened, onClose, pr, pb }) {
       .map((id) => pb.invoicesById[id])
       .filter((i) => i?.vendorId === vid)
       .reduce((n, i) => n + (pr.alloc?.[i.id] ?? 0), 0));
-  const vendor = vendors[0];
-  const bank = bankOf(vendor);
   const [date, setDate] = useState(TODAY);
-  const [source, setSource] = useState(SOURCE_ACCOUNTS[0]);
+  const [source, setSource] = useState(SOURCE_ACCOUNTS[0].label);
   const [note, setNote] = useState('');
   const [sub, setSub] = useState(false);
   const err = {
     date: (!date && 'Tanggal PV wajib diisi') || (date > TODAY && 'Tidak boleh setelah hari ini'),
-    bank: !bank?.number && 'Rekening vendor belum diisi di data kontak',
+    bank: vendors.some((v) => !bankOf(v)?.number) && `Rekening ${vendors.filter((v) => !bankOf(v)?.number).map((v) => v.name).join(', ')} belum diisi di data kontak`,
   };
   const invalid = Object.values(err).some(Boolean);
   const submit = () => {
@@ -1218,6 +1267,7 @@ export function VoucherModal({ opened, onClose, pr, pb }) {
         date,
         amount: bagian(v.id),
         source,
+        sourceAccount: SOURCE_ACCOUNTS.find((x) => x.label === source)?.account,
         note,
         status: 'draf',
         issuedBy: personLabel(pb.role),
@@ -1270,7 +1320,16 @@ export function VoucherModal({ opened, onClose, pr, pb }) {
 
       <SimpleGrid cols={{ base: 1, sm: 2 }}>
         <DateField label="Tanggal PV" withAsterisk size="sm" radius="md" max={TODAY} value={date} error={sub && err.date} onChange={(e) => { setSub(true); setDate(e.currentTarget.value); }} />
-        <Select label="Dibayar dari" size="sm" radius="md" data={SOURCE_ACCOUNTS} value={source} onChange={(v) => setSource(v ?? SOURCE_ACCOUNTS[0])} allowDeselect={false} />
+        <Select
+          label="Dibayar dari"
+          description={`Dijurnal ke ${accountLabel(SOURCE_ACCOUNTS.find((x) => x.label === source)?.account)}`}
+          size="sm"
+          radius="md"
+          data={SOURCE_ACCOUNTS.map((x) => x.label)}
+          value={source}
+          onChange={(v) => setSource(v ?? SOURCE_ACCOUNTS[0].label)}
+          allowDeselect={false}
+        />
       </SimpleGrid>
 
       <Textarea label="Catatan" placeholder="Opsional. Contoh: dibayar setelah konfirmasi vendor." size="sm" radius="md" autosize minRows={2} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
@@ -1290,7 +1349,9 @@ export function VoucherModal({ opened, onClose, pr, pb }) {
 // rantainya sama dengan pelunasan. Jurnalnya: Dr Uang Muka Pembelian / Cr Hutang Usaha.
 export function DpInvoiceModal({ opened, onClose, po, pb, onSaved }) {
   const vendor = pb.vendorsById[po?.vendorId];
-  const base = po ? poDpAmount(po) : 0;
+  // Faktur uang muka memisah DPP dan PPN-nya (faktur pajak uang muka), seperti invoice vendor.
+  const base = po ? poDpDpp(po) : 0;
+  const rate = po ? poPpnRate(po) : 0;
   const [vendorNo, setVendorNo] = useState('');
   const [date, setDate] = useState(TODAY);
   const [dueDate, setDueDate] = useState(TODAY);
@@ -1298,8 +1359,11 @@ export function DpInvoiceModal({ opened, onClose, po, pb, onSaved }) {
   const [invFile, setInvFile] = useState('');
   const [taxFile, setTaxFile] = useState('');
   const [note, setNote] = useState('');
+  const [pphPct, setPphPct] = useState(po ? poPphPct(po) : 0);
   const [sub, setSub] = useState(false);
   if (!po) return null;
+  const ppn = Math.round(amount * rate);
+  const pph = Math.round((amount * (pphPct || 0)) / 100);
   const sudah = dpInvoiceOf(po.id, pb.invoices);
   const pct = advancePct(po.term);
   const label = pct >= 100 ? 'Bayar penuh di muka' : `Uang muka ${pct}%`;
@@ -1324,10 +1388,10 @@ export function DpInvoiceModal({ opened, onClose, po, pb, onSaved }) {
       vendorId: po.vendorId,
       date,
       dueDate,
-      // Satu baris bernilai bruto. PPN atas uang muka belum dipisah (keputusan terbuka #3
-      // di spesifikasi jurnal), jadi tarifnya 0 dan PPN diakui penuh di faktur pelunasan.
-      lines: [{ kind: 'dp', desc: `${label} atas ${poDocLabel(po)} ${po.number}`, unit: 'ls', qty: 1, price: amount, ppnRate: 0 }],
-      pphPct: 0,
+      // DPP uang muka + tarif PPN pesanan: PPN-nya diakui di sini, dan faktur termin nanti
+      // hanya menghitung PPN atas (nilai termin - potongan DP).
+      lines: [{ kind: 'dp', desc: `${label} atas ${poDocLabel(po)} ${po.number}`, unit: 'ls', qty: 1, price: amount, ppnRate: rate }],
+      pphPct: pphPct || 0,
       files: [invFile, taxFile].filter(Boolean),
       note,
       createdBy: personLabel(pb.role),
@@ -1361,15 +1425,19 @@ export function DpInvoiceModal({ opened, onClose, po, pb, onSaved }) {
       >
         <Box>
           <Text fz={11} fw={600} c="primary.9">{label} menurut termin</Text>
-          <Text fz={11} c="slate.6">{termText(po.term)} · total {poDocLabel(po)} {rupiah(poTotal(po))}</Text>
+          <Text fz={11} c="slate.6">{termText(po.term)} · DPP {poDocLabel(po)} {rupiah(poSubtotal(po))}</Text>
+          <Text fz={11} c="slate.6">DPP {rupiah(amount)} + PPN {rupiah(ppn)}{pph ? ` − PPh ${rupiah(pph)}` : ''}</Text>
         </Box>
-        <Text fz={22} fw={700} c="primary.9">{rupiah(base)}</Text>
+        <Box ta="right">
+          <Text fz={11} c="slate.6">Dibayar ke vendor</Text>
+          <Text fz={22} fw={700} c="primary.9">{rupiah(amount + ppn - pph)}</Text>
+        </Box>
       </Group>
 
       <SimpleGrid cols={{ base: 1, sm: 2 }}>
         <TextInput label="No. invoice vendor" withAsterisk size="sm" radius="md" placeholder="Contoh: INV-DP-0012" value={vendorNo} error={sub && err.vendorNo} onChange={(e) => setVendorNo(e.currentTarget.value)} />
         <NumberField
-          label="Nilai uang muka"
+          label="Nilai uang muka (DPP)"
           withAsterisk
           money
           size="sm"
@@ -1380,6 +1448,7 @@ export function DpInvoiceModal({ opened, onClose, po, pb, onSaved }) {
           description={amount !== base ? `Berbeda dari termin (${rupiah(base)})` : undefined}
           onChange={(v) => setAmount(Number(v) || 0)}
         />
+        <NumberField label="Potongan PPh" suffix=" %" size="sm" radius="md" min={0} max={100} decimalScale={2} value={pphPct} onChange={(v) => setPphPct(Number(v) || 0)} />
         <DateField label="Tanggal faktur" withAsterisk size="sm" radius="md" max={TODAY} value={date} error={sub && err.date} onChange={(e) => setDate(e.currentTarget.value)} />
         <DateField label="Jatuh tempo" withAsterisk size="sm" radius="md" min={date} value={dueDate} error={sub && err.dueDate} onChange={(e) => setDueDate(e.currentTarget.value)} />
       </SimpleGrid>
@@ -1393,8 +1462,120 @@ export function DpInvoiceModal({ opened, onClose, po, pb, onSaved }) {
 
       {sub && err.sudah && <Text fz="xs" c="red.7">{err.sudah}</Text>}
       <Callout>
-        Jurnalnya: Uang Muka Pembelian (debit) dan Hutang Lainnya (kredit). Kas baru berkurang saat
-        PV-nya dibayar. Uang muka ini dipotongkan nanti di faktur pelunasan.
+        Jurnalnya: Uang Muka Pembelian dan PPN Masukan (debit), Hutang PPh dan Hutang Lainnya (kredit).
+        Kas baru berkurang saat PV-nya dibayar. DPP uang muka ini dipotong proporsional di setiap faktur
+        berikutnya, dan PPN faktur itu hanya atas nilai setelah potongan.
+      </Callout>
+    </FormModal>
+  );
+}
+
+// --- Pelepasan retensi ------------------------------------------------------------------------
+// Setelah masa pemeliharaan selesai (BAST akhir), saldo Hutang Retensi satu SPK dicairkan ke Hutang
+// Usaha. Bukan faktur baru: PPN-nya sudah ikut di faktur termin. Yang dipotong di sini hanya
+// PPh atas porsi retensi, karena PPh dipotong saat uangnya dibayar.
+export function RetentionReleaseModal({ opened, onClose, po, pb, onSaved }) {
+  const vendor = pb.vendorsById[po?.vendorId];
+  const r = po ? poRetention(po, pb.invoices) : null;
+  // Tarif PPh mengikuti faktur termin pesanan ini (PPh 4(2) jasa konstruksi, PPh 23, dst).
+  const termPph = r?.bills.map((i) => i.pphPct).filter((x) => x > 0).at(-1) ?? 0;
+  const [date, setDate] = useState(TODAY);
+  const [bastNo, setBastNo] = useState('');
+  const [file, setFile] = useState('');
+  const [pphPct, setPphPct] = useState(termPph);
+  const [note, setNote] = useState('');
+  const [sub, setSub] = useState(false);
+  if (!po || !r) return null;
+  const amount = r.balance;
+  const pph = Math.round((amount * (pphPct || 0)) / 100);
+  const belumSelesai = KUNCI_PERIODE && r.maintenanceEnd && date < r.maintenanceEnd;
+  const err = {
+    amount: !(amount > 0) && 'Tidak ada retensi yang tertahan',
+    billed: !r.billedAll && 'Semua termin harus sudah difaktur dulu',
+    bastNo: !bastNo.trim() && `No. ${retentionDocName(po)} wajib diisi`,
+    date: (!date && 'Tanggal wajib diisi') || (date > TODAY && 'Tidak boleh setelah hari ini')
+      || (belumSelesai && `Masa pemeliharaan baru selesai ${formatDate(r.maintenanceEnd)}`),
+    file: !file && `Unggah ${retentionDocName(po)} bertanda tangan`,
+  };
+  const invalid = Object.values(err).some(Boolean);
+  const submit = () => {
+    setSub(true);
+    if (invalid) return;
+    const doc = {
+      id: uid('ret'),
+      number: nextNumber('RET', pb.invoices),
+      type: 'retensi',
+      poId: po.id,
+      vendorId: po.vendorId,
+      date,
+      dueDate: addDays(date, dueDaysOf(po.term)),
+      bastNo: bastNo.trim(),
+      maintenanceEnd: r.maintenanceEnd,
+      amount,
+      pphPct: pphPct || 0,
+      // Faktur termin asal retensinya, untuk ditelusuri dari dokumen pelepasan.
+      sources: r.bills.map((i) => ({ invoiceId: i.id, amount: invTotals(i, pb.calc).retensi })).filter((x) => x.amount > 0),
+      lines: [],
+      files: [file],
+      note,
+      createdBy: personLabel(pb.role),
+    };
+    pb.add('invoices', doc);
+    toast(`Retensi ${rupiah(amount)} dilepas. Tinggal diajukan Payment Request.`);
+    onClose();
+    onSaved?.(doc.id);
+  };
+  const row = (label, value, c) => (
+    <Group justify="space-between" wrap="nowrap">
+      <Text fz="xs" c="slate.7">{label}</Text>
+      <Text fz="xs" fw={700} c={c}>{value}</Text>
+    </Group>
+  );
+  return (
+    <FormModal
+      opened={opened}
+      onClose={onClose}
+      size={620}
+      icon={FileText}
+      title="Lepas retensi"
+      subtitle={`${po.number} · ${vendor?.name ?? ''}`}
+      footer={
+        <>
+          <Cancel onClick={onClose} />
+          <Button radius="md" disabled={sub && invalid} onClick={submit}>Lepas retensi</Button>
+        </>
+      }
+    >
+      <Box p="md" style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 'var(--mantine-radius-md)' }}>
+        <Stack gap={6}>
+          {row(`Retensi ${r.pct}% ditahan dari ${r.bills.length} faktur termin`, rupiah(r.held))}
+          {r.released > 0 && row('Sudah dilepas sebelumnya', `-${rupiah(r.released)}`, 'red.7')}
+          {row('PPN', 'Sudah ikut di faktur termin', 'slate.6')}
+          {row(`PPh ${pphPct || 0}% atas retensi`, `-${rupiah(pph)}`, 'red.7')}
+          <Divider />
+          {row('Dibayar ke vendor', rupiah(amount - pph), 'primary.9')}
+        </Stack>
+      </Box>
+      <SimpleGrid cols={{ base: 1, sm: 2 }}>
+        <TextInput label={`No. ${retentionDocName(po)}`} description={poAllJasa(po) ? 'Serah terima akhir (BAST II / FHO)' : 'Bukti garansi selesai tanpa cacat'} withAsterisk size="sm" radius="md" placeholder={poAllJasa(po) ? 'Contoh: BAST2-0012' : 'Contoh: BA-GARANSI-0012'} value={bastNo} error={sub && err.bastNo} onChange={(e) => setBastNo(e.currentTarget.value)} />
+        <DateField
+          label="Tanggal pelepasan"
+          withAsterisk
+          size="sm"
+          radius="md"
+          max={TODAY}
+          value={date}
+          error={sub && err.date}
+          description={r.maintenanceEnd ? `Masa pemeliharaan ${r.months} bulan selesai ${formatDate(r.maintenanceEnd)}` : undefined}
+          onChange={(e) => setDate(e.currentTarget.value)}
+        />
+        <NumberField label="Potongan PPh" suffix=" %" size="sm" radius="md" min={0} max={100} decimalScale={2} value={pphPct} onChange={(v) => setPphPct(Number(v) || 0)} />
+      </SimpleGrid>
+      <FileField label={`${retentionDocName(po)} bertanda tangan`} withAsterisk value={file} error={sub && err.file} onChange={setFile} />
+      <Textarea label="Catatan" placeholder="Opsional, mis. tidak ada cacat tersisa" size="sm" radius="md" autosize minRows={2} value={note} onChange={(e) => setNote(e.currentTarget.value)} />
+      {sub && (err.amount || err.billed) && <Text fz="xs" c="red.7">{err.amount || err.billed}</Text>}
+      <Callout>
+        Jurnalnya: Hutang Retensi (debit), lalu Hutang PPh dan Hutang Usaha (kredit). Kas baru berkurang saat PV-nya dibayar.
       </Callout>
     </FormModal>
   );
@@ -1434,8 +1615,13 @@ export function PayModal({ opened, onClose, voucher: v, pb }) {
       journalPostedAt: date,
       journalBy: personLabel(pb.role),
     }));
-    if (pr) pb.update('prs', pr.id, (d) => ({ ...d, status: 'dibayar', paidAt: date }));
-    toast('Pembayaran dicatat dan jurnal kas keluar diposting.');
+    // PR multi-vendor baru lunas setelah SEMUA PV-nya dibayar; selama masih ada PV lain yang
+    // belum ditransfer, PR-nya tetap "diproses".
+    const sisaPv = pr ? pb.vouchers.filter((x) => x.prIds?.includes(pr.id) && x.id !== v.id && !pvPaid(x)) : [];
+    if (pr && sisaPv.length === 0) pb.update('prs', pr.id, (d) => ({ ...d, status: 'dibayar', paidAt: date }));
+    toast(sisaPv.length
+      ? `Pembayaran dicatat. ${pr.number} masih menunggu ${sisaPv.map((x) => x.number).join(', ')}.`
+      : 'Pembayaran dicatat dan jurnal kas keluar diposting.');
     onClose();
   };
   const rowStyle = (i) => ({ borderTop: i ? '1px solid var(--mantine-color-gray-2)' : undefined });

@@ -83,7 +83,7 @@ export function receiptPdfBlob(r, { vendor, po } = {}) {
   y = pita.y - 18;
 
   // --- panel vendor & pemeriksaan ---
-  const ap = approvalState(r, 'bapp', { settled: confirmed });
+  const ap = approvalState(r, isJasa ? 'bapp' : 'fpb', { settled: confirmed });
   const penyetuju = ap.chain
     .map((peran) => (ap.got[peran] ? `${roleOf(peran)?.label} (sudah)` : `${roleOf(peran)?.label} (menunggu)`))
     .join(', ');
@@ -103,8 +103,7 @@ export function receiptPdfBlob(r, { vendor, po } = {}) {
         title: `${r.lines.length} ${isJasa ? 'lingkup pekerjaan' : 'baris barang'}`,
         rows: [
           ['Dicatat oleh', r.createdBy],
-          // Rantai approval hanya relevan untuk BAPP; FPB barang langsung terkonfirmasi.
-          ...(isJasa ? [['Persetujuan', penyetuju]] : []),
+          ['Persetujuan', penyetuju],
           ['Berkas', r.file || (isJasa ? 'Belum dilampirkan' : 'Tidak ada')],
         ],
       },
@@ -237,6 +236,7 @@ export function receiptPdfBlob(r, { vendor, po } = {}) {
       ]
     : [
         { label: 'DITERIMA OLEH', name: pemeriksa[0] ?? '', role: pemeriksa[1] ?? '' },
+        { label: 'DISETUJUI OLEH', name: ap.complete ? personName('bm') : '', role: personTitle('bm') },
         { label: 'DISERAHKAN VENDOR', name: vendor?.pic ?? '', role: vendor?.name ?? '' },
       ];
   const signY = Math.max(172, Math.min(196, y - 22));

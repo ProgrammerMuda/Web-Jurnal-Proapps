@@ -103,19 +103,40 @@ export const poDpAmount = (po) => {
   if (scheduleExcludesDp(po?.term) && pct < 1) return Math.round((total * pct) / (1 - pct));
   return Math.round(total * pct);
 };
+// DPP uang muka (model PDF): persen DP x nilai pesanan sebelum PPN.
+export const poDpDpp = (po) => {
+  const pct = advancePct(po?.term) / 100;
+  if (pct <= 0) return 0;
+  const sub = poSubtotal(po);
+  return Math.round(scheduleExcludesDp(po?.term) && pct < 1 ? (sub * pct) / (1 - pct) : sub * pct);
+};
+// Tarif PPN pesanan (baris pertama); dipakai untuk faktur uang muka.
+export const poPpnRate = (po) => lineRate(po?.items?.[0]);
+// Persen PPh yang biasa dipotong untuk pesanan ini, dari tarif PPh per item.
+export const poPphPct = (po) => {
+  const sub = poSubtotal(po);
+  return sub ? Math.round((sum(po.items, (i) => i.qty * i.price * (i.pphRate ?? 0)) / sub) * 10000) / 100 : 0;
+};
 // Pesanan yang isinya jasa semua dikirim sebagai SPK, bukan PO. Campuran barang + jasa tetap PO.
 export const poDocLabel = (po) => (po && poAllJasa(po) ? 'SPK' : 'PO');
 // Jenis item (barang / jasa) ditentukan per baris, bukan per PO.
 export const itemKind = (po, itemId) => po?.items.find((i) => i.id === itemId)?.kind ?? 'barang';
 export const poAllJasa = (po) => po.items.length > 0 && po.items.every((i) => i.kind === 'jasa');
+// Dokumen yang membuka pelepasan retensi. Bukan penerimaan (FPB/BAPP): tidak ada barang/jasa
+// baru, hanya bukti masa pemeliharaan atau garansi selesai tanpa cacat tersisa.
+// Jasa (SPK): BAST akhir (BAST II / FHO). Barang (PO): berita acara akhir garansi.
+export const retentionDocName = (po) => (po && !poAllJasa(po) ? 'Berita acara akhir garansi' : 'BAST akhir');
 export const poAllBarang = (po) => po.items.every((i) => i.kind !== 'jasa');
 // Faktur masih punya baris barang yang bisa diretur (jasa tidak diretur).
 export const canReturn = (inv, po, returns) =>
   !!po && !isDpInvoice(inv) && !inv.cancelled && inv.lines.some((l) => itemKind(po, l.itemId) === 'barang' && l.qty > returnedQty(inv.id, l.itemId, returns));
 
 export const receiptsOf = (po, receipts) => receipts.filter((r) => r.poId === po.id);
+// FPB/BAPP yang ditolak tetap memegang qty-nya (akan diajukan ulang); hanya yang dibatalkan
+// yang melepaskan qty supaya bisa dicatat di penerimaan lain.
+export const receiptLive = (r) => r?.status !== 'dibatalkan';
 export const receivedQty = (po, itemId, receipts) =>
-  sum(receiptsOf(po, receipts), (r) => sum(r.lines.filter((l) => l.itemId === itemId), (l) => l.qty));
+  sum(receiptsOf(po, receipts).filter(receiptLive), (r) => sum(r.lines.filter((l) => l.itemId === itemId), (l) => l.qty));
 export const remainingQty = (po, itemId, receipts) => {
   const it = po.items.find((i) => i.id === itemId);
   return Math.max(it.qty - receivedQty(po, itemId, receipts), 0);
@@ -130,9 +151,9 @@ export const remainingQty = (po, itemId, receipts) => {
 //
 // Termin persen (milestone) tidak terkunci tanggal: milestone bisa tercapai kapan saja, dan
 // beberapa sekaligus boleh dicatat dalam satu BAPP asal berurutan.
-// SEMENTARA untuk uji coba prototipe: kunci periode dimatikan supaya termin berkala bisa
-// langsung di-BAPP. Kembalikan ke true sebelum dirilis.
-const KUNCI_PERIODE = false;
+// Kunci periode: termin berkala baru bisa di-BAPP setelah periodenya lewat, dan retensi baru
+// bisa dilepas setelah masa pemeliharaan selesai. Matikan (false) hanya untuk uji coba lokal.
+export const KUNCI_PERIODE = true;
 
 export function scheduleRows(po, receipts, today, picked = []) {
   const rows = po.items.map((it) => {
@@ -221,7 +242,7 @@ export const uninvoicedLines = (receipt, invoices) =>
 // Faktur manual: ditagih vendor tanpa bersandar pada FPB/BAPP. Barisnya menyimpan deskripsi
 // sendiri (tanpa receiptId / itemId), jadi tidak mengurangi sisa penerimaan mana pun dan tidak
 // ikut pencocokan 3 arah. Dipakai untuk tagihan non-PO: listrik, sewa, jasa berulang.
-export const isManualInvoice = (inv) => !!inv && !isDpInvoice(inv) && inv.lines.every((l) => !l.receiptId);
+export const isManualInvoice = (inv) => !!inv && !isDpInvoice(inv) && !isRetentionRelease(inv) && inv.lines.every((l) => !l.receiptId);
 // Faktur uang muka: tagihan DP/CBD dari vendor atas satu PO/SPK, sebelum barang/jasanya
 // diterima. Dicatat lebih dulu, baru diajukan Payment Request dan dibayar lewat PV.
 export const isDpInvoice = (inv) => inv?.type === 'dp';
@@ -269,6 +290,68 @@ export const DP_STATE = {
 // Nama baris faktur: dari item pesanan bila bersandar penerimaan, atau deskripsi yang diketik.
 export const invLineDesc = (l, item) => item?.desc ?? l.desc ?? '—';
 
+// --- Retensi -------------------------------------------------------------------------------
+// Pelepasan retensi: dokumen setelah masa pemeliharaan selesai (BAST akhir). Bukan faktur baru —
+// PPN-nya sudah ikut di faktur termin — tapi disimpan di koleksi faktur supaya Payment Request
+// dan PV memakai jalur yang sama.
+export const isRetentionRelease = (inv) => inv?.type === 'retensi';
+
+// Persen retensi yang ditahan dari faktur pesanan ini. SPK lama yang retensinya masih berupa
+// baris jadwal tersendiri ("Retensi 5%") tetap memakai cara lama: tidak ada potongan di faktur.
+export const retentionPctOf = (po) =>
+  po && termMechanics(po.term).retention && !po.items.some((i) => i.unit === 'retensi') ? po.term.retentionPct ?? 0 : 0;
+
+// Retensi dihitung dari nilai termin kotor: 5% x nilai termin. Pada jadwal yang uang mukanya
+// sudah dikeluarkan (DP + termin), baris termin hanya berisi sisa setelah DP, jadi nilai
+// kotornya dipulihkan dulu (termin / (1 - DP%)). Totalnya selalu persen retensi x nilai kontrak.
+const retentionOfDpp = (po, dpp) => {
+  const pct = retentionPctOf(po);
+  if (!pct) return 0;
+  const dpPct = scheduleExcludesDp(po.term) ? Math.min(advancePct(po.term), 99) : 0;
+  return (dpp * pct) / (100 - dpPct);
+};
+export const poRetentionTarget = (po) => Math.round(retentionOfDpp(po, poSubtotal(po)));
+
+// Retensi yang ditahan oleh satu faktur, per pesanan. Faktur yang menutup pesanan menyerap
+// sisa pembulatan supaya saldo Hutang Retensi persis persen retensi x nilai kontrak.
+export function invRetention(inv, pos, invoices = []) {
+  if (!inv || isDpInvoice(inv) || isRetentionRelease(inv)) return 0;
+  const bills = liveInvoices(invoices).filter((i) => !isDpInvoice(i) && !isRetentionRelease(i));
+  const linesOf = (i, poId) => i.lines.filter((l) => (l.poId ?? i.poId) === poId);
+  const dppOf = (i, poId) => sum(linesOf(i, poId), (l) => l.qty * l.price);
+  let total = 0;
+  for (const poId of [...new Set(inv.lines.map((l) => l.poId ?? inv.poId))]) {
+    const po = pos.find((p) => p.id === poId);
+    if (!retentionPctOf(po)) continue;
+    const idx = bills.findIndex((i) => i.id === inv.id);
+    const before = (idx >= 0 ? bills.slice(0, idx) : bills.filter((i) => i.id !== inv.id)).filter((i) => linesOf(i, poId).length);
+    const own = dppOf(inv, poId);
+    const prevDpp = sum(before, (i) => dppOf(i, poId));
+    const prevRet = sum(before, (i) => Math.round(retentionOfDpp(po, dppOf(i, poId))));
+    const target = poRetentionTarget(po);
+    const closes = prevDpp + own >= poSubtotal(po) - 1;
+    total += closes ? Math.max(target - prevRet, 0) : Math.round(retentionOfDpp(po, own));
+  }
+  return total;
+}
+
+// Ringkasan retensi satu pesanan: ditahan dari faktur termin, sudah dilepas, dan saldonya.
+export function poRetention(po, invoices = []) {
+  const pct = retentionPctOf(po);
+  if (!pct) return null;
+  const live = liveInvoices(invoices);
+  const bills = live.filter((i) => !isDpInvoice(i) && !isRetentionRelease(i) && i.lines.some((l) => (l.poId ?? i.poId) === po.id));
+  const held = sum(bills, (i) => invRetention(i, [po], invoices));
+  const releases = live.filter((i) => isRetentionRelease(i) && i.poId === po.id);
+  const released = sum(releases, (i) => i.amount ?? 0);
+  const target = poRetentionTarget(po);
+  const billedAll = sum(bills, (i) => sum(i.lines.filter((l) => (l.poId ?? i.poId) === po.id), (l) => l.qty * l.price)) >= poSubtotal(po) - 1;
+  // Masa pemeliharaan dihitung dari faktur termin terakhir (serah terima pekerjaan selesai).
+  const lastBill = bills.map((i) => i.date).sort().at(-1) ?? null;
+  const maintenanceEnd = billedAll && lastBill ? addMonths(lastBill, po.term.retentionMonths ?? 0) : null;
+  return { pct, months: po.term.retentionMonths ?? 0, target, held, released, balance: held - released, billedAll, maintenanceEnd, releases, bills };
+}
+
 export const invDpp = (inv) => sum(inv.lines, (l) => l.qty * l.price);
 export const invPpn = (inv) => Math.round(sum(inv.lines, (l) => l.qty * l.price * lineRate(l)));
 export const invPph = (inv) => Math.round((invDpp(inv) * (inv.pphPct || 0)) / 100);
@@ -280,35 +363,54 @@ export const invPph = (inv) => Math.round((invDpp(inv) * (inv.pphPct || 0)) / 10
 // dibayar akan berubah nilainya diam-diam begitu DP-nya lunas. Faktur pelunasan sendiri baru
 // bisa dibuat setelah DP lunas (dpBlocks), jadi kedua dasar itu memberi angka yang sama.
 // PR DP lama tanpa faktur uang muka tetap dihitung dari yang sudah dibayar.
-export function invDpDeduct(inv, pos, prs, invoices = []) {
-  // Faktur uang muka tidak memotong dirinya sendiri.
-  if (isDpInvoice(inv)) return 0;
-  const byPo = {}; // nilai kotor (DPP + PPN) baris faktur per PO
-  for (const l of inv.lines) {
-    const key = l.poId ?? inv.poId;
-    byPo[key] = (byPo[key] ?? 0) + l.qty * l.price * (1 + lineRate(l));
-  }
-  let total = 0;
-  for (const [poId, gross] of Object.entries(byPo)) {
+// Faktur uang muka model PDF: DPP dan PPN-nya dipisah (faktur pajak uang muka terbit saat DP
+// ditagih). Potongannya di faktur termin lalu dihitung dari DPP, dan PPN termin hanya atas
+// (nilai termin - potongan DP). Faktur uang muka lama menyimpan satu baris bruto tanpa PPN;
+// pesanan seperti itu tetap dipotong bruto seperti sebelumnya.
+export const dpSplitsPpn = (inv) => isDpInvoice(inv) && inv.lines.some((l) => lineRate(l) > 0);
+
+// Potongan uang muka satu faktur, dipecah per model:
+//   gross - model lama: bagian bruto (DPP + PPN) uang muka, dipotong dari total
+//   dpp   - model PDF: bagian DPP uang muka, dipotong sebelum PPN dihitung
+// Faktur yang menutup pesanan menyerap sisa pembulatan supaya saldo Uang Muka habis tepat nol.
+export function invDpParts(inv, pos, prs, invoices = []) {
+  const out = { gross: 0, dpp: 0 };
+  // Faktur uang muka dan pelepasan retensi tidak memotong uang muka.
+  if (isDpInvoice(inv) || isRetentionRelease(inv)) return out;
+  const bills = liveInvoices(invoices).filter((i) => !isDpInvoice(i) && !isRetentionRelease(i));
+  const linesOf = (i, poId) => i.lines.filter((l) => (l.poId ?? i.poId) === poId);
+  const dppOf = (i, poId) => sum(linesOf(i, poId), (l) => l.qty * l.price);
+  const grossOf = (i, poId) => sum(linesOf(i, poId), (l) => l.qty * l.price * (1 + lineRate(l)));
+  for (const poId of [...new Set(inv.lines.map((l) => l.poId ?? inv.poId))]) {
     const po = pos.find((p) => p.id === poId);
     if (!po) continue;
-    // Jadwal DP + termin progres sudah mengeluarkan uang muka dari nilai tiap termin,
-    // jadi fakturnya tidak dipotong DP lagi — kalau dipotong, vendor kurang dibayar.
+    // Jadwal lama yang sudah mengeluarkan DP dari nilai termin: tidak dipotong lagi.
     if (scheduleExcludesDp(po.term)) continue;
     // Uang muka yang dibatalkan resmi tidak pernah ditagih, jadi tidak ada yang dipotong.
     if (po.dpWaiver?.status === 'disetujui') continue;
-    const dpInv = sum(
-      liveInvoices(invoices).filter((i) => isDpInvoice(i) && i.poId === po.id),
-      (i) => invDpp(i) + invPpn(i),
-    );
+    const dpInvs = liveInvoices(invoices).filter((i) => isDpInvoice(i) && i.poId === po.id);
+    const idx = bills.findIndex((i) => i.id === inv.id);
+    const before = (idx >= 0 ? bills.slice(0, idx) : bills.filter((i) => i.id !== inv.id)).filter((i) => linesOf(i, poId).length);
+    const closes = sum(before, (i) => dppOf(i, poId)) + dppOf(inv, poId) >= poSubtotal(po) - 1;
+    if (dpInvs.some(dpSplitsPpn)) {
+      const dpDpp = sum(dpInvs, (i) => invDpp(i));
+      const share = (i) => Math.round((dpDpp * dppOf(i, poId)) / poSubtotal(po));
+      const used = Math.min(sum(before, share), dpDpp);
+      out.dpp += closes ? dpDpp - used : Math.min(share(inv), dpDpp - used);
+      continue;
+    }
     const dpLama = sum(
       prs.filter((p) => p.kind === 'dp' && p.poId === po.id && p.status === 'dibayar' && !(p.invoiceIds ?? []).length),
       (p) => p.amount,
     );
-    const dpPaid = dpInv + dpLama;
-    if (dpPaid) total += Math.min(Math.round((dpPaid * gross) / poTotal(po)), dpPaid);
+    const dpPaid = sum(dpInvs, (i) => invDpp(i) + invPpn(i)) + dpLama;
+    if (dpPaid) out.gross += Math.min(Math.round((dpPaid * grossOf(inv, poId)) / poTotal(po)), dpPaid);
   }
-  return total;
+  return out;
+}
+export function invDpDeduct(inv, pos, prs, invoices = []) {
+  const p = invDpParts(inv, pos, prs, invoices);
+  return p.gross + p.dpp;
 }
 
 // Pemakaian uang muka pada termin yang jadwalnya SUDAH mengeluarkan DP (DP + termin progres,
@@ -388,14 +490,30 @@ export function prAllocated(inv, prs, { onlyPaid }) {
 
 export function invTotals(inv, { pos, prs, returns, invoices = [] }) {
   // Faktur batal bernilai nol di mana pun ia muncul (hutang, sisa, daftar pembayaran).
-  if (inv.cancelled) return { dpp: 0, ppn: 0, pph: 0, dp: 0, ret: 0, credit: 0, total: 0, paid: 0, balance: 0, free: 0 };
+  if (inv.cancelled) return { dpp: 0, ppn: 0, pph: 0, dp: 0, ret: 0, retensi: 0, credit: 0, total: 0, paid: 0, balance: 0, free: 0 };
+  if (isRetentionRelease(inv)) {
+    // Pelepasan retensi: saldo Hutang Retensi pindah ke Hutang Usaha, dipotong PPh-nya
+    // (PPh atas porsi retensi dipotong saat retensi dibayar). Tanpa PPN.
+    const amount = inv.amount ?? 0;
+    const pph = Math.round((amount * (inv.pphPct || 0)) / 100);
+    const total = Math.max(amount - pph, 0);
+    const paid = prAllocated(inv, prs, { onlyPaid: true });
+    const committed = prAllocated(inv, prs, { onlyPaid: false });
+    return { dpp: amount, ppn: 0, pph, dp: 0, ret: 0, retensi: 0, credit: 0, total, paid, balance: Math.max(total - paid, 0), free: Math.max(total - committed, 0) };
+  }
   const dpp = invDpp(inv);
-  const ppn = invPpn(inv);
-  const pph = invPph(inv);
-  const dp = invDpDeduct(inv, pos, prs, invoices);
+  const parts = invDpParts(inv, pos, prs, invoices);
+  // Model PDF: PPN termin = tarif x (nilai termin - potongan DP), karena PPN atas porsi DP sudah
+  // ada di faktur uang muka.
+  const ppn = invPpn(inv) - Math.round(parts.dpp * lineRate(inv.lines[0]));
+  // Retensi ditahan dari faktur termin; PPh hanya atas uang yang benar-benar dibayar sekarang
+  // (nilai termin - potongan DP - retensi). PPh atas porsi retensi dipotong saat dilepas.
+  const retensi = invRetention(inv, pos, invoices);
+  const pph = Math.round(((dpp - parts.dpp - retensi) * (inv.pphPct || 0)) / 100);
+  const dp = parts.gross + parts.dpp;
   const ret = invReturns(inv, returns);
   const credit = inv.credit ?? 0; // kredit vendor yang dialokasikan ke faktur ini
-  const total = Math.max(dpp + ppn - pph - dp - ret - credit, 0);
+  const total = Math.max(dpp + ppn - pph - dp - ret - retensi - credit, 0);
   const paid = prAllocated(inv, prs, { onlyPaid: true });
   const committed = prAllocated(inv, prs, { onlyPaid: false });
   return {
@@ -403,7 +521,9 @@ export function invTotals(inv, { pos, prs, returns, invoices = [] }) {
     ppn,
     pph,
     dp,
+    dpDpp: parts.dpp,
     ret,
+    retensi,
     credit,
     total,
     paid,
@@ -439,9 +559,11 @@ export function poStatus(po, { receipts, invoices, prs, pos, returns }) {
   if (!any) return po.sent ? 'dikirim' : 'draft';
   if (!full) return 'sebagian';
   const invs = liveInvoices(invoices).filter((i) => i.poId === po.id);
-  const allInvoiced = receiptsOf(po, receipts).every((r) => uninvoicedLines(r, invoices).length === 0);
+  const allInvoiced = receiptsOf(po, receipts).filter(receiptLive).every((r) => uninvoicedLines(r, invoices).length === 0);
   if (allInvoiced && invs.every((i) => invTotals(i, { pos, prs, returns, invoices }).balance <= 0)) {
-    return 'selesai';
+    // Termin sudah lunas tapi retensinya masih ditahan: pesanan belum tuntas, menunggu masa
+    // pemeliharaan selesai dan retensinya dilepas.
+    return (poRetention(po, invoices)?.balance ?? 0) > 0 ? 'pemeliharaan' : 'selesai';
   }
   return 'diterima';
 }
@@ -459,7 +581,7 @@ export function fppbjStep(f, ctx) {
   if (st.includes('draft')) return 2;
   if (st.some((s) => ['dikirim', 'sebagian'].includes(s))) return 3;
   const allInv = pos.every((p) =>
-    receiptsOf(p, ctx.receipts).every((r) => uninvoicedLines(r, ctx.invoices).length === 0),
+    receiptsOf(p, ctx.receipts).filter(receiptLive).every((r) => uninvoicedLines(r, ctx.invoices).length === 0),
   );
   return allInv ? 5 : 4;
 }
@@ -566,6 +688,8 @@ const slotLabel = (t, i, n) => {
     const unit = t.period ? t.period[0].toUpperCase() + t.period.slice(1) : 'Periode';
     return `${unit} ke-${i} dari ${n}`;
   }
+  // Tanpa pecahan termin (mis. bayar penuh + retensi): satu tagihan utama, lalu retensinya.
+  if (termMechanics(t).split === 'none') return 'Pembayaran utama';
   return `Termin ${i} dari ${n}`;
 };
 // Jadwal yang uang mukanya sudah dikeluarkan dari nilai termin: tiap termin dihitung dari
@@ -581,22 +705,22 @@ export function termPcts(t) {
   return Array.from({ length: n }, (_, i) => (i === n - 1 ? Math.round((100 - base * (n - 1)) * 10) / 10 : base));
 }
 
-// Nilai yang dibagi ke termin: nilai pekerjaan dikurangi uang muka dan retensi.
+// Nilai yang dibagi ke termin: nilai pekerjaan dikurangi uang muka (bila DP di luar jadwal).
+// Retensi TIDAK dikeluarkan dari jadwal: ia ditahan dari setiap faktur termin (Cr Hutang
+// Retensi) lalu dilepas sekaligus setelah masa pemeliharaan (lihat invRetention).
 export const scheduleBase = (gross, term) => {
-  const retPct = termMechanics(term).retention ? term.retentionPct ?? 0 : 0;
   const dpPct = scheduleExcludesDp(term) ? advancePct(term) : 0;
-  return gross - Math.round((gross * retPct) / 100) - Math.round((gross * dpPct) / 100);
+  return gross - Math.round((gross * dpPct) / 100);
 };
 
 export function expandSchedule(items, term, startIso) {
   const n = scheduleCount(term);
-  const retPct = termMechanics(term).retention ? term.retentionPct ?? 0 : 0;
-  if (n <= 1 && retPct === 0) return items;
+  if (n <= 1) return items;
   const periodic = termMechanics(term).split === 'periods';
+  const single = termMechanics(term).split === 'none';
   const pcts = termPcts(term);
   return items.flatMap((it) => {
     const gross = it.qty * it.price;
-    const retained = Math.round((gross * retPct) / 100);
     const work = scheduleBase(gross, term);
     let used = 0;
     const rows = pcts.map((pct, k) => {
@@ -613,28 +737,16 @@ export function expandSchedule(items, term, startIso) {
       return {
         ...it,
         id: `${it.id}-s${k + 1}`,
-        desc: `${it.desc} — ${slotLabel(term, k + 1, n)}${periodic ? '' : ` · ${pct}%`}`,
+        desc: `${it.desc} — ${slotLabel(term, k + 1, n)}${periodic || single ? '' : ` · ${pct}%`}`,
         qty: 1,
         unit: periodic ? 'periode' : 'termin',
         slot: k + 1,
         slotOf: n,
-        pct: periodic ? undefined : pct,
+        pct: periodic || single ? undefined : pct,
         ...(range && { periodFrom: range.from, periodTo: range.to }),
         price,
       };
     });
-    if (retained > 0) {
-      rows.push({
-        ...it,
-        id: `${it.id}-ret`,
-        slot: n + 1,
-        slotOf: n + 1,
-        desc: `${it.desc} — Retensi ${retPct}% (ditagih setelah pemeliharaan ${term.retentionMonths ?? 0} bulan)`,
-        qty: 1,
-        unit: 'retensi',
-        price: retained,
-      });
-    }
     return rows;
   });
 }
@@ -980,6 +1092,7 @@ export const PO_STATUS = {
   dikirim: { label: 'Dikirim ke vendor', color: 'blue' }, // menunggu barang dari vendor
   sebagian: { label: 'Diterima sebagian', color: 'blue' },
   diterima: { label: 'Diterima penuh', color: 'cyan' }, // barang beres, tinggal faktur & bayar
+  pemeliharaan: { label: 'Masa pemeliharaan', color: 'violet' }, // termin lunas, retensi masih ditahan
   selesai: { label: 'Selesai', color: 'green' },
   dibatalkan: { label: 'Dibatalkan', color: 'slate' },
   ditutup: { label: 'Ditutup', color: 'slate' },
@@ -1025,7 +1138,11 @@ export const INV_STATUS = {
 export const RECEIPT_STATUS = {
   draf: { label: 'Menunggu approval', color: 'orange', pending: true },
   dikonfirmasi: { label: 'Dikonfirmasi', color: 'green' },
+  ditolak: { label: 'Ditolak', color: 'red' },
+  dibatalkan: { label: 'Dibatalkan', color: 'slate' },
 };
+// Menunggu tanda tangan approver (bukan ditolak / dibatalkan).
+export const receiptPending = (r) => r?.status === 'draf';
 export const PROC_STATUS = {
   draf: { label: 'Draf', color: 'gray' },
   diajukan: { label: 'Menunggu approval', color: 'orange', pending: true },

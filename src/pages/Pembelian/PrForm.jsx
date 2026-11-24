@@ -26,6 +26,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useState } from 'react';
+import { logEntry } from './permissions.js';
 import {
   ArrowLeft,
   ArrowRight,
@@ -317,6 +318,7 @@ export default function PrForm({ pb, initialInvoiceIds = [], initialPoId = null,
       createdBy: personLabel(pb.role),
       note,
       ref,
+      log: [logEntry(pb.role, 'ajukan')],
     };
     pb.add('prs', doc);
     toast('Payment Request diajukan ke approver.');

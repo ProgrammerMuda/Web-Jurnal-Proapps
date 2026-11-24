@@ -1,4 +1,5 @@
 // Detail permintaan: stepper alur, verifikasi, pengadaan (bidding / vendor tunggal), approval, dan pembuatan PO.
+import { askConfirm } from './confirm.jsx';
 import {
   ActionIcon,
   Badge,
@@ -27,7 +28,8 @@ import { ReasonModal } from './Dialogs.jsx';
 import { downloadFppbj } from './fppbjPdf.js';
 import { personLabel, TODAY } from './data.js';
 import { warehouseText } from '@/pages/Gudang/data.js';
-import { canCreate, canVerify, verifierRole } from './permissions.js';
+import { canCreate, canVerify, logEntry, roleLabel, verifierRole, withLog } from './permissions.js';
+import ApprovalLog, { chainSteps, legacyLog } from './ApprovalLog.jsx';
 import {
   buildPOs,
   createPOs,
@@ -72,7 +74,7 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
   // Verifikasi hanya memeriksa kelayakan permintaan. Jalur pengadaannya ditentukan sesudah ini,
   // di panel pengadaan, oleh Accounting — lihat ProcurementPanel.pickRoute.
   const verify = () => {
-    patch((d) => ({ ...d, status: 'diverifikasi', verifiedAt: TODAY }));
+    patch((d) => withLog({ ...d, status: 'diverifikasi', verifiedAt: TODAY, verifiedBy: personLabel(role) }, logEntry(role, 'verifikasi', { step: 'accounting' })));
     toast('Permintaan diverifikasi. Lanjut pilih jalur pengadaan.');
   };
   const cancelRequest = (note) => {
@@ -82,7 +84,7 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
   };
   const canCancel = (canCreate(role, 'fppbj') || canCreate(role, 'po')) && !['dibatalkan', 'selesai'].includes(f.status) && pos.length === 0;
   const sendBack = (note) => {
-    patch((d) => ({ ...d, status: 'dikembalikan', returnNote: note, returnedAt: TODAY }));
+    patch((d) => withLog({ ...d, status: 'dikembalikan', returnNote: note, returnedAt: TODAY }, logEntry(role, 'kembalikan', { step: 'accounting', note })));
     setReason(null);
   };
   const makePOs = () => {
@@ -91,6 +93,28 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
   };
 
   const canGeneratePO = proc?.status === 'disetujui' && pos.length === 0;
+
+  // Log approval: verifikasi Accounting, lalu approval pengadaan berjenjang.
+  const verified = !['draft', 'diajukan', 'dikembalikan', 'dibatalkan'].includes(f.status) || !!f.verifiedAt;
+  const approvalSteps = [
+    {
+      key: 'verify',
+      verb: 'Verifikasi',
+      rejectedLabel: 'Dikembalikan',
+      role: verifierRole(),
+      done: verified ? { by: f.verifiedBy ?? roleLabel(verifierRole()), at: f.verifiedAt } : null,
+      state: verified ? 'done' : f.status === 'diajukan' ? 'current' : f.status === 'dikembalikan' ? 'rejected' : 'idle',
+    },
+    ...chainSteps(proc ?? {}, 'procurement', {
+      settled: proc?.status === 'disetujui',
+      rejected: proc?.status === 'ditolak',
+      active: ['diajukan', 'ditolak'].includes(proc?.status),
+    }),
+  ];
+  const approvalLog = [
+    ...(f.log ?? (f.verifiedAt ? [{ action: 'verifikasi', role: verifierRole(), step: verifierRole(), by: f.verifiedBy ?? roleLabel(verifierRole()), at: f.verifiedAt }] : [])),
+    ...legacyLog(proc),
+  ];
 
   return (
     <Stack gap="lg" p="lg" maw={1440} mx="auto" className="pb-form">
@@ -125,15 +149,15 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
             )}
             {/* Hanya peminta yang mengajukan permintaannya sendiri (spesifikasi 2.2). */}
             {f.status === 'draft' && canCreate(role, 'fppbj') && (
-              <Button radius="md" onClick={() => patch((d) => ({ ...d, status: 'diajukan', submittedAt: TODAY }))}>Ajukan permintaan</Button>
+              <Button radius="md" onClick={() => patch((d) => withLog({ ...d, status: 'diajukan', submittedAt: TODAY }, logEntry(role, 'ajukan')))}>Ajukan permintaan</Button>
             )}
             {f.status === 'dikembalikan' && canCreate(role, 'fppbj') && (
-              <Button radius="md" onClick={() => patch((d) => ({ ...d, status: 'diajukan', returnNote: '', submittedAt: TODAY }))}>Ajukan ulang</Button>
+              <Button radius="md" onClick={() => patch((d) => withLog({ ...d, status: 'diajukan', returnNote: '', submittedAt: TODAY }, logEntry(role, 'ajukan', { note: 'Diajukan ulang' })))}>Ajukan ulang</Button>
             )}
             {f.status === 'diajukan' && canVerify(role) && (
               <>
                 <Button radius="md" variant="default" leftSection={<ArrowCounterClockwise size={16} />} onClick={() => setReason('return')}>Kembalikan</Button>
-                <Button radius="md" leftSection={<Check size={16} />} onClick={verify}>Verifikasi</Button>
+                <Button radius="md" leftSection={<Check size={16} />} onClick={() => askConfirm({ title: `Verifikasi ${f.number}?`, message: 'Permintaan dinyatakan lengkap dan lanjut ke pemilihan jalur pengadaan. Verifikasi tercatat di log dan tidak bisa dibatalkan.', confirmLabel: 'Ya, verifikasi', onConfirm: verify })}>Verifikasi</Button>
               </>
             )}
             {f.status === 'diajukan' && !canVerify(role) && <Hint role={verifierRole()} />}
@@ -314,6 +338,7 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
 
         <Grid.Col span={{ base: 12, lg: 3.5 }}>
           <Stack gap="lg">
+            <ApprovalLog steps={approvalSteps} log={approvalLog} />
             <PurchaseFlow pb={pb} go={go} current={{ kind: 'fppbj', id: f.id }} />
 
           </Stack>

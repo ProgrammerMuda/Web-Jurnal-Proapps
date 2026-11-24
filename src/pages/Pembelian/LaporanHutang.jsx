@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ArrowsClockwise, ChartBar, DownloadSimple } from '@/components/Icon.jsx';
 import { downloadCsv } from '@/pages/Kontak/utils.js';
 import { BackLink, DataTable, DocNumber, PageIntro } from './components.jsx';
-import { aging, daysLate } from './selectors.js';
+import { aging, daysLate, readiness } from './selectors.js';
 import { formatDate, invTotals, rupiah, sum } from './utils.js';
 
 const bucketOf = (d) => (d <= 0 ? 0 : d <= 30 ? 1 : d <= 60 ? 2 : d <= 90 ? 3 : 4);
@@ -27,6 +27,9 @@ export default function LaporanHutang({ pb, onBack, go }) {
   const buckets = aging(pb);
   const total = sum(rows, (r) => r.t.balance);
   const vname = (id) => pb.vendorsById[id]?.name ?? '—';
+  // Hutang Retensi: akun sendiri (2-10160), belum jadi Hutang Usaha sampai dilepas. Ditampilkan
+  // terpisah supaya total di atas tetap sama dengan saldo Hutang Usaha di neraca.
+  const retensi = readiness(pb).retention.filter(({ po }) => !vendorFilter || po.vendorId === vendorFilter);
 
   const exportCsv = () =>
     downloadCsv('laporan-hutang.csv', [
@@ -78,6 +81,32 @@ export default function LaporanHutang({ pb, onBack, go }) {
         </DataTable>
         {byVendor.length === 0 && <Text fz="xs" c="slate.6" ta="center" py="md">Tidak ada hutang berjalan.</Text>}
       </Card>
+
+      {retensi.length > 0 && (
+        <Card withBorder radius="lg" padding="lg" bg="white">
+          <Group justify="space-between" mb="sm">
+            <div>
+              <Text fw={700} fz="sm">Hutang Retensi</Text>
+              <Text fz="xs" c="slate.6">Ditahan dari faktur termin, belum termasuk total hutang di atas. Masuk Hutang Usaha saat dilepas.</Text>
+            </div>
+            <Text fz="sm" fw={700} c="violet.8">{rupiah(sum(retensi, (x) => x.rt.balance))}</Text>
+          </Group>
+          <DataTable head={[{ label: 'Pesanan' }, { label: 'Vendor' }, { label: 'Bisa dilepas' }, { label: 'Saldo retensi', align: 'right' }]} minWidth={640}>
+            {retensi.map(({ po, rt }) => (
+              <Table.Tr key={po.id}>
+                <Table.Td><DocNumber onClick={() => go({ name: 'po', id: po.id })}>{po.number}</DocNumber><Text fz={11} c="slate.6">Retensi {rt.pct}%</Text></Table.Td>
+                <Table.Td fz="sm">{vname(po.vendorId)}</Table.Td>
+                <Table.Td>
+                  <Badge size="xs" radius="sm" variant="light" color={daysLate(rt.maintenanceEnd) >= 0 ? 'green' : 'violet'} tt="none">
+                    {daysLate(rt.maintenanceEnd) >= 0 ? 'Sudah bisa dilepas' : formatDate(rt.maintenanceEnd)}
+                  </Badge>
+                </Table.Td>
+                <Table.Td ta="right" fz="sm" fw={700}>{rupiah(rt.balance)}</Table.Td>
+              </Table.Tr>
+            ))}
+          </DataTable>
+        </Card>
+      )}
 
       <Card withBorder radius="lg" padding="lg" bg="white">
         <Text fw={700} fz="sm" mb="sm">Rincian faktur</Text>

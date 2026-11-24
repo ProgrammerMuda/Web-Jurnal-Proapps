@@ -14,7 +14,7 @@ import {
   Package,
 } from '@/components/Icon.jsx';
 import { PageIntro, ReferencePicker } from './components.jsx';
-import { CreditModal, DetailModal, DpInvoiceModal, PayModal, ReasonModal, ReturnModal, ReceiptModal, VoucherModal } from './Dialogs.jsx';
+import { CreditModal, DetailModal, DpInvoiceModal, PayModal, ReasonModal, RetentionReleaseModal, ReturnModal, ReceiptModal, VoucherModal } from './Dialogs.jsx';
 import FppbjDetail from './FppbjDetail.jsx';
 import FppbjForm from './FppbjForm.jsx';
 import LaporanHutang from './LaporanHutang.jsx';
@@ -30,9 +30,11 @@ import PrDetail from './PrDetail.jsx';
 import VoucherDetail from './VoucherDetail.jsx';
 import { formatHash, parseHash } from './routes.js';
 import { readiness } from './selectors.js';
-import { canCreate } from './permissions.js';
-import { invTotals, poTotal, routeLabel, rupiah, sum, remainingQty } from './utils.js';
-import { usePb } from './usePb.js';
+import { approvalState, canCreate, logEntry, nowStamp, receiptKind, receiptName } from './permissions.js';
+import { formatDate, invTotals, poTotal, routeLabel, rupiah, sum, remainingQty } from './utils.js';
+import { toast, usePb } from './usePb.js';
+import { legacyLog } from './ApprovalLog.jsx';
+import { ConfirmHost } from './confirm.jsx';
 
 // Definisi menu "Buat baru": peran yang boleh membuat + sumber referensi.
 // Dokumen yang bisa dibuat: peran yang boleh membuat + label tombol.
@@ -42,12 +44,13 @@ const actions = {
   po: { label: 'Buat Pesanan', doc: 'po', count: 'po' },
   receipt: { label: 'Buat Penerimaan', doc: 'receipt', count: 'receipt' },
   invoice: { label: 'Buat Tagihan Vendor', doc: 'invoice', count: 'invoice' },
+  retention: { label: 'Lepas Retensi', doc: 'invoice', count: 'retentionDue' },
   pr: { label: 'Buat Pembayaran', doc: 'pr', count: 'pr' },
   return: { label: 'Buat Retur Pembelian', doc: 'return', count: 'returns' },
 };
 // Satu tombol per tab: dokumen yang dibuat di tab itu. Ringkasan memakai dropdown "Buat baru".
 const tabAction = { fppbj: 'fppbj', orders: 'po', receipts: 'receipt', bills: 'invoice', payments: 'pr', returns: 'return' };
-const buatBaruOrder = ['fppbj', 'po', 'receipt', 'invoice', 'pr', 'return'];
+const buatBaruOrder = ['fppbj', 'po', 'receipt', 'invoice', 'retention', 'pr', 'return'];
 
 // Judul & deskripsi halaman per menu sidebar.
 const pageIntros = {
@@ -113,6 +116,17 @@ export default function Pembelian() {
       emptyText: 'Penerimaan dicatat dari pesanan yang belum diterima penuh.',
       emptyActions: [<Button key="b" size="xs" radius="md" variant="default" onClick={() => { close(); go({ name: 'tab', tab: 'orders' }); }}>Lihat PO</Button>, <Button key="c" size="xs" radius="md" onClick={() => { close(); go({ name: 'fppbj-new' }); }}>Buat permintaan</Button>],
       pick: ([id]) => setDialog({ type: 'receipt', poId: id }),
+    },
+    retention: {
+      title: 'Lepas retensi · pilih pesanan',
+      icon: Invoice,
+      // Hanya yang masa pemeliharaannya sudah selesai. Yang belum, cukup disebut kapan.
+      rows: rd.retentionDue.map(({ po, rt }) => ({ id: po.id, number: po.number, vendor: vendorName(po.vendorId), value: rupiah(rt.balance), hint: `Retensi ${rt.pct}% · pemeliharaan selesai ${formatDate(rt.maintenanceEnd)}` })),
+      emptyTitle: 'Belum ada retensi yang jatuh waktu',
+      emptyText: rd.retention.length
+        ? `${rd.retention.length} pesanan masih dalam masa pemeliharaan. Paling dekat ${rd.retention[0].po.number}, bisa dilepas ${formatDate(rd.retention[0].rt.maintenanceEnd)}.`
+        : 'Retensi bisa dilepas setelah termin terakhir difaktur dan masa pemeliharaannya selesai.',
+      pick: ([id]) => setDialog({ type: 'retention-release', poId: id }),
     },
     return: {
       title: 'Retur pembelian · pilih faktur',
@@ -192,7 +206,37 @@ export default function Pembelian() {
           onPick={refs[d.kind].pick}
         />
       )}
-      {d?.type === 'receipt' && <ReceiptModal opened onClose={close} po={pb.posById[d.poId]} pb={pb} />}
+      {d?.type === 'receipt' && <ReceiptModal opened onClose={close} po={pb.posById[d.poId]} pb={pb} editing={d.receiptId ? pb.receiptsById[d.receiptId] : null} />}
+      {d?.type === 'receipt-reject' && pb.receiptsById[d.receiptId] && (
+        <ReasonModal
+          opened
+          onClose={close}
+          title={`Tolak ${receiptName(pb.receiptsById[d.receiptId])}`}
+          label="Alasan penolakan"
+          confirmLabel="Tolak"
+          onConfirm={(note) => {
+            const kind = receiptKind(pb.receiptsById[d.receiptId]);
+            pb.update('receipts', d.receiptId, (x) => ({ ...x, status: 'ditolak', rejectNote: note, rejectedAt: nowStamp(), log: [...legacyLog(x), logEntry(pb.role, 'tolak', { step: approvalState(x, kind).next, note })] }));
+            toast(`${receiptName(pb.receiptsById[d.receiptId])} ditolak. Pencatat bisa mengajukan ulang atau membatalkannya.`);
+            close();
+          }}
+        />
+      )}
+      {d?.type === 'receipt-cancel' && pb.receiptsById[d.receiptId] && (
+        <ReasonModal
+          opened
+          onClose={close}
+          title={`Batalkan ${receiptName(pb.receiptsById[d.receiptId])}`}
+          label="Alasan pembatalan"
+          confirmLabel={`Batalkan ${receiptName(pb.receiptsById[d.receiptId])}`}
+          onConfirm={(note) => {
+            pb.update('receipts', d.receiptId, (x) => ({ ...x, status: 'dibatalkan', cancelNote: note, log: [...legacyLog(x), logEntry(pb.role, 'batal', { note })] }));
+            toast(`${receiptName(pb.receiptsById[d.receiptId])} dibatalkan. Qty-nya kembali terbuka.`);
+            close();
+          }}
+        />
+      )}
+      {d?.type === 'retention-release' && <RetentionReleaseModal opened onClose={close} po={pb.posById[d.poId]} pb={pb} onSaved={(id) => go({ name: 'invoice', id })} />}
       {d?.type === 'dp-invoice' && <DpInvoiceModal opened onClose={close} po={pb.posById[d.poId]} pb={pb} onSaved={(id) => go({ name: 'invoice', id })} />}
       {d?.type === 'pv' && prDoc && <VoucherModal opened onClose={close} pr={prDoc} pb={pb} />}
       {d?.type === 'pay' && pb.vouchersById[d.voucherId] && <PayModal opened onClose={close} voucher={pb.vouchersById[d.voucherId]} pb={pb} />}
@@ -203,12 +247,13 @@ export default function Pembelian() {
           title="Tolak Payment Request"
           label="Alasan penolakan"
           confirmLabel="Tolak"
-          onConfirm={(note) => { pb.update('prs', prDoc.id, (x) => ({ ...x, status: 'ditolak', note })); close(); }}
+          onConfirm={(note) => { pb.update('prs', prDoc.id, (x) => ({ ...x, status: 'ditolak', note, log: [...(x.log ?? []), logEntry(pb.role, 'tolak', { step: approvalState(x, 'pr').next, note })] })); close(); }}
         />
       )}
       {d?.type === 'return' && <ReturnModal opened onClose={close} invoice={pb.invoicesById[d.invoiceId]} pb={pb} />}
       {d?.type === 'credit' && <CreditModal opened onClose={close} invoice={pb.invoicesById[d.invoiceId]} pb={pb} />}
       {d?.type === 'detail' && <DetailModal opened onClose={close} kind={d.kind} doc={pb[d.kind].find((x) => x.id === d.id)} pb={pb} />}
+      <ConfirmHost />
     </>
   );
 
@@ -335,7 +380,7 @@ export default function Pembelian() {
             }
           />
           {tab === 'overview' ? (
-            <Overview pb={pb} go={go} />
+            <Overview pb={pb} go={go} openDialog={setDialog} />
           ) : (
             <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
               <ListTab key={tab} tab={tab} pb={pb} go={go} openDialog={setDialog} />
