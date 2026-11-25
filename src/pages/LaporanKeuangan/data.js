@@ -7,18 +7,6 @@ export const categories = [
   { value: 'anggaran', label: 'Anggaran & Analisis', icon: 'anggaran' },
 ];
 
-export const heroStats = [
-  { label: 'Total Laporan', value: '9 Modul', icon: 'file' },
-  {
-    label: 'Status Sinkron',
-    value: 'Live Sync',
-    icon: 'database',
-    highlight: true,
-  },
-  { label: 'Format Ekspor', value: 'PDF & XLSX', icon: 'download' },
-  { label: 'Standar Buku', value: 'Double Entry', icon: 'check' },
-];
-
 export const reports = [
   {
     key: 'buku-besar',

@@ -11,15 +11,14 @@ import {
   isDpInvoice,
   dpBlocks,
   dpState,
-  formatDate,
   invTotals,
-  minQuotesFor,
   poStatus,
   receiptsOf,
   remainingQty,
   poHasReceipt,
   pvPaid,
   uninvoicedLines,
+  uninvoicedPoLines,
   poRetention,
   addDays,
   retentionDocName,
@@ -48,6 +47,9 @@ export function readiness(pb) {
     // Penerimaan yang uang muka pesanannya belum beres tidak dihitung siap difaktur:
     // faktur pelunasannya ditahan sampai DP lunas atau dibatalkan resmi.
     invoice: pb.receipts.filter((r) => uninvoicedLines(r, pb.invoices).length > 0 && !dpBlocks(dpState(pb.posById[r.poId], c))),
+    // Pesanan tanpa FPB/BAPP (CBD, jasa per termin tanpa berita acara) ditagih langsung dari
+    // PO/SPK-nya begitu terkirim; uang muka yang belum beres tetap menahannya.
+    invoicePo: livePos.filter((p) => uninvoicedPoLines(p, pb.invoices).length > 0 && !dpBlocks(dpState(p, c))),
     // Pesanan beruang muka yang faktur uang mukanya belum dicatat (PR DP lama tanpa faktur
     // tetap dihitung sudah diajukan).
     prDp: livePos.filter(
@@ -84,6 +86,7 @@ export const SLA = {
   approve: 7, // pengadaan diajukan -> disetujui approver
   po: 3, // pengadaan disetujui -> PO/SPK dibuat
   send: 3, // PO dibuat -> dikirim ke vendor
+  receipt: 14, // PO/SPK dikirim -> barang/jasa diterima (dipakai kalau PO tidak punya perkiraan tiba)
   bapp: 5, // BAPP dicatat -> disetujui Building Manager
   invoice: 7, // penerimaan dikonfirmasi -> faktur dicatat
   prDp: 5, // PO dengan uang muka -> PR diajukan
@@ -98,11 +101,20 @@ export const SLA = {
 // Umur satu tugas. Tugas boleh menyebut batasnya lewat `since` + `limit` (dihitung dari kejadian)
 // atau lewat `due` (tanggal janji yang sudah ada, mis. perkiraan tiba atau jatuh tempo faktur).
 // Dokumen lama belum punya stempel waktu, jadi tanggal dokumen dipakai sebagai perkiraan.
+//
+// `level` dipakai untuk warna baris di dashboard:
+//   ok    masih dalam batas wajar
+//   warn  oranye: sudah lewat batas wajar
+//   stale merah: berlarut, lewat batas lagi sepanjang batasnya sendiri (min. 3 hari, atau
+//         7 hari untuk tugas yang acuannya tanggal janji seperti jatuh tempo)
 export function taskAge(a) {
   const anchor = a.since ?? null;
   const due = a.due ?? (anchor && a.limit != null ? isoPlus(anchor, a.limit) : null);
-  if (!due) return { waiting: null, late: 0, due: null };
-  return { waiting: anchor ? daysLate(anchor) : null, late: daysLate(due), due };
+  if (!due) return { waiting: anchor ? daysLate(anchor) : null, late: 0, due: null, level: 'ok' };
+  const late = daysLate(due);
+  const stretch = a.due ? 7 : Math.max(a.limit ?? 7, 3);
+  const level = late <= 0 ? 'ok' : late > stretch ? 'stale' : 'warn';
+  return { waiting: anchor ? daysLate(anchor) : null, late, due, level };
 }
 const isoPlus = (iso, days) => new Date(Date.parse(iso) + days * 864e5).toISOString().slice(0, 10);
 
@@ -141,13 +153,13 @@ export function actionsFor(role, pb) {
   const prPo = (p) => p.poId ?? pb.invoicesById[(p.invoiceIds ?? [])[0]]?.poId;
   const hotTask = (base, poId) => {
     const since = dpHot(poId);
-    return since ? { ...base, sub: `${base.sub} · barang/jasa sudah diterima`, since, limit: SLA.dpReceived, due: undefined } : base;
+    return since ? { ...base, since, limit: SLA.dpReceived, due: undefined } : base;
   };
   // Pembatalan uang muka menunggu Chief Finance.
   if (canApprove(role, 'dpWaiver')) {
     pb.pos
       .filter((p) => p.dpWaiver?.status === 'diajukan')
-      .forEach((p) => add(hotTask({ id: `dw-${p.id}`, title: 'Approval tagih tanpa uang muka', sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name}`, cta: 'Tinjau', to: { name: 'po', id: p.id }, since: p.dpWaiver.at, limit: SLA.approve }, p.id)));
+      .forEach((p) => add(hotTask({ id: `dw-${p.id}`, title: 'Approval tagih tanpa uang muka', sub: `${p.number}`, cta: 'Tinjau', to: { name: 'po', id: p.id }, since: p.dpWaiver.at, limit: SLA.approve }, p.id)));
   }
   // Approver pengadaan (spesifikasi 2.2).
   if (canApprove(role, 'procurement')) {
@@ -159,7 +171,7 @@ export function actionsFor(role, pb) {
         add({
           id: `ap-${f.id}`,
           title: `Approval ${f.single?.on ? 'vendor tunggal' : 'bidding'} (${approvalState(f.procurement, 'procurement').done.length + 1}/${approvalState(f.procurement, 'procurement').total})`,
-          sub: `${f.number} · ${f.purpose}`,
+          sub: f.number,
           cta: 'Tinjau',
           to: { name: 'fppbj', id: f.id },
           since: f.procurement?.submittedAt ?? f.routedAt ?? f.date,
@@ -181,66 +193,68 @@ export function actionsFor(role, pb) {
     pb.prs
       .filter((p) => p.status === 'disetujui')
       .forEach((p) =>
-        add(hotTask({ id: `fp-${p.id}`, title: 'Terbitkan Payment Voucher', sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name}`, cta: 'Terbitkan', to: { name: 'pr', id: p.id }, since: p.approvedAt ?? p.date, limit: SLA.pv, due: p.dueDate }, p.kind === 'dp' ? prPo(p) : null)),
+        add(hotTask({ id: `fp-${p.id}`, title: 'Terbitkan Payment Voucher', sub: `${p.number}`, cta: 'Terbitkan', to: { name: 'pr', id: p.id }, since: p.approvedAt ?? p.date, limit: SLA.pv, due: p.dueDate }, p.kind === 'dp' ? prPo(p) : null)),
       );
     pb.vouchers
       .filter((v) => !pvPaid(v))
       .forEach((v) =>
-        add(hotTask({ id: `pv-${v.id}`, title: 'Catat pembayaran', sub: `${v.number} · ${pb.vendorsById[v.vendorId]?.name}`, cta: 'Bayar', to: { name: 'voucher', id: v.id }, since: v.date, limit: SLA.pay }, (() => { const p = pb.prsById[(v.prIds ?? [])[0]]; return p?.kind === 'dp' ? prPo(p) : null; })())),
+        add(hotTask({ id: `pv-${v.id}`, title: 'Catat pembayaran', sub: `${v.number}`, cta: 'Bayar', to: { name: 'voucher', id: v.id }, since: v.date, limit: SLA.pay }, (() => { const p = pb.prsById[(v.prIds ?? [])[0]]; return p?.kind === 'dp' ? prPo(p) : null; })())),
       );
   }
   // Verifikasi permintaan: hanya memeriksa kelayakan, belum menyentuh jalur pengadaan.
   if (canVerify(role)) {
-    pb.fppbj.filter((f) => f.status === 'diajukan').forEach((f) => add({ id: `v-${f.id}`, title: 'Verifikasi permintaan', sub: `${f.number} · ${f.purpose}`, cta: 'Verifikasi', to: { name: 'fppbj', id: f.id }, since: f.submittedAt ?? f.date, limit: SLA.verify }));
+    pb.fppbj.filter((f) => f.status === 'diajukan').forEach((f) => add({ id: `v-${f.id}`, title: 'Verifikasi permintaan', sub: f.number, cta: 'Verifikasi', to: { name: 'fppbj', id: f.id }, since: f.submittedAt ?? f.date, limit: SLA.verify }));
   }
   // Langkah berikutnya, dan ini pekerjaan pengadaan: tentukan jalurnya.
   if (canCreate(role, 'procurement')) {
-    pb.fppbj.filter((f) => f.status === 'diverifikasi').forEach((f) => add({ id: `j-${f.id}`, title: 'Pilih jalur pengadaan', sub: `${f.number} · ${f.purpose}`, cta: 'Pilih jalur', to: { name: 'fppbj', id: f.id }, since: f.verifiedAt ?? f.submittedAt ?? f.date, limit: SLA.route }));
+    pb.fppbj.filter((f) => f.status === 'diverifikasi').forEach((f) => add({ id: `j-${f.id}`, title: 'Pilih jalur pengadaan', sub: f.number, cta: 'Pilih jalur', to: { name: 'fppbj', id: f.id }, since: f.verifiedAt ?? f.submittedAt ?? f.date, limit: SLA.route }));
   }
   if (canCreate(role, 'po')) {
     pb.fppbj
       .filter((f) => f.status === 'dalam_pengadaan' && ['draf', 'ditolak', undefined].includes(f.procurement?.status))
-      .forEach((f) => add({ id: `p-${f.id}`, title: f.procurement?.status === 'ditolak' ? 'Revisi pengadaan (ditolak)' : 'Lengkapi pengadaan', sub: `${f.number} · ${f.single?.on ? `${f.quotes.length}/1 penawaran` : `${f.quotes.length}/${minQuotesFor(f)} penawaran`}`, cta: 'Buka', to: { name: 'fppbj', id: f.id }, since: f.routedAt ?? f.verifiedAt ?? f.date, limit: SLA.quotes }));
-    r.po.forEach((f) => add({ id: `g-${f.id}`, title: 'Buat PO', sub: `${f.number} · ${f.purpose}`, cta: 'Buat', to: { name: 'fppbj', id: f.id }, since: f.procurement?.submittedAt ?? f.routedAt ?? f.date, limit: SLA.po }));
-    pb.pos.filter((p) => !p.sent).forEach((p) => add({ id: `s-${p.id}`, title: 'Kirim ke vendor', sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name}`, cta: 'Buka', to: { name: 'po', id: p.id }, since: p.date, limit: SLA.send }));
+      .forEach((f) => add({ id: `p-${f.id}`, title: f.procurement?.status === 'ditolak' ? 'Revisi pengadaan (ditolak)' : 'Lengkapi pengadaan', sub: f.number, cta: 'Buka', to: { name: 'fppbj', id: f.id }, since: f.routedAt ?? f.verifiedAt ?? f.date, limit: SLA.quotes }));
+    r.po.forEach((f) => add({ id: `g-${f.id}`, title: 'Buat PO', sub: f.number, cta: 'Buat', to: { name: 'fppbj', id: f.id }, since: f.procurement?.submittedAt ?? f.routedAt ?? f.date, limit: SLA.po }));
+    pb.pos.filter((p) => !p.sent).forEach((p) => add({ id: `s-${p.id}`, title: 'Kirim ke vendor', sub: `${p.number}`, cta: 'Buka', to: { name: 'po', id: p.id }, since: p.date, limit: SLA.send }));
     r.prDp
       .filter((p) => p.dpWaiver?.status !== 'diajukan' && p.dpWaiver?.status !== 'disetujui')
-      .forEach((p) => add(hotTask({ id: `d-${p.id}`, title: 'Catat faktur uang muka', sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name}`, cta: 'Buka', to: { name: 'po', id: p.id }, since: p.sentAt ?? p.date, limit: SLA.prDp }, p.id)));
-    r.invoice.forEach((x) => add({ id: `f-${x.id}`, title: 'Catat faktur dari penerimaan', sub: `${x.number} · ${pb.vendorsById[x.vendorId]?.name}`, cta: 'Buka', to: { name: 'po', id: x.poId }, since: x.date, limit: SLA.invoice }));
+      .forEach((p) => add(hotTask({ id: `d-${p.id}`, title: 'Catat faktur uang muka', sub: `${p.number}`, cta: 'Buka', to: { name: 'po', id: p.id }, since: p.sentAt ?? p.date, limit: SLA.prDp }, p.id)));
+    r.invoice.forEach((x) => add({ id: `f-${x.id}`, title: 'Catat faktur dari penerimaan', sub: `${x.number}`, cta: 'Buka', to: { name: 'po', id: x.poId }, since: x.date, limit: SLA.invoice }));
+    r.invoicePo.forEach((p) => add({ id: `fo-${p.id}`, title: 'Catat faktur pelunasan', sub: `${p.number}`, cta: 'Buka', to: { name: 'po', id: p.id }, since: p.sentAt ?? p.date, limit: SLA.invoice }));
     r.prPay
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
-      .forEach((i) => add(hotTask({ id: `b-${i.id}`, title: isDpInvoice(i) ? 'Ajukan pembayaran uang muka' : 'Ajukan pembayaran faktur', sub: `${i.number} · jatuh tempo ${formatDate(i.dueDate)}`, cta: 'Buka', to: { name: isDpInvoice(i) ? 'invoice' : 'po', id: isDpInvoice(i) ? i.id : i.poId }, due: i.dueDate }, isDpInvoice(i) ? i.poId : null)));
+      .forEach((i) => add(hotTask({ id: `b-${i.id}`, title: isDpInvoice(i) ? 'Ajukan pembayaran uang muka' : 'Ajukan pembayaran faktur', sub: i.number, cta: 'Buka', to: { name: isDpInvoice(i) ? 'invoice' : 'po', id: isDpInvoice(i) ? i.id : i.poId }, due: i.dueDate }, isDpInvoice(i) ? i.poId : null)));
     // Retensi dua tahap. H-30: minta dokumen serah terima akhir ke vendor/PIC supaya sudah
     // di tangan saat jatuh waktu. Hari H dan sesudahnya: lepas retensinya — tombol tugas ini
     // langsung membuka modal pelepasan, tidak perlu mencari PO-nya.
     r.retention
       .filter(({ rt }) => rt.maintenanceEnd > TODAY && addDays(rt.maintenanceEnd, -30) <= TODAY)
-      .forEach(({ po: p, rt }) => add({ id: `rb-${p.id}`, title: `Minta ${retentionDocName(p)}`, sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name} · retensi bisa dilepas ${formatDate(rt.maintenanceEnd)}`, cta: 'Buka', to: { name: 'po', id: p.id }, due: rt.maintenanceEnd }));
-    r.retentionDue.forEach(({ po: p, rt }) => add({ id: `rl-${p.id}`, title: `Lepas retensi ${rupiahShort(rt.balance)}`, sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name} · pemeliharaan selesai ${formatDate(rt.maintenanceEnd)}`, cta: 'Lepas', to: { name: 'po', id: p.id }, dialog: { type: 'retention-release', poId: p.id }, since: rt.maintenanceEnd, limit: SLA.invoice }));
+      .forEach(({ po: p, rt }) => add({ id: `rb-${p.id}`, title: `Minta ${retentionDocName(p)}`, sub: p.number, cta: 'Buka', to: { name: 'po', id: p.id }, due: rt.maintenanceEnd }));
+    r.retentionDue.forEach(({ po: p, rt }) => add({ id: `rl-${p.id}`, title: `Lepas retensi ${rupiahShort(rt.balance)}`, sub: p.number, cta: 'Lepas', to: { name: 'po', id: p.id }, dialog: { type: 'retention-release', poId: p.id }, since: rt.maintenanceEnd, limit: SLA.invoice }));
   }
   // FPB untuk barang ke Gudang, BAPP untuk jasa ke PIC jasa.
   r.receipt
     .filter((p) => canCreate(role, receiptDoc(poAllJasa(p))))
-    .forEach((p) => add({ id: `r-${p.id}`, title: poAllJasa(p) ? 'Catat BAPP' : poAllBarang(p) ? 'Catat penerimaan barang' : 'Catat penerimaan (FPB/BAPP)', sub: `${p.number} · ${pb.vendorsById[p.vendorId]?.name}`, cta: 'Catat', to: { name: 'po', id: p.id }, since: p.sentAt ?? p.date, due: p.expectedAt }));
+    .forEach((p) => add({ id: `r-${p.id}`, title: poAllJasa(p) ? 'Catat BAPP' : poAllBarang(p) ? 'Catat penerimaan barang' : 'Catat penerimaan (FPB/BAPP)', sub: `${p.number}`, cta: 'Catat', to: { name: 'po', id: p.id }, since: p.sentAt ?? p.date, due: p.expectedAt || undefined, limit: SLA.receipt }));
   // FPB dan BAPP yang menunggu approval berjenjang.
   if (canApprove(role, 'bapp') || canApprove(role, 'fpb')) {
     pb.receipts
       .filter((x) => receiptPending(x) && canApprove(role, receiptKind(x)) && isApproverTurn(role, x, receiptKind(x)))
-      .forEach((x) => add({ id: `ba-${x.id}`, title: `Setujui ${receiptName(x)} (${approvalState(x, receiptKind(x)).done.length + 1}/${approvalState(x, receiptKind(x)).total})`, sub: `${x.number} · ${pb.vendorsById[x.vendorId]?.name}`, cta: 'Tinjau', to: { name: 'receipt', id: x.id }, since: x.date, limit: SLA.bapp }));
+      .forEach((x) => add({ id: `ba-${x.id}`, title: `Setujui ${receiptName(x)} (${approvalState(x, receiptKind(x)).done.length + 1}/${approvalState(x, receiptKind(x)).total})`, sub: `${x.number}`, cta: 'Tinjau', to: { name: 'receipt', id: x.id }, since: x.date, limit: SLA.bapp }));
   }
   // FPB/BAPP yang ditolak kembali ke pencatatnya untuk diajukan ulang atau dibatalkan.
   pb.receipts
     .filter((x) => x.status === 'ditolak' && canCreate(role, receiptDoc(receiptKind(x) === 'bapp')))
-    .forEach((x) => add({ id: `rt-${x.id}`, title: `${receiptName(x)} ditolak`, sub: `${x.number} · ${x.rejectNote ?? ''}`, cta: 'Buka', to: { name: 'receipt', id: x.id }, since: x.rejectedAt?.slice(0, 10) ?? x.date, limit: SLA.returned }));
+    .forEach((x) => add({ id: `rt-${x.id}`, title: `${receiptName(x)} ditolak`, sub: x.number, cta: 'Buka', to: { name: 'receipt', id: x.id }, since: x.rejectedAt?.slice(0, 10) ?? x.date, limit: SLA.returned }));
   if (canCreate(role, 'fppbj')) {
-    pb.fppbj.filter((f) => f.status === 'dikembalikan').forEach((f) => add({ id: `k-${f.id}`, title: 'Permintaan dikembalikan', sub: `${f.number} · ${f.returnNote}`, cta: 'Buka', to: { name: 'fppbj', id: f.id }, since: f.returnedAt ?? f.date, limit: SLA.returned }));
+    pb.fppbj.filter((f) => f.status === 'dikembalikan').forEach((f) => add({ id: `k-${f.id}`, title: 'Permintaan dikembalikan', sub: f.number, cta: 'Buka', to: { name: 'fppbj', id: f.id }, since: f.returnedAt ?? f.date, limit: SLA.returned }));
     pb.fppbj.filter((f) => f.status === 'draft').forEach((f) => add({ id: `dr-${f.id}`, title: 'Draf permintaan belum diajukan', sub: f.number, cta: 'Buka', to: { name: 'fppbj', id: f.id }, since: f.date, limit: SLA.draft }));
   }
-  // Yang terlambat naik ke atas, lalu yang paling lama menggantung. Tugas tanpa batas waktu
-  // (belum punya acuan tanggal) ditaruh paling bawah tanpa mengubah urutan aslinya.
+  // Merah (berlarut) paling atas, lalu oranye, lalu yang paling lama menggantung. Tugas tanpa
+  // batas waktu (belum punya acuan tanggal) ditaruh paling bawah tanpa mengubah urutan aslinya.
+  const rank = { stale: 2, warn: 1, ok: 0 };
   return out
     .map((a, i) => ({ ...a, ...taskAge(a), seq: i }))
-    .sort((x, y) => (y.late > 0) - (x.late > 0) || (y.late ?? -Infinity) - (x.late ?? -Infinity) || x.seq - y.seq);
+    .sort((x, y) => rank[y.level] - rank[x.level] || (y.late ?? -Infinity) - (x.late ?? -Infinity) || x.seq - y.seq);
 }
 
 // Pipeline: jumlah dokumen yang masih berjalan per tahap.
@@ -263,7 +277,7 @@ const ACTION_MENU = {
   v: 'fppbj', j: 'fppbj', p: 'fppbj', g: 'fppbj', ap: 'fppbj', k: 'fppbj', dr: 'fppbj',
   s: 'orders', d: 'orders', dw: 'orders', rl: 'orders', rb: 'orders',
   r: 'receipts', ba: 'receipts', rt: 'receipts',
-  f: 'bills', b: 'bills',
+  f: 'bills', fo: 'bills', b: 'bills',
   ar: 'payments', fp: 'payments', pv: 'payments',
 };
 // Jumlah tugas peran ini per menu Pembelian: { fppbj: 2, receipts: 1, ... }.

@@ -78,12 +78,18 @@ function loadGudang() {
   return gudangSeed;
 }
 
+// Katalog contoh lama mengisi akun pembelian peralatan kantor dengan 6-50002 (Biaya Penyusutan),
+// sehingga pembelian meja/kursi tercatat sebagai beban penyusutan. Peralatan dicatat sebagai
+// Aktiva Tetap 1-20004; produk contoh yang masih tersimpan dengan akun lama ikut dibetulkan.
+const PERALATAN_LAMA = new Set(['printer-laser', 'meja-lipat', 'kursi-kantor', 'lemari-arsip']);
+const fixBuyAccount = (p) => (PERALATAN_LAMA.has(p.id) && p.buyAccount === '6-50002' ? { ...p, buyAccount: '1-20004' } : p);
+
 function loadProduk() {
   try {
     const raw = JSON.parse(localStorage.getItem(PRODUK_KEY));
     if (Array.isArray(raw?.products) && raw.products.length)
       return {
-        products: raw.products,
+        products: raw.products.map(fixBuyAccount),
         categories: Array.isArray(raw.categories) ? raw.categories : productCategoriesSeed,
         units: Array.isArray(raw.units) ? raw.units : productUnitsSeed,
       };

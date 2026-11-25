@@ -12,7 +12,7 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   ArrowsLeftRight,
@@ -20,11 +20,8 @@ import {
   Books,
   ChartBar,
   ChartPieSlice,
-  CheckCircle,
   ClipboardText,
   CurrencyCircleDollar,
-  Database,
-  DownloadSimple,
   FileText,
   MagnifyingGlass,
   Money,
@@ -34,14 +31,17 @@ import {
   Table,
   TrendUp,
 } from '@/components/Icon.jsx';
-import { categories, heroStats, reports } from './data.js';
+import { categories, reports } from './data.js';
+import ArusKas from './ArusKas.jsx';
+import BukuBesar from './BukuBesar.jsx';
+import JurnalUmum from './JurnalUmum.jsx';
+import LabaRugi from './LabaRugi.jsx';
+import Neraca from './Neraca.jsx';
+import NeracaSaldo from './NeracaSaldo.jsx';
 
-const statIcons = {
-  file: FileText,
-  database: Database,
-  download: DownloadSimple,
-  check: CheckCircle,
-};
+// Laporan yang sudah punya halaman: dibuka lewat #laporan/<key>.
+const READY = { 'arus-kas': ArusKas, 'buku-besar': BukuBesar, 'jurnal-umum': JurnalUmum, neraca: Neraca, 'laba-rugi': LabaRugi, 'neraca-saldo': NeracaSaldo };
+
 const tabIcons = {
   all: SquaresFour,
   keuangan: ClipboardText,
@@ -81,76 +81,6 @@ function PageIntro() {
   );
 }
 
-function Hero() {
-  return (
-    <Card
-      withBorder
-      radius="lg"
-      p="lg"
-      style={{
-        background:
-          'linear-gradient(135deg, var(--mantine-color-primary-0) 0%, var(--mantine-color-secondary-0) 55%, white 100%)',
-      }}
-    >
-      <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
-        <Stack gap="sm" align="flex-start" justify="center">
-          <Badge
-            size="sm"
-            radius="sm"
-            color="primary.9"
-            leftSection={<CheckCircle size={12} />}
-            style={{ letterSpacing: 0.5 }}
-          >
-            Sistem laporan keuangan terpadu
-          </Badge>
-          <Title order={1} fz={{ base: 26, md: 34 }} lh={1.2} c="slate.9">
-            Laporan Akurat & Real-Time untuk Keputusan Bisnis Cepat
-          </Title>
-          <Text fz="xs" c="slate.7" maw={620}>
-            Dirancang mengikuti Standar Akuntansi Keuangan (SAK) Indonesia. Dapatkan visibilitas
-            penuh atas neraca, arus kas, laba rugi, serta jejak audit mutasi debit-kredit di Buku
-            Besar.
-          </Text>
-          <Group gap="sm" mt="xs">
-            <Button size="sm" radius="md" leftSection={<Notebook size={16} />}>
-              Buka Buku Besar
-            </Button>
-            <Button size="sm" radius="md" variant="default" bg="white">
-              Lihat Laporan Finansial
-            </Button>
-          </Group>
-        </Stack>
-
-        <SimpleGrid cols={2} spacing="sm" verticalSpacing="sm">
-          {heroStats.map((s) => {
-            const Icon = statIcons[s.icon];
-            return (
-              <Card key={s.label} withBorder radius="md" p="md" bg="white">
-                <ThemeIcon
-                  variant="light"
-                  bg="secondary.0"
-                  c="secondary.7"
-                  size={32}
-                  radius="md"
-                  mb="sm"
-                >
-                  <Icon size={18} />
-                </ThemeIcon>
-                <Text fz={11} c="slate.6">
-                  {s.label}
-                </Text>
-                <Text fw={700} fz="lg" c={s.highlight ? 'green.7' : 'slate.9'}>
-                  {s.value}
-                </Text>
-              </Card>
-            );
-          })}
-        </SimpleGrid>
-      </SimpleGrid>
-    </Card>
-  );
-}
-
 function CategoryTab({ item, active, count, onClick }) {
   const Icon = tabIcons[item.icon];
   return (
@@ -179,7 +109,7 @@ function CategoryTab({ item, active, count, onClick }) {
   );
 }
 
-function ReportCard({ report }) {
+function ReportCard({ report, onOpen }) {
   const Icon = reportIcons[report.icon];
   return (
     <Card withBorder radius="lg" padding="lg" bg="white" h="100%">
@@ -199,7 +129,7 @@ function ReportCard({ report }) {
 
       {/* Footer kartu: menempel ke tepi bawah dengan garis pemisah di atasnya */}
       <Card.Section withBorder>
-        <UnstyledButton w="100%" px="lg" py="sm">
+        <UnstyledButton w="100%" px="lg" py="sm" onClick={onOpen}>
           <Group justify="space-between" wrap="nowrap">
             <Text fz="xs" fw={700} c="primary.9">
               Buka Laporan
@@ -213,6 +143,22 @@ function ReportCard({ report }) {
 }
 
 export default function LaporanKeuangan() {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const on = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, []);
+  const Report = READY[hash.replace(/^#laporan\/?/, '').split(/[/?]/)[0]];
+  const openReport = (key) => {
+    if (!READY[key]) return;
+    window.location.hash = `laporan/${key}`;
+    window.scrollTo({ top: 0 });
+  };
+  return Report ? <Report onBack={() => { window.location.hash = 'laporan'; }} /> : <ReportHub onOpen={openReport} />;
+}
+
+function ReportHub({ onOpen }) {
   const [category, setCategory] = useState('all');
   const [query, setQuery] = useState('');
 
@@ -239,7 +185,6 @@ export default function LaporanKeuangan() {
   return (
     <Stack gap="lg" p="lg" maw={1440} mx="auto">
       <PageIntro />
-      <Hero />
 
       <Card withBorder radius="lg" p="lg" bg="white">
         <Group justify="space-between" mb="md" gap="sm">
@@ -268,7 +213,7 @@ export default function LaporanKeuangan() {
         {visible.length ? (
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
             {visible.map((r) => (
-              <ReportCard key={r.key} report={r} />
+              <ReportCard key={r.key} report={r} onOpen={() => onOpen(r.key)} />
             ))}
           </SimpleGrid>
         ) : (

@@ -525,7 +525,7 @@ export default function ProductForm({
             <Grid.Col span={12}>
               <Select
                 label="Akun pembelian"
-                description="Akun beban / biaya yang didebit saat tagihan vendor dicatat"
+                description="Akun beban, atau aset tetap untuk peralatan, yang didebit saat barang diterima"
                 withAsterisk
                 radius="md"
                 searchable

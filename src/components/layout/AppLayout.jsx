@@ -5,12 +5,13 @@ import {
   Box,
   Group,
   Menu,
+  Overlay,
   Select,
   Text,
   UnstyledButton,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
-import { Bell, CalendarBlank, CaretDown, Plus, Scales } from '@/components/Icon.jsx';
+import { useDisclosure, useMediaQuery } from '@mantine/hooks';
+import { Bell, CalendarBlank, CaretDown, Plus, Scales, SidebarSimple } from '@/components/Icon.jsx';
 import Sidebar from './Sidebar.jsx';
 import { FOOTER_HEIGHT, HEADER_HEIGHT } from './constants.js';
 import { useData } from '@/lib/store.jsx';
@@ -42,12 +43,20 @@ function RoleSwitch() {
 
 export default function AppLayout({ title, section, activeKey, onNavigate, children }) {
   const [collapsed, { toggle }] = useDisclosure(false);
+  // Di layar sempit sidebar jadi laci: tertutup secara bawaan, dibuka lewat tombol di header,
+  // dan menutup sendiri setelah menu dipilih atau area di luarnya disentuh.
+  const [mobileOpen, mobile] = useDisclosure(false);
+  const isMobile = useMediaQuery('(max-width: 47.99em)');
+  const navigate = (...args) => {
+    mobile.close();
+    onNavigate?.(...args);
+  };
 
   return (
     <AppShell
       layout="alt"
       header={{ height: HEADER_HEIGHT }}
-      navbar={{ width: collapsed ? 64 : 248, breakpoint: 'sm', collapsed: { mobile: true } }}
+      navbar={{ width: { base: 280, sm: collapsed ? 64 : 248 }, breakpoint: 'sm', collapsed: { mobile: !mobileOpen } }}
       footer={{ height: FOOTER_HEIGHT }}
       padding={0}
       bg="slate.0"
@@ -55,6 +64,16 @@ export default function AppLayout({ title, section, activeKey, onNavigate, child
       <AppShell.Header withBorder bg="white">
         <Group h="100%" px="lg" justify="space-between" wrap="nowrap">
           <Group gap="sm" wrap="nowrap">
+            <ActionIcon
+              hiddenFrom="sm"
+              size="lg"
+              radius="md"
+              variant="default"
+              aria-label="Buka menu"
+              onClick={mobile.open}
+            >
+              <SidebarSimple size={18} />
+            </ActionIcon>
             <Box>
               <Text
                 fz={10}
@@ -129,12 +148,16 @@ export default function AppLayout({ title, section, activeKey, onNavigate, child
 
       <AppShell.Navbar withBorder>
         <Sidebar
-          collapsed={collapsed}
-          onToggle={toggle}
+          collapsed={isMobile ? false : collapsed}
+          onToggle={isMobile ? mobile.close : toggle}
           activeKey={activeKey}
-          onNavigate={onNavigate}
+          onNavigate={navigate}
         />
       </AppShell.Navbar>
+
+      {mobileOpen && (
+        <Overlay hiddenFrom="sm" fixed zIndex={99} backgroundOpacity={0.3} onClick={mobile.close} />
+      )}
 
       <AppShell.Main>{children}</AppShell.Main>
 

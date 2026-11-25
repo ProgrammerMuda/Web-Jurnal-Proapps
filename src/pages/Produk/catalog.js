@@ -170,22 +170,22 @@ const raw = [
   {
     id: 'printer-laser', name: 'Printer laser A4', description: 'Printer laser monokrom A4',
     categoryId: 'peralatan', kind: 'barang', purchasable: true, buyPrice: 4200000, buyUnitId: 'unit',
-    buyTax: 'ppn', buyAccount: '6-50002',
+    buyTax: 'ppn', buyAccount: '1-20004',
   },
   {
     id: 'meja-lipat', name: 'Meja lipat 120x60', description: 'Meja lipat rangka besi, 120x60 cm',
     categoryId: 'peralatan', kind: 'barang', purchasable: true, buyPrice: 650000, buyUnitId: 'pcs',
-    buyTax: 'ppn', buyAccount: '6-50002',
+    buyTax: 'ppn', buyAccount: '1-20004',
   },
   {
     id: 'kursi-kantor', name: 'Kursi kantor ergonomis', description: 'Sandaran jaring, roda, ketinggian bisa diatur',
     categoryId: 'peralatan', kind: 'barang', purchasable: true, buyPrice: 1450000, buyUnitId: 'unit',
-    buyTax: 'ppn', buyAccount: '6-50002',
+    buyTax: 'ppn', buyAccount: '1-20004',
   },
   {
     id: 'lemari-arsip', name: 'Lemari arsip besi 4 laci', description: 'Lemari arsip besi 4 laci berkunci',
     categoryId: 'peralatan', kind: 'barang', purchasable: true, buyPrice: 2500000, buyUnitId: 'unit',
-    buyTax: 'ppn', buyAccount: '6-50002',
+    buyTax: 'ppn', buyAccount: '1-20004',
   },
   {
     id: 'pipa-pvc', name: 'Pipa PVC', description: 'Pipa PVC saluran air, panjang 4 m',

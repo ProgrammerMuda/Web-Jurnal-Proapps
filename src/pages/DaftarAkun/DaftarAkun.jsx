@@ -18,9 +18,14 @@ import {
   TextInput,
   ThemeIcon,
   Title,
-  UnstyledButton,
 } from '@mantine/core';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { AccountLink } from '@/pages/LaporanKeuangan/StatementParts.jsx';
+import { useData } from '@/lib/store.jsx';
+import { accountBalances, buildLedger } from '@/pages/LaporanKeuangan/ledger.js';
+import { TODAY } from '@/pages/Penjualan/data.js';
+import AccountDetail from './AccountDetail.jsx';
+import JournalDetail from './JournalDetail.jsx';
 import {
   ArrowsClockwise,
   Bank,
@@ -44,7 +49,12 @@ const money = new Intl.NumberFormat('id-ID', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
-const formatBalance = (n) => (n < 0 ? `(Rp ${money.format(-n)})` : `Rp ${money.format(n)}`);
+// Dibulatkan ke sen dan -0 dijadikan 0, supaya sisa pembulatan tidak tampil sebagai "Rp -0,00".
+const toCents = (n) => Math.round((n ?? 0) * 100) / 100 || 0;
+const formatBalance = (n) => {
+  const v = toCents(n);
+  return v < 0 ? `(Rp ${money.format(-v)})` : `Rp ${money.format(v)}`;
+};
 
 const childrenOf = accounts.reduce((map, a) => {
   if (a.parent) (map[a.parent] ||= []).push(a);
@@ -163,7 +173,7 @@ function StatCard({ stat }) {
   );
 }
 
-function AccountRow({ account, depth, expandable, expanded, onToggle, selected, onSelect }) {
+function AccountRow({ account, balance, depth, expandable, expanded, onToggle, selected, onSelect }) {
   const isSub = depth > 0;
   return (
     <Table.Tr bg={expanded ? 'slate.0' : undefined}>
@@ -213,7 +223,7 @@ function AccountRow({ account, depth, expandable, expanded, onToggle, selected, 
             fw={500}
             leftSection={<LockSimple size={11} />}
           >
-            Lock
+            Terkunci
           </Badge>
         ) : (
           <Badge
@@ -225,16 +235,14 @@ function AccountRow({ account, depth, expandable, expanded, onToggle, selected, 
             fw={500}
             leftSection={<LockSimpleOpen size={11} />}
           >
-            Open
+            Terbuka
           </Badge>
         )}
       </Table.Td>
       <Table.Td>
-        <UnstyledButton pl={isSub ? 'sm' : 0}>
-          <Text fz="sm" fw={500} c="primary.9" tt="capitalize">
-            {account.name}
-          </Text>
-        </UnstyledButton>
+        <Box pl={isSub ? 'sm' : 0} tt="capitalize">
+          <AccountLink code={account.code}>{account.name}</AccountLink>
+        </Box>
       </Table.Td>
       <Table.Td>
         <Text fz="sm" c="slate.8">
@@ -264,15 +272,45 @@ function AccountRow({ account, depth, expandable, expanded, onToggle, selected, 
         </Text>
       </Table.Td>
       <Table.Td ta="right">
-        <Text fz="sm" fw={700} c="slate.9" ff="monospace" style={{ whiteSpace: 'nowrap' }}>
-          {formatBalance(account.balance)}
+        <Text fz="sm" fw={700} c={toCents(balance) < 0 ? 'red.8' : 'slate.9'} ff="monospace" style={{ whiteSpace: 'nowrap' }}>
+          {formatBalance(balance)}
         </Text>
       </Table.Td>
     </Table.Tr>
   );
 }
 
+// #daftar-akun → daftar; #daftar-akun/<kode>?from=…&to=… → detail akun (periode opsional).
+function parseHash(hash) {
+  const m = hash.match(/^#daftar-akun\/([^?]+)(?:\?(.*))?$/);
+  if (!m) return null;
+  const params = new URLSearchParams(m[2] ?? '');
+  const from = params.get('from');
+  const to = params.get('to');
+  return { code: decodeURIComponent(m[1]), range: from && to ? [from, to] : null };
+}
+
 export default function DaftarAkun() {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const on = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, []);
+  const journal = hash.match(/^#daftar-akun\/jurnal\/([^?]+)/);
+  if (journal) return <JournalDetail key={hash} id={decodeURIComponent(journal[1])} />;
+  const detail = parseHash(hash);
+  // key: pindah ke akun lain atau periode lain memasang ulang halaman detail dengan filter barunya.
+  return detail ? <AccountDetail key={hash} code={detail.code} initialRange={detail.range} /> : <DaftarAkunList />;
+}
+
+function DaftarAkunList() {
+  const data = useData();
+  // Saldo akhir dihitung dari jurnal per hari ini, sama dengan Neraca Saldo dan detail akun.
+  const balances = useMemo(
+    () => accountBalances(buildLedger(data), TODAY),
+    [data.sales, data.salesReturns, data.pb, data.stockMoves, data.products], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const [tab, setTab] = useState('all');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState(null);
@@ -442,6 +480,7 @@ export default function DaftarAkun() {
                   <AccountRow
                     key={account.code}
                     account={account}
+                    balance={balances[account.code] ?? 0}
                     depth={depth}
                     expandable={expandable}
                     expanded={!!open}

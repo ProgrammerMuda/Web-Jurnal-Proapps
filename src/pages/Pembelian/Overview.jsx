@@ -1,10 +1,25 @@
 // Tab Ringkasan: kartu hutang, pipeline, "Perlu tindakan" per peran, umur hutang.
-import { Badge, Box, Button, Card, Grid, Group, Progress, RingProgress, SimpleGrid, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
+import { useState } from 'react';
+import { Badge, Box, Button, Card, Grid, Group, Pagination, Progress, RingProgress, SegmentedControl, SimpleGrid, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
 import { CheckCircle, ArrowRight, Warning } from '@/components/Icon.jsx';
 import { Callout, RoleChip } from './components.jsx';
 import { actionsFor, aging, daysLate, pipeline, readiness } from './selectors.js';
+
+// Warna baris "Perlu tindakan" per tingkat umur tugas (lihat taskAge di selectors.js).
+const LEVEL = {
+  warn: { bg: 'var(--mantine-color-orange-0)', edge: 'var(--mantine-color-orange-5)', text: 'orange.9', btn: 'orange' },
+  stale: { bg: 'var(--mantine-color-red-0)', edge: 'var(--mantine-color-red-6)', text: 'red.8', btn: 'red' },
+};
+
 import { roleOf, TODAY } from './data.js';
 import { invTotals, rupiah, rupiahShort, sum, formatDate } from './utils.js';
+
+// Kalimat umur tugas dalam hari dan tanggal, mis. "Lewat 43 hari dari batas 22 Sep 2026".
+function ageLine(a) {
+  if (!a.due) return a.waiting > 0 ? `Menunggu ${a.waiting} hari` : null;
+  if (a.late > 0) return `Lewat ${a.late} hari dari batas ${formatDate(a.due)}`;
+  return `Batas ${formatDate(a.due)} · ${a.late === 0 ? 'hari ini' : `${-a.late} hari lagi`}`;
+}
 
 function Stat({ label, value, hint, right }) {
   return (
@@ -31,6 +46,24 @@ export default function Overview({ pb, go, openDialog }) {
   const todo = actionsFor(role, pb);
   // Tugas yang sudah lewat batas wajar: ini yang perlu menonjol di dashboard peran ini.
   const telat = todo.filter((a) => a.late > 0);
+  const berlarut = todo.filter((a) => a.level === 'stale');
+  const mulaiLama = todo.filter((a) => a.level === 'warn');
+  const baru = todo.filter((a) => a.level === 'ok');
+  // Filter dan halaman daftar "Perlu tindakan".
+  const PER_PAGE = 8;
+  const [level, setLevel] = useState('all');
+  const [page, setPage] = useState(1);
+  const shownTodo = level === 'all' ? todo : todo.filter((a) => a.level === level);
+  const totalPages = Math.max(1, Math.ceil(shownTodo.length / PER_PAGE));
+  const current = Math.min(page, totalPages);
+  const start = (current - 1) * PER_PAGE;
+  const pageTodo = shownTodo.slice(start, start + PER_PAGE);
+  const levelTabs = [
+    { value: 'all', label: `Semua (${todo.length})` },
+    { value: 'stale', label: `Berlarut (${berlarut.length})` },
+    { value: 'warn', label: `Lewat batas (${mulaiLama.length})` },
+    { value: 'ok', label: `Baru (${baru.length})` },
+  ];
   const flow = pipeline(pb);
   // Retensi yang masih ditahan setelah termin terakhir: dipantau di sini selama masa
   // pemeliharaan, supaya tidak hanya terlihat kalau orang membuka PO-nya.
@@ -87,21 +120,16 @@ export default function Overview({ pb, go, openDialog }) {
             <Group justify="space-between" mb="xs">
               <Box>
                 <Text fw={700} fz="sm" c="slate.9">Perlu tindakan</Text>
-                <Text fz="xs" c="slate.6">Yang sudah lewat batas wajar ditaruh paling atas.</Text>
+                <Text fz="xs" c="slate.6">Oranye: lewat batas wajar. Merah: dibiarkan berlarut. Yang paling lama di atas.</Text>
               </Box>
               <Group gap="xs" wrap="nowrap">
-                {telat.length > 0 && (
-                  <Badge size="sm" radius="sm" variant="light" color="red" fw={700} tt="none" leftSection={<Warning size={12} />}>
-                    {telat.length} terlambat
-                  </Badge>
-                )}
                 <RoleChip role={role} />
               </Group>
             </Group>
             {telat.length > 0 && (
               <Box mb="sm">
-                <Callout tone="warn" title={`${telat.length} tindakan melewati batas wajar`}>
-                  Paling lama: {telat[0].title} · {telat[0].sub} — terlambat {telat[0].late} hari.
+                <Callout tone={berlarut.length ? 'stop' : 'warn'} title={`${telat.length} tindakan lewat batas waktu`}>
+                  Paling lama: {telat[0].title} untuk <b>{telat[0].sub.split(' · ')[0]}</b>, terlambat {telat[0].late} hari sejak {formatDate(telat[0].due)}.
                 </Callout>
               </Box>
             )}
@@ -112,28 +140,60 @@ export default function Overview({ pb, go, openDialog }) {
                 <Text fz="xs" c="slate.6">Tidak ada dokumen yang menunggu tindakan {roleOf(role).label}.</Text>
               </Stack>
             ) : (
-              <Stack gap={0}>
-                {todo.slice(0, 8).map((a) => (
-                  <Group key={a.id} justify="space-between" wrap="nowrap" py="sm" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
-                    <Box style={{ minWidth: 0 }}>
-                      <Group gap={6} wrap="nowrap">
-                        {a.late > 0 && <Box w={4} h={16} bg="red.6" style={{ borderRadius: 2, flexShrink: 0 }} />}
+              <Stack gap={4}>
+                <SegmentedControl
+                  size="xs"
+                  radius="md"
+                  mb="xs"
+                  fullWidth
+                  data={levelTabs}
+                  value={level}
+                  onChange={(v) => { setLevel(v); setPage(1); }}
+                  aria-label="Saring menurut umur tugas"
+                />
+                {pageTodo.length === 0 && (
+                  <Text fz="xs" c="slate.6" ta="center" py="lg">
+                    Tidak ada tindakan {levelTabs.find((t) => t.value === level)?.label.replace(/ \(\d+\)$/, '').toLowerCase()}.
+                  </Text>
+                )}
+                {pageTodo.map((a) => {
+                  const lv = LEVEL[a.level];
+                  const umur = ageLine(a);
+                  return (
+                    <Group
+                      key={a.id}
+                      justify="space-between"
+                      wrap="nowrap"
+                      py="sm"
+                      px={lv ? 'sm' : 0}
+                      style={
+                        lv
+                          ? { background: lv.bg, borderLeft: `3px solid ${lv.edge}`, borderRadius: 'var(--mantine-radius-md)' }
+                          : { borderBottom: '1px solid var(--mantine-color-gray-2)' }
+                      }
+                    >
+                      <Box style={{ minWidth: 0 }}>
                         <Text fz="sm" fw={600} c="slate.9" truncate>{a.title}</Text>
-                      </Group>
-                      <Text fz={11} c="slate.6" truncate>{a.sub}</Text>
-                      {/* Umur tugas: berapa lama menggantung, dan berapa hari lewat batas. */}
-                      {a.late > 0 ? (
-                        <Text fz={11} fw={600} c="red.7">
-                          Terlambat {a.late} hari{a.waiting != null ? ` · menunggu ${a.waiting} hari` : ''}
-                        </Text>
-                      ) : (
-                        a.waiting != null && a.waiting > 0 && <Text fz={11} c="slate.5">Menunggu {a.waiting} hari</Text>
-                      )}
-                    </Box>
-                    <Button size="compact-xs" radius="md" variant={a.late > 0 ? 'filled' : 'light'} color={a.late > 0 ? 'red' : undefined} onClick={() => { go(a.to); if (a.dialog) openDialog?.(a.dialog); }}>{a.cta}</Button>
+                        <Text fz={11} fw={600} c="primary.7" truncate>{a.sub}</Text>
+                        {/* Umur tugas: berapa lama tidak dikerjakan, dan seberapa jauh lewat batas. */}
+                        {umur && (
+                          <Text fz={11} fw={lv ? 700 : 400} c={lv ? lv.text : 'slate.5'}>
+                            {umur}
+                          </Text>
+                        )}
+                      </Box>
+                      <Button size="compact-xs" radius="md" variant={lv ? 'filled' : 'light'} color={lv?.btn} onClick={() => { go(a.to); if (a.dialog) openDialog?.(a.dialog); }}>Buka</Button>
+                    </Group>
+                  );
+                })}
+                {shownTodo.length > PER_PAGE && (
+                  <Group justify="space-between" gap="sm" pt="sm">
+                    <Text fz="xs" c="slate.7">
+                      Menampilkan {start + 1}–{start + pageTodo.length} dari {shownTodo.length} tindakan
+                    </Text>
+                    <Pagination size="sm" radius="md" total={totalPages} value={current} onChange={setPage} />
                   </Group>
-                ))}
-                {todo.length > 8 && <Text fz="xs" c="slate.6" pt="sm">+{todo.length - 8} tindakan lain</Text>}
+                )}
               </Stack>
             )}
           </Card>

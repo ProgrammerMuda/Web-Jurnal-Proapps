@@ -82,18 +82,25 @@ export function wrap(str, width, size) {
   return rows;
 }
 
-// Rangkai isi halaman menjadi berkas PDF utuh.
+// Rangkai isi halaman menjadi berkas PDF utuh. `content` boleh satu string (satu halaman)
+// atau array string (satu string per halaman).
 export function buildPdf(content, { title = 'Dokumen', page = A4 } = {}) {
+  const pages = Array.isArray(content) ? content : [content];
+  const n = pages.length;
+  // Urutan objek: 1 katalog, 2 daftar halaman, 3–5 huruf, 6 info, lalu pasangan halaman + isinya.
+  const pageId = (i) => 7 + i * 2;
   const objs = [
     '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.w} ${page.h}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R /F3 7 0 R >> >> >>`,
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    `<< /Type /Pages /Kids [${pages.map((_, i) => `${pageId(i)} 0 R`).join(' ')}] /Count ${n} >>`,
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding >>',
     `<< /Title (${esc(title)}) /Producer (Dashboard Jurnal) >>`,
   ];
+  pages.forEach((c, i) => {
+    objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.w} ${page.h}] /Contents ${pageId(i) + 1} 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> >>`);
+    objs.push(`<< /Length ${c.length} >>\nstream\n${c}\nendstream`);
+  });
   let pdf = '%PDF-1.4\n';
   const offsets = [];
   objs.forEach((o, i) => {
@@ -103,7 +110,7 @@ export function buildPdf(content, { title = 'Dokumen', page = A4 } = {}) {
   const xref = pdf.length;
   pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
   offsets.forEach((o) => { pdf += `${String(o).padStart(10, '0')} 00000 n \n`; });
-  pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R /Info ${objs.length} 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R /Info 6 0 R >>\nstartxref\n${xref}\n%%EOF`;
   return new Blob([pdf], { type: 'application/pdf' });
 }
 
