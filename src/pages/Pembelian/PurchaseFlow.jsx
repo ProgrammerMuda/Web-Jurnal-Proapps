@@ -213,7 +213,7 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
   const steps = [
     { key: 'fppbj', done: !!fppbj && (pos.length > 0 || fppbj.status === 'selesai'), skipped: !fppbj },
     { key: 'proc', done: !!fppbj && (proc?.status === 'disetujui' || pos.length > 0), skipped: !fppbj },
-    { key: 'po', done: pos.length > 0 && pos.every((p) => p.sent) },
+    { key: 'po', done: pos.length > 0 },
     showDp && { key: 'dp', done: dp.state === 'lunas' || dp.state === 'dibatalkan' },
     { key: 'receipt', done: receipts.length > 0 },
     { key: 'invoice', done: billInvoices.length > 0 },

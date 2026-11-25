@@ -151,7 +151,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
               <Table.Td ta="right">
                 <RowMenu label={p.number} items={[
                   { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'po', id: p.id }) },
-                  canCreate(role, receiptDoc(poAllJasa(p))) && ['draft', 'dikirim', 'sebagian'].includes(st) && { label: poAllJasa(p) ? 'Catat BAPP' : 'Catat Penerimaan', icon: Truck, onClick: () => openDialog({ type: 'receipt', poId: p.id }) },
+                  canCreate(role, receiptDoc(poAllJasa(p))) && ['menunggu_dp', 'menunggu', 'sebagian'].includes(st) && { label: poAllJasa(p) ? 'Catat BAPP' : 'Catat Penerimaan', icon: Truck, onClick: () => openDialog({ type: 'receipt', poId: p.id }) },
                 ]} />
               </Table.Td>
             </Table.Tr>

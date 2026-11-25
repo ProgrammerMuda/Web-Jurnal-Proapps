@@ -109,9 +109,7 @@ export default function Pembelian() {
     receipt: {
       title: 'Penerimaan · pilih PO',
       icon: Truck,
-      // Pesanan yang belum dikirim ikut ditawarkan — penerimaan tidak menunggu dokumennya
-      // lepas ke vendor — tapi keadaan itu disebut, supaya pilihannya diambil sadar.
-      rows: rd.receipt.map((p) => ({ id: p.id, number: p.number, vendor: vendorName(p.vendorId), value: rupiah(poTotal(p)), hint: p.sent ? undefined : 'Belum dikirim ke vendor', remain: `Sisa ${p.items.reduce((n, i) => n + remainingQty(p, i.id, pb.receipts), 0)} belum diterima` })),
+      rows: rd.receipt.map((p) => ({ id: p.id, number: p.number, vendor: vendorName(p.vendorId), value: rupiah(poTotal(p)), remain: `Sisa ${p.items.reduce((n, i) => n + remainingQty(p, i.id, pb.receipts), 0)} belum diterima` })),
       emptyTitle: 'Belum ada PO yang bisa diterima',
       emptyText: 'Penerimaan dicatat dari pesanan yang belum diterima penuh.',
       emptyActions: [<Button key="b" size="xs" radius="md" variant="default" onClick={() => { close(); go({ name: 'tab', tab: 'orders' }); }}>Lihat PO</Button>, <Button key="c" size="xs" radius="md" onClick={() => { close(); go({ name: 'fppbj-new' }); }}>Buat permintaan</Button>],

@@ -48,6 +48,7 @@ import {
   PR_STATUS,
   receivedQty,
   receiptsOf,
+  receiptLive,
   remainingQty,
   rupiah,
   poHasReceipt,
@@ -109,13 +110,12 @@ export function PrActions({ pr, pb, openDialog }) {
 export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const role = pb.role;
   const { warehouses, companySettings } = useData();
-  // Gudang tujuan masih boleh diubah selama pesanan belum dikirim ke vendor —
-  // sesudah terkirim, alamatnya sudah tercetak di dokumen yang dipegang vendor.
   const gudang = warehouseById(warehouses, po.warehouseId);
-  // Gudang tujuan boleh diubah selama pesanan belum dikirim ke vendor. Pesanan lama
-  // yang gudangnya masih kosong tetap bisa dilengkapi, supaya penerimaan barang dan
-  // pemeriksaan "PO belum diterima ke gudang ini" punya lokasi yang jelas.
-  const canSetWarehouse = canCreate(role, 'po') && (!po.sent || !po.warehouseId);
+  // Gudang tujuan boleh diubah selama belum dikirim ke vendor (sesudahnya alamatnya sudah
+  // tercetak di dokumen vendor) dan belum ada barang yang diterima ke gudang itu. Pesanan
+  // lama yang gudangnya masih kosong tetap bisa dilengkapi.
+  const anyReceived = pb.receipts.some((r) => r.poId === po.id && receiptLive(r));
+  const canSetWarehouse = canCreate(role, 'po') && ((!po.sent && !anyReceived) || !po.warehouseId);
   const label = poDocLabel(po);
   const isJasa = poAllJasa(po);
   // Spesifikasi 2.1: Gudang melihat pesanan dan tanggal kirim, tanpa harga.
@@ -396,7 +396,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                     ],
                   ['Dari permintaan', fppbj ? <DocNumber onClick={() => go({ name: 'fppbj', id: fppbj.id })}>{fppbj.number}</DocNumber> : '—'],
                   ['Termin bayar', <TermBreakdown key="term" po={po} noPrice={noPrice} />],
-                  // Selalu ditampilkan: belum terkirim justru keadaan yang perlu terlihat.
+                  // Mengirim ke vendor opsional: belum terkirim hanya keterangan, bukan peringatan.
                   [
                     'Dikirim ke vendor',
                     po.sent ? (
@@ -413,7 +413,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                         )}
                       </>
                     ) : (
-                      <Text fz="sm" fw={700} c="orange.8" component="span">Belum dikirim</Text>
+                      <Text fz="sm" c="slate.6" component="span">Belum dikirim</Text>
                     ),
                   ],
                 ].map(([k, v], i, all) => (

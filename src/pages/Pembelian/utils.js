@@ -222,7 +222,7 @@ export const invoicedQtyOfPo = (poId, itemId, invoices) =>
 // yang memang tidak melewati gudang: dibayar di muka (CBD), jasa yang ditagih per termin
 // tanpa berita acara, atau pesanan lama yang penerimaannya tidak pernah dicatat.
 export const uninvoicedPoLines = (po, invoices) =>
-  !po?.sent || poHasReceipt(po)
+  !po || poHasReceipt(po)
     ? []
     : po.items
       .map((it) => ({ ...it, open: it.qty - invoicedQtyOfPo(po.id, it.id, invoices) }))
@@ -550,22 +550,39 @@ export const returnedQty = (invId, itemId, returns) =>
 export function poStatus(po, { receipts, invoices, prs, pos, returns }) {
   // PO yang dibatalkan atau ditutup berhenti di situ; sisa qty-nya tidak lagi ditunggu.
   if (po.closedAs) return po.closedAs;
-  const full = po.items.every((i) => remainingQty(po, i.id, receipts) === 0);
-  const any = po.items.some((i) => receivedQty(po, i.id, receipts) > 0);
-  // Penerimaan boleh dicatat sebelum dokumennya dikirim ke vendor — barang sering datang
-  // duluan dengan surat jalan, pekerjaan sering jalan atas dasar kesepakatan lisan. Jadi
-  // "draft" hanya berlaku selama belum dikirim DAN belum ada yang diterima; begitu ada
-  // penerimaan, statusnya ikut penerimaannya supaya tidak terbaca seperti pesanan mati.
-  if (!any) return po.sent ? 'dikirim' : 'draft';
-  if (!full) return 'sebagian';
+  // PO/SPK berlaku sejak dibuat (dari pengadaan yang sudah disetujui). Mengirim dokumennya
+  // ke vendor opsional, jadi bukan bagian dari status: tidak ada lagi "draft"/"dikirim".
   const invs = liveInvoices(invoices).filter((i) => i.poId === po.id);
-  const allInvoiced = receiptsOf(po, receipts).filter(receiptLive).every((r) => uninvoicedLines(r, invoices).length === 0);
+  // Pesanan ber-DP yang uang mukanya belum beres (faktur DP belum dicatat / belum lunas, dan
+  // tidak dibatalkan resmi): vendor biasanya baru bergerak setelah DP dibayar, jadi yang
+  // ditunggu adalah pembayaran kita. Begitu ada penerimaan/tagihan, status ikut itu.
+  const dpPending = dpBlocks(dpState(po, { invoices, prs, pos, returns }));
+  let allInvoiced;
+  if (poHasReceipt(po)) {
+    const full = po.items.every((i) => remainingQty(po, i.id, receipts) === 0);
+    const any = po.items.some((i) => receivedQty(po, i.id, receipts) > 0);
+    if (!any) return dpPending ? 'menunggu_dp' : 'menunggu';
+    if (!full) return 'sebagian';
+    // FPB/BAPP yang masih menunggu approval atau ditolak belum bisa difaktur, jadi belum
+    // "beres difaktur": tanpa syarat konfirmasi, pesanan seperti itu terbaca Selesai.
+    allInvoiced = receiptsOf(po, receipts)
+      .filter(receiptLive)
+      .every((r) => receiptConfirmed(r) && uninvoicedLines(r, invoices).length === 0);
+  } else {
+    // Pesanan tanpa FPB/BAPP (CBD, jasa per termin tanpa berita acara) tidak pernah punya
+    // penerimaan: yang ditunggu adalah tagihannya, ditagih langsung dari PO/SPK.
+    allInvoiced = po.items.every((i) => invoicedQtyOfPo(po.id, i.id, invoices) >= i.qty);
+    const anyBilled = po.items.some((i) => invoicedQtyOfPo(po.id, i.id, invoices) > 0);
+    if (!anyBilled && dpPending) return 'menunggu_dp';
+    if (!allInvoiced) return 'menunggu_tagihan';
+  }
   if (allInvoiced && invs.every((i) => invTotals(i, { pos, prs, returns, invoices }).balance <= 0)) {
     // Termin sudah lunas tapi retensinya masih ditahan: pesanan belum tuntas, menunggu masa
     // pemeliharaan selesai dan retensinya dilepas.
     return (poRetention(po, invoices)?.balance ?? 0) > 0 ? 'pemeliharaan' : 'selesai';
   }
-  return 'diterima';
+  // Barang/jasa beres (atau, tanpa serah terima, semua sudah ditagih): tinggal faktur & bayar.
+  return poHasReceipt(po) ? 'diterima' : 'ditagih';
 }
 
 // Langkah stepper permintaan (indeks aktif).
@@ -578,8 +595,9 @@ export function fppbjStep(f, ctx) {
   if (!pos.length) return f.procurement?.status === 'disetujui' ? 2 : 1;
   const st = pos.map((p) => poStatus(p, ctx));
   if (st.every((s) => s === 'selesai')) return 6;
-  if (st.includes('draft')) return 2;
-  if (st.some((s) => ['dikirim', 'sebagian'].includes(s))) return 3;
+  if (st.includes('menunggu_dp')) return 2;
+  if (st.some((s) => ['menunggu', 'sebagian'].includes(s))) return 3;
+  if (st.includes('menunggu_tagihan')) return 4;
   const allInv = pos.every((p) =>
     receiptsOf(p, ctx.receipts).filter(receiptLive).every((r) => uninvoicedLines(r, ctx.invoices).length === 0),
   );
@@ -1088,10 +1106,12 @@ export const FPPBJ_STATUS = {
   selesai: { label: 'Selesai', color: 'green' },
 };
 export const PO_STATUS = {
-  draft: { label: 'Draf', color: 'gray' },
-  dikirim: { label: 'Dikirim ke vendor', color: 'blue' }, // menunggu barang dari vendor
+  menunggu_dp: { label: 'Menunggu uang muka', color: 'orange' }, // DP belum dicatat/dibayar, belum ada penerimaan/tagihan
+  menunggu: { label: 'Menunggu penerimaan', color: 'blue' }, // PO berlaku, belum ada yang diterima
+  menunggu_tagihan: { label: 'Menunggu tagihan', color: 'blue' }, // tanpa FPB/BAPP: ditagih langsung dari PO/SPK
   sebagian: { label: 'Diterima sebagian', color: 'blue' },
   diterima: { label: 'Diterima penuh', color: 'cyan' }, // barang beres, tinggal faktur & bayar
+  ditagih: { label: 'Ditagih penuh', color: 'cyan' }, // tanpa FPB/BAPP: semua sudah ditagih, tinggal bayar
   pemeliharaan: { label: 'Masa pemeliharaan', color: 'violet' }, // termin lunas, retensi masih ditahan
   selesai: { label: 'Selesai', color: 'green' },
   dibatalkan: { label: 'Dibatalkan', color: 'slate' },

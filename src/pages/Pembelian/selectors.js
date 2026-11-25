@@ -48,7 +48,7 @@ export function readiness(pb) {
     // faktur pelunasannya ditahan sampai DP lunas atau dibatalkan resmi.
     invoice: pb.receipts.filter((r) => uninvoicedLines(r, pb.invoices).length > 0 && !dpBlocks(dpState(pb.posById[r.poId], c))),
     // Pesanan tanpa FPB/BAPP (CBD, jasa per termin tanpa berita acara) ditagih langsung dari
-    // PO/SPK-nya begitu terkirim; uang muka yang belum beres tetap menahannya.
+    // PO/SPK-nya (mengirim ke vendor opsional); uang muka yang belum beres tetap menahannya.
     invoicePo: livePos.filter((p) => uninvoicedPoLines(p, pb.invoices).length > 0 && !dpBlocks(dpState(p, c))),
     // Pesanan beruang muka yang faktur uang mukanya belum dicatat (PR DP lama tanpa faktur
     // tetap dihitung sudah diajukan).
@@ -85,7 +85,6 @@ export const SLA = {
   quotes: 14, // jalur dipilih -> penawaran lengkap dan pengadaan diajukan
   approve: 7, // pengadaan diajukan -> disetujui approver
   po: 3, // pengadaan disetujui -> PO/SPK dibuat
-  send: 3, // PO dibuat -> dikirim ke vendor
   receipt: 14, // PO/SPK dikirim -> barang/jasa diterima (dipakai kalau PO tidak punya perkiraan tiba)
   bapp: 5, // BAPP dicatat -> disetujui Building Manager
   invoice: 7, // penerimaan dikonfirmasi -> faktur dicatat
@@ -214,7 +213,6 @@ export function actionsFor(role, pb) {
       .filter((f) => f.status === 'dalam_pengadaan' && ['draf', 'ditolak', undefined].includes(f.procurement?.status))
       .forEach((f) => add({ id: `p-${f.id}`, title: f.procurement?.status === 'ditolak' ? 'Revisi pengadaan (ditolak)' : 'Lengkapi pengadaan', sub: f.number, cta: 'Buka', to: { name: 'fppbj', id: f.id }, since: f.routedAt ?? f.verifiedAt ?? f.date, limit: SLA.quotes }));
     r.po.forEach((f) => add({ id: `g-${f.id}`, title: 'Buat PO', sub: f.number, cta: 'Buat', to: { name: 'fppbj', id: f.id }, since: f.procurement?.submittedAt ?? f.routedAt ?? f.date, limit: SLA.po }));
-    pb.pos.filter((p) => !p.sent).forEach((p) => add({ id: `s-${p.id}`, title: 'Kirim ke vendor', sub: `${p.number}`, cta: 'Buka', to: { name: 'po', id: p.id }, since: p.date, limit: SLA.send }));
     r.prDp
       .filter((p) => p.dpWaiver?.status !== 'diajukan' && p.dpWaiver?.status !== 'disetujui')
       .forEach((p) => add(hotTask({ id: `d-${p.id}`, title: 'Catat faktur uang muka', sub: `${p.number}`, cta: 'Buka', to: { name: 'po', id: p.id }, since: p.sentAt ?? p.date, limit: SLA.prDp }, p.id)));

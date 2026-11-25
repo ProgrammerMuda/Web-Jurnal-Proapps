@@ -70,13 +70,12 @@ export function poPdfBlob(po, { vendor, fppbj, warehouse } = {}) {
   let c = '';
 
   // --- kepala surat ---
-  // Lencana hanya muncul selama dokumen masih draf. Dokumen yang sudah dikirim tidak
-  // perlu ditandai, tapi draf wajib terlihat berbeda supaya tidak terkirim sebagai final.
+  // PO/SPK berlaku sejak dibuat; mengirimnya ke vendor opsional, jadi tidak ada lencana draf.
   const kepala = docHeader({
     title: label === 'SPK' ? 'SURAT PERINTAH KERJA' : 'PURCHASE ORDER',
     number: po.number,
     subtitle: `NPWP ${COMPANY.npwp} - Telp ${COMPANY.phone}`,
-    status: po.sent ? null : { label: 'Draf - belum dikirim', bg: C.warnBg, ink: C.warnInk },
+    status: null,
   });
   c += kepala.c;
   let y = kepala.y - 18;
