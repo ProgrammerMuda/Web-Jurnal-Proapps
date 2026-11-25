@@ -449,7 +449,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   // Vendor bisa tertagih dua kali untuk barang yang sama.
   const readyPos = pb.pos.filter((p) => uninvoicedPoLines(p, pb.invoices).length > 0);
   // Pesanan yang menunggu faktur uang muka: masih berjalan (tidak harus sudah dikirim),
-  // terminnya ber-DP, belum ada faktur DP-nya, dan tidak sedang diajukan tagih tanpa uang muka.
+  // terminnya ber-DP, belum ada faktur DP-nya, dan tidak sedang diajukan pembatalan uang muka.
   const readyDpPos = pb.pos.filter((p) => !p.closedAs
     && dpState(p, pb.calc)?.state === 'belum_faktur'
     && p.dpWaiver?.status !== 'diajukan');

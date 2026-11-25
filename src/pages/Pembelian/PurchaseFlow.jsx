@@ -255,7 +255,7 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
           meta: dpAmount > 0 ? `${rupiah(dpAmount)} · dibayar ${sebelum}` : `Dibayar ${sebelum}`,
           right: <Pill {...DP_PILL[dp.state]} />,
         }, dp.state === 'dibatalkan' ? (
-          <Empty>Ditagih penuh tanpa uang muka (disetujui Chief Finance)</Empty>
+          <Empty>Uang muka dibatalkan (disetujui Chief Finance), ditagih penuh di akhir</Empty>
         ) : (
           <SubGroup>
             {!legacyDp && (

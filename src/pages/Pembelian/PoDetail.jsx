@@ -293,7 +293,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                     {canWaive && (
                       <>
                         <Menu.Label>Uang muka</Menu.Label>
-                        <Menu.Item leftSection={<Prohibit size={16} />} onClick={() => setWaiverOpen(true)}>Tagih tanpa uang muka</Menu.Item>
+                        <Menu.Item leftSection={<Prohibit size={16} />} onClick={() => setWaiverOpen(true)}>Batalkan uang muka</Menu.Item>
                       </>
                     )}
                     {canClose && (
@@ -322,8 +322,8 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
       <ReasonModal
         opened={waiverOpen}
         onClose={() => setWaiverOpen(false)}
-        title="Tagih tanpa uang muka"
-        label="Alasan uang muka tidak ditagih (mis. vendor sudah kirim dan menagih penuh)"
+        title="Batalkan uang muka"
+        label="Alasan uang muka dibatalkan (mis. vendor menagih penuh di akhir). Perlu persetujuan Chief Finance."
         confirmLabel="Ajukan ke Chief Finance"
         onConfirm={askWaiver}
       />
@@ -692,18 +692,19 @@ function DpStatusStrip({ dp, po, go }) {
   const tone = { belum_faktur: 'wait', belum_bayar: 'wait', lunas: 'ok', dibatalkan: 'info' }[dp.state];
   const nominal = rupiah(poDpAmount(po));
   const pct = advancePct(po.term);
-  const judul = `${pct >= 100 ? 'Bayar penuh di muka' : `Uang muka ${pct}%`} · ${nominal} — ${DP_STATE[dp.state].label}`;
+  const judul = `${pct >= 100 ? 'Bayar penuh di muka' : `Uang muka ${pct}%`} · ${nominal} · ${DP_STATE[dp.state].label}`;
   const link = (doc, view) => <DocNumber onClick={() => go(view)}>{doc}</DocNumber>;
   return (
     <Callout tone={tone} title={judul}>
       {dp.state === 'belum_faktur' && (w?.status === 'diajukan'
         ? <>Pembatalan uang muka diajukan {w.by} ({w.reason}). Menunggu approval Chief Finance.</>
         : <>
-          Vendor belum menagih uang muka. Penerimaan tetap bisa dicatat, tapi faktur pelunasan menunggu
-          uang muka ditagih dan dibayar
+          {poHasReceipt(po)
+            ? 'Vendor belum menagih uang muka. Penerimaan tetap bisa dicatat, tapi faktur pelunasan baru bisa dibuat setelah uang muka dibayar.'
+            : `Vendor belum menagih uang muka. Faktur dari ${poDocLabel(po)} ini baru bisa dicatat setelah uang muka dibayar.`}
           {scheduleExcludesDp(po.term)
-            ? '. Termin ini memisahkan DP dari jadwal termin, jadi uang mukanya tidak bisa dilewati — bila vendor tidak menagih DP, revisi terminnya.'
-            : <> — atau dibatalkan resmi lewat menu ⋮ “Tagih tanpa uang muka”.</>}
+            ? ' Termin ini memisahkan DP dari jadwal termin, jadi uang mukanya tidak bisa dibatalkan. Bila vendor tidak menagih DP, revisi terminnya.'
+            : ' Bila vendor menagih penuh di akhir, batalkan uang muka lewat menu ⋮ “Batalkan uang muka”.'}
           {w?.status === 'ditolak' && <> Pengajuan pembatalan sebelumnya ditolak{w.rejectNote ? `: ${w.rejectNote}` : ''}.</>}
         </>)}
       {dp.state === 'belum_bayar' && (

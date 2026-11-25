@@ -158,7 +158,7 @@ export function actionsFor(role, pb) {
   if (canApprove(role, 'dpWaiver')) {
     pb.pos
       .filter((p) => p.dpWaiver?.status === 'diajukan')
-      .forEach((p) => add(hotTask({ id: `dw-${p.id}`, title: 'Approval tagih tanpa uang muka', sub: `${p.number}`, cta: 'Tinjau', to: { name: 'po', id: p.id }, since: p.dpWaiver.at, limit: SLA.approve }, p.id)));
+      .forEach((p) => add(hotTask({ id: `dw-${p.id}`, title: 'Approval pembatalan uang muka', sub: `${p.number}`, cta: 'Tinjau', to: { name: 'po', id: p.id }, since: p.dpWaiver.at, limit: SLA.approve }, p.id)));
   }
   // Approver pengadaan (spesifikasi 2.2).
   if (canApprove(role, 'procurement')) {

@@ -576,10 +576,14 @@ export function poStatus(po, { receipts, invoices, prs, pos, returns }) {
     if (!anyBilled && dpPending) return 'menunggu_dp';
     if (!allInvoiced) return 'menunggu_tagihan';
   }
-  if (allInvoiced && invs.every((i) => invTotals(i, { pos, prs, returns, invoices }).balance <= 0)) {
+  const paidOff = (i) => invTotals(i, { pos, prs, returns, invoices }).balance <= 0;
+  if (allInvoiced && invs.filter((i) => !isRetentionRelease(i)).every(paidOff)) {
     // Termin sudah lunas tapi retensinya masih ditahan: pesanan belum tuntas, menunggu masa
-    // pemeliharaan selesai dan retensinya dilepas.
-    return (poRetention(po, invoices)?.balance ?? 0) > 0 ? 'pemeliharaan' : 'selesai';
+    // pemeliharaan selesai dan retensinya dilepas. Faktur pelepasan yang sudah dicatat tapi
+    // belum dibayar juga masih masa pemeliharaan; tanpa ini status mundur ke "Diterima penuh".
+    const rt = poRetention(po, invoices);
+    if (rt && (rt.balance > 0 || !rt.releases.every(paidOff))) return 'pemeliharaan';
+    return 'selesai';
   }
   // Barang/jasa beres (atau, tanpa serah terima, semua sudah ditagih): tinggal faktur & bayar.
   return poHasReceipt(po) ? 'diterima' : 'ditagih';
@@ -1107,8 +1111,8 @@ export const FPPBJ_STATUS = {
 };
 export const PO_STATUS = {
   menunggu_dp: { label: 'Menunggu uang muka', color: 'orange' }, // DP belum dicatat/dibayar, belum ada penerimaan/tagihan
-  menunggu: { label: 'Menunggu penerimaan', color: 'blue' }, // PO berlaku, belum ada yang diterima
-  menunggu_tagihan: { label: 'Menunggu tagihan', color: 'blue' }, // tanpa FPB/BAPP: ditagih langsung dari PO/SPK
+  menunggu: { label: 'Menunggu penerimaan', color: 'gray' }, // PO berlaku, belum ada yang diterima
+  menunggu_tagihan: { label: 'Menunggu tagihan', color: 'gray' }, // tanpa FPB/BAPP: ditagih langsung dari PO/SPK
   sebagian: { label: 'Diterima sebagian', color: 'blue' },
   diterima: { label: 'Diterima penuh', color: 'cyan' }, // barang beres, tinggal faktur & bayar
   ditagih: { label: 'Ditagih penuh', color: 'cyan' }, // tanpa FPB/BAPP: semua sudah ditagih, tinggal bayar

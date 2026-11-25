@@ -43,6 +43,7 @@ import {
   rupiah,
   sum,
   uninvoicedLines,
+  dpState,
 } from './utils.js';
 import { approvalState, canCreate, hidesPrices, isApproverTurn, prBlockedBySoD, receiptDoc, receiptKind, receiptName, signApproval } from './permissions.js';
 import { toast } from './usePb.js';
@@ -121,6 +122,14 @@ export default function ListTab({ tab, pb, go, openDialog }) {
     );
   }
 
+  // Langkah berikutnya untuk PO yang menunggu uang muka: badge-nya tidak menyebut siapa
+  // yang ditunggu, padahal bolanya ada di tim sendiri.
+  const dpNextStep = (p, dp) => {
+    if (dp?.state === 'belum_bayar') return 'Bayar uang muka';
+    if (p.dpWaiver?.status === 'diajukan') return 'Pembatalan DP menunggu approval';
+    return 'Catat faktur uang muka';
+  };
+
   if (tab === 'orders') {
     // Spesifikasi 2.1: Gudang tidak melihat harga.
     const noPrice = hidesPrices(role);
@@ -145,7 +154,10 @@ export default function ListTab({ tab, pb, go, openDialog }) {
               </Table.Td>
               <Table.Td fz="sm" fw={600} c="slate.9">{vendor(p.vendorId)}</Table.Td>
               <Table.Td fz="sm">{formatDate(p.expectedAt)}</Table.Td>
-              <Table.Td><StatusPill map={PO_STATUS} status={st} size="xs" /></Table.Td>
+              <Table.Td>
+                <StatusPill map={PO_STATUS} status={st} size="xs" />
+                {st === 'menunggu_dp' && <Sub>{dpNextStep(p, dpState(p, pb.calc))}</Sub>}
+              </Table.Td>
               {!noPrice && <Table.Td><Money>{rupiah(poTotal(p))}</Money></Table.Td>}
               {!noPrice && <Table.Td><Money c={debt ? 'red.8' : 'slate.6'}>{rupiah(debt)}</Money></Table.Td>}
               <Table.Td ta="right">
