@@ -1119,7 +1119,9 @@ export const prsSeed = [
     vendorId: 'v-bintang',
     poId: 'po-0040',
     invoiceIds: [],
-    amount: 3_750_000,
+    // 30% x total PO termasuk PPN (Rp13.875.000), sama dengan poDpAmount. Dulu 3.750.000
+    // (30% dari nilai sebelum PPN) sehingga rincian PR menampilkan dua angka DP yang berbeda.
+    amount: 4_162_500,
     date: '2026-10-29',
     status: 'disetujui',
     note: 'DP 30% PO/2026/10/0040',

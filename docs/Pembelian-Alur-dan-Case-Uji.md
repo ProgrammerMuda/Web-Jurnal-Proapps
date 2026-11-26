@@ -90,7 +90,7 @@ tanda tangan **kedua**.
 | PO / SPK | Draf → Dikirim ke vendor → Diterima sebagian → Diterima penuh → **Masa pemeliharaan** → Selesai · (Dibatalkan, Ditutup) |
 | FPB / BAPP | Menunggu approval → Dikonfirmasi · (Ditolak → diajukan ulang / Dibatalkan) |
 | Faktur | Belum dibayar → Jatuh tempo → Lunas · (Dibatalkan) |
-| Payment Request | Menunggu approval → Siap diterbitkan PV → **PV terbit** → Dibayar · (Ditolak) |
+| Payment Request | Menunggu approval → Menunggu PV → **Menunggu pembayaran** → Dibayar · (Ditolak) |
 | Payment Voucher | Belum dibayar → Dibayar |
 
 "Masa pemeliharaan" = semua termin sudah difaktur dan dibayar, tapi retensinya masih ditahan.
@@ -355,7 +355,7 @@ dilepas karena sudah ikut di faktur termin.
 - Peran: Accounting → Chief Finance → Building Manager → Finance
 - Langkah: Buat Pembayaran → pilih faktur → Ajukan → approval 2 jenjang → Terbitkan PV → Catat
   pembayaran (tanggal, no. referensi transfer, bukti transfer).
-- Harapan: status PR berjalan *Menunggu approval → Siap diterbitkan PV → PV terbit → Dibayar*;
+- Harapan: status PR berjalan *Menunggu approval → Menunggu PV → Menunggu pembayaran → Dibayar*;
   faktur jadi *Lunas*.
 
 **H2 · PR beberapa faktur, satu vendor**

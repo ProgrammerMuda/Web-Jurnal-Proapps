@@ -734,7 +734,7 @@ Tanggal pengajuan **bukan isian**: PR lahir saat tombol *Ajukan* diklik, jadi ta
 saat itu juga. Membiarkannya diketik berarti membolehkan pengajuan dibelakang-tanggalkan, dan
 batas waktu approval pun ikut bisa digeser.
 
-**Status:** `Menunggu approval → Siap diterbitkan PV → PV terbit → Dibayar`, plus `Ditolak`.
+**Status:** `Menunggu approval → Menunggu PV → Menunggu pembayaran → Dibayar`, plus `Ditolak`.
 
 ### 8.3 Payment Voucher, pembayaran, dan jurnal
 

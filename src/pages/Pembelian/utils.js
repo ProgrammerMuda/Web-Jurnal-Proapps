@@ -1145,8 +1145,10 @@ export const poStatusMap = (po) => (poAllJasa(po) ? SPK_STATUS : PO_STATUS);
 // transfernya dicatat terhadap PV itu.
 export const PR_STATUS = {
   diajukan: { label: 'Menunggu approval', color: 'orange', pending: true },
-  disetujui: { label: 'Siap diterbitkan PV', color: 'cyan' }, // lolos approval, menunggu PV
-  diproses: { label: 'PV terbit', color: 'blue' }, // perintah bayar ada, uang belum keluar
+  // Lolos approval; Finance sendiri yang harus menerbitkan PV, jadi oranye (perlu tindakan).
+  disetujui: { label: 'Menunggu PV', color: 'orange' },
+  // Perintah bayar ada, uang belum keluar: tinggal satu langkah (bayar), jadi cyan.
+  diproses: { label: 'Menunggu pembayaran', color: 'cyan' },
   dibayar: { label: 'Dibayar', color: 'green' },
   ditolak: { label: 'Ditolak', color: 'red' },
 };

@@ -103,7 +103,7 @@ export default function PrDetail({ pr, pb, onBack, go, openDialog }) {
             ) : <Group gap={6}><Text fz="xs" c="slate.7">Menunggu</Text><RoleChip role={ap.next ?? 'cfo'} /></Group>)}
             {pr.status === 'disetujui' && (canCreate(role, 'pv') ? (
               <Button radius="md" leftSection={<CurrencyCircleDollar size={16} />} onClick={() => openDialog({ type: 'pv', prId: pr.id })}>Terbitkan Payment Voucher</Button>
-            ) : <Group gap={6}><Text fz="xs" c="slate.7">Pembayaran oleh</Text><RoleChip role="kasir" /></Group>)}
+            ) : <Group gap={6}><Text fz="xs" c="slate.7">PV diterbitkan oleh</Text><RoleChip role="kasir" /></Group>)}
           </Group>
         </Group>
       </Card>
