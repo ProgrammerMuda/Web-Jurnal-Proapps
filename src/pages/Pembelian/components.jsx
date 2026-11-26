@@ -80,7 +80,7 @@ export function StatusPill({ map, status, size = 'sm', approval }) {
   const s = map[status] ?? { label: status, color: 'gray' };
   const note = s.pending && approval ? approvalNote(approval.doc, approval.kind) : null;
   const pill = (
-    <Badge size={size} radius="sm" variant="light" color={s.color} fw={700} tt="none" rightSection={note ? <Info size={size === 'xs' ? 11 : 13} /> : null}>
+    <Badge size={size} radius="sm" variant={s.variant ?? 'light'} color={s.color} fw={700} tt="none" rightSection={note ? <Info size={size === 'xs' ? 11 : 13} /> : null}>
       {s.label}
     </Badge>
   );

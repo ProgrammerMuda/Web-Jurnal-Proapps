@@ -1103,9 +1103,13 @@ export const bankLine = (vendor) => {
 export const FPPBJ_STATUS = {
   draft: { label: 'Draf', color: 'gray' },
   diajukan: { label: 'Diajukan', color: 'orange' }, // menunggu verifikasi (lihat VERIFY di permissions.js)
-  dikembalikan: { label: 'Dikembalikan', color: 'red' },
-  dibatalkan: { label: 'Dibatalkan', color: 'slate' },
-  diverifikasi: { label: 'Diverifikasi', color: 'blue' }, // lolos verifikasi, jalur pengadaan belum dipilih
+  // Dikembalikan bukan akhir: peminta memperbaiki lalu mengajukan ulang, jadi oranye (perlu tindakan).
+  dikembalikan: { label: 'Dikembalikan', color: 'orange' },
+  // Dihentikan dengan sengaja, bukan galat: tetap netral, tapi bergaris supaya tidak tertukar dengan Draf.
+  dibatalkan: { label: 'Dibatalkan', color: 'slate', variant: 'outline' },
+  // Lolos verifikasi, tim pengadaan belum memilih jalur. Label menyebut apa yang sedang ditunggu,
+  // bukan tahap yang sudah lewat; oranye karena bolanya di tim sendiri (tugas "Pilih jalur pengadaan").
+  diverifikasi: { label: 'Menunggu pengadaan', color: 'orange' },
   dalam_pengadaan: { label: 'Dalam pengadaan', color: 'blue' },
   selesai: { label: 'Selesai', color: 'green' },
 };
@@ -1121,6 +1125,14 @@ export const PO_STATUS = {
   dibatalkan: { label: 'Dibatalkan', color: 'slate' },
   ditutup: { label: 'Ditutup', color: 'slate' },
 };
+// SPK jasa: yang diterima adalah pekerjaan, jadi "Diterima" diganti bahasa pekerjaan.
+// Kuncinya sama, hanya labelnya; filter dan logika tetap memakai PO_STATUS.
+export const SPK_STATUS = {
+  ...PO_STATUS,
+  sebagian: { ...PO_STATUS.sebagian, label: 'Dikerjakan sebagian' },
+  diterima: { ...PO_STATUS.diterima, label: 'Selesai dikerjakan' },
+};
+export const poStatusMap = (po) => (poAllJasa(po) ? SPK_STATUS : PO_STATUS);
 // Alur sesudah faktur: PR -> approval -> Payment Voucher -> pembayaran -> jurnal.
 // Dulu PV terbit bersamaan dengan transfer, jadi tidak ada dokumen perintah bayar yang
 // mendahului uang keluar. Sekarang PV diterbitkan lebih dulu sebagai perintah bayar, dan
@@ -1170,7 +1182,7 @@ export const receiptPending = (r) => r?.status === 'draf';
 export const PROC_STATUS = {
   draf: { label: 'Draf', color: 'gray' },
   diajukan: { label: 'Menunggu approval', color: 'orange', pending: true },
-  disetujui: { label: 'Disetujui', color: 'green' },
+  disetujui: { label: 'Disetujui', color: 'cyan' }, // PO masih harus dibuat, jadi belum hijau (tuntas)
   ditolak: { label: 'Ditolak', color: 'red' },
 };
 
