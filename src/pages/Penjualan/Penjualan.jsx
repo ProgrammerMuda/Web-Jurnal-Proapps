@@ -11,6 +11,7 @@ import {
 import { useData } from '@/lib/store.jsx';
 import Invoices from './Invoices.jsx';
 import Orders from './Orders.jsx';
+import Overview from './Overview.jsx';
 import Payments from './Payments.jsx';
 import Quotes from './Quotes.jsx';
 import Placeholder from './Placeholder.jsx';
@@ -434,6 +435,7 @@ export default function Penjualan({ params }) {
     return <Invoices key={view.name === 'invoice' ? view.id : 'list'} params={p} />;
   }
 
+  if (tab === 'overview') return <Overview />;
   if (tab === 'payments') return <Payments />;
 
   if (tab === 'quotes') {

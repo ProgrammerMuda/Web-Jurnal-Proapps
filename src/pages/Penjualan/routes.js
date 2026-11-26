@@ -2,6 +2,7 @@
 // #penjualan[/tab/<tab> | /invoice/new[?customer=<id>] | /invoice/<id>[/edit]].
 // Tiap tab = satu menu di sidebar (submenu Penjualan), pola sama dengan modul Pembelian.
 export const penjualanTabs = [
+  { value: 'overview', label: 'Ringkasan Penjualan', title: 'Ringkasan Penjualan' },
   { value: 'invoices', label: 'Faktur Penjualan', title: 'Faktur Penjualan' },
   { value: 'quotes', label: 'Penawaran', title: 'Penawaran' },
   { value: 'orders', label: 'Pesanan Penjualan', title: 'Pesanan Penjualan' },

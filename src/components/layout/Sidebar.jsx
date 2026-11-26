@@ -18,6 +18,8 @@ import {
 import { useMemo, useState } from 'react';
 import { usePb } from '@/pages/Pembelian/usePb.js';
 import { actionCountsByMenu } from '@/pages/Pembelian/selectors.js';
+import { actionCountsByTab } from '@/pages/Penjualan/selectors.js';
+import { useData } from '@/lib/store.jsx';
 import badge from '@/assets/badge.svg';
 import mark from '@/assets/mark.svg';
 import {
@@ -93,6 +95,7 @@ const groups = [
         label: 'Penjualan',
         icon: Storefront,
         children: [
+          { key: 'penjualan:overview', label: 'Ringkasan Penjualan', icon: SquaresFour },
           { key: 'penjualan:invoices', label: 'Faktur Penjualan', icon: Invoice },
           { key: 'penjualan:quotes', label: 'Penawaran', icon: FileText },
           { key: 'penjualan:orders', label: 'Pesanan Penjualan', icon: ClipboardText },
@@ -312,10 +315,17 @@ function NavItem({ item, collapsed, opened, onToggle, activeKey, onNavigate, cou
 
 export default function Sidebar({ collapsed, onToggle, activeKey, onNavigate }) {
   // Badge angka Pembelian: tugas "Perlu tindakan" milik peran yang sedang dilihat.
+  // Badge Penjualan: tugas "Perlu tindakan" dari Ringkasan Penjualan, per halaman pemiliknya.
   const pb = usePb();
+  const { sales, quotes, orders, salesReturns } = useData();
   const counts = useMemo(
-    () => Object.fromEntries(Object.entries(actionCountsByMenu(pb.role, pb)).map(([k, n]) => [`pembelian:${k}`, n])),
-    [pb],
+    () => ({
+      ...Object.fromEntries(Object.entries(actionCountsByMenu(pb.role, pb)).map(([k, n]) => [`pembelian:${k}`, n])),
+      ...Object.fromEntries(
+        Object.entries(actionCountsByTab({ sales, quotes, orders, salesReturns })).map(([k, n]) => [`penjualan:${k}`, n]),
+      ),
+    }),
+    [pb, sales, quotes, orders, salesReturns],
   );
   // Dropdown bisa terbuka bersamaan (bukan akordeon); grup yang berisi menu aktif terbuka awal.
   const [open, setOpen] = useState(

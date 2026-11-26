@@ -25,7 +25,14 @@ import {
   rupiahShort,
   poPending,
   reorderBlock,
+  receiptConfirmed,
+  liveInvoices,
+  isRetentionRelease,
+  returnGross,
+  returnState,
+  vendorCredit,
 } from './utils.js';
+import { accountOf, AKUN, invoiceJournal, receiptJournal, returnJournal } from './journal.js';
 
 export function readiness(pb) {
   const c = pb.calc;
@@ -272,15 +279,97 @@ export function actionsFor(role, pb) {
 }
 
 // Pipeline: jumlah dokumen yang masih berjalan per tahap.
+// Alur dokumen yang masih berjalan. Tiap tahap menghitung satu keadaan saja, jadi satu dokumen
+// tidak terhitung di dua kotak: permintaan tanpa PO → PO yang masih menunggu barang/jasa →
+// FPB/BAPP (atau PO tanpa serah terima) yang belum difaktur → faktur yang belum diajukan bayar →
+// Payment Request yang sedang diproses. Draf belum masuk alur.
 export function pipeline(pb) {
   const r = readiness(pb);
+  const unbilled = pb.receipts.filter((x) => receiptConfirmed(x) && uninvoicedLines(x, pb.invoices).length > 0);
   return [
-    { key: 'fppbj', label: 'Permintaan Pembelian', tab: 'fppbj', count: pb.fppbj.filter((f) => ['diajukan', 'diverifikasi', 'dalam_pengadaan', 'draft', 'dikembalikan'].includes(f.status) && !pb.pos.some((p) => p.fppbjId === f.id)).length },
-    { key: 'po', label: 'PO', tab: 'orders', count: pb.pos.filter((p) => poStatus(p, pb.calc) !== 'selesai').length },
-    { key: 'receipt', label: 'Penerimaan', tab: 'receipts', count: r.receipt.length },
-    { key: 'invoice', label: 'Faktur', tab: 'bills', count: pb.invoices.filter((i) => invTotals(i, pb.calc).balance > 0).length },
-    { key: 'pay', label: 'Pembayaran', tab: 'payments', count: pb.prs.filter((p) => ['diajukan', 'disetujui', 'diproses'].includes(p.status)).length },
+    { key: 'fppbj', label: 'Permintaan', hint: 'belum jadi PO', tab: 'fppbj', count: pb.fppbj.filter((f) => ['diajukan', 'diverifikasi', 'dalam_pengadaan', 'dikembalikan'].includes(f.status) && !pb.pos.some((p) => p.fppbjId === f.id)).length },
+    { key: 'po', label: 'Menunggu barang/jasa', hint: 'PO/SPK belum diterima penuh', tab: 'orders', count: r.receipt.length },
+    { key: 'receipt', label: 'Menunggu faktur', hint: 'FPB/BAPP & PO belum ditagih', tab: 'receipts', count: unbilled.length + r.invoicePo.filter((p) => !poHasReceipt(p)).length },
+    { key: 'invoice', label: 'Faktur belum diajukan', hint: 'belum masuk Payment Request', tab: 'bills', count: r.prPay.length },
+    { key: 'pay', label: 'Pembayaran diproses', hint: 'Payment Request berjalan', tab: 'payments', count: pb.prs.filter((p) => ['diajukan', 'disetujui', 'diproses'].includes(p.status)).length },
   ];
+}
+
+// Saldo satu akun dari jurnal dokumen Pembelian (debit − kredit), dihitung dengan fungsi jurnal
+// yang sama dengan buku besar supaya angkanya tidak bisa berbeda. Faktur batal tidak ikut:
+// jurnal aslinya dan jurnal pembaliknya saling menghapus.
+function pbBalance(pb, ctx, account, { receipts = false, returns = false } = {}) {
+  const lines = [
+    ...(receipts ? pb.receipts.filter(receiptConfirmed).flatMap((x) => receiptJournal(x, pb, ctx)) : []),
+    ...liveInvoices(pb.invoices).flatMap((i) => invoiceJournal(i, pb, ctx)),
+    ...(returns ? pb.returns.flatMap((x) => returnJournal(x, pb, ctx)) : []),
+  ];
+  const code = accountOf(account).code;
+  return lines.filter((l) => l.code === code).reduce((n, l) => n + l.debit - l.credit, 0);
+}
+
+// Barang/jasa sudah diterima tapi fakturnya belum dicatat (akun Belum Ditagih).
+export function unbilled(pb, ctx) {
+  const docs = pb.receipts.filter((x) => receiptConfirmed(x) && uninvoicedLines(x, pb.invoices).length > 0);
+  return { value: -pbBalance(pb, ctx, AKUN.belumDitagih, { receipts: true }), count: docs.length };
+}
+
+// Uang muka yang sudah ditagih vendor tapi belum dipotong ke faktur pelunasan, dan kredit retur
+// yang belum terpakai. Keduanya hak kita atas vendor (akun Uang Muka Pembelian).
+export function vendorClaims(pb, ctx) {
+  const vendors = [...new Set(pb.invoices.map((i) => i.vendorId))];
+  const kredit = vendors.reduce((n, v) => n + vendorCredit(v, pb.calc), 0);
+  const dp = pbBalance(pb, ctx, AKUN.uangMuka);
+  const open = pb.returns.map((x) => ({ ret: x, state: returnState(x, pb.calc) })).filter((x) => x.state !== 'selesai');
+  return {
+    dp: Math.max(dp, 0),
+    kredit,
+    refund: open.filter((x) => x.state === 'menunggu_refund').reduce((n, x) => n + returnGross(x.ret, pb.invoices), 0),
+    openReturns: open,
+  };
+}
+
+// Hutang usaha per vendor, terbesar di atas.
+export function debtByVendor(pb) {
+  const map = {};
+  for (const i of pb.invoices) {
+    const bal = invTotals(i, pb.calc).balance;
+    if (bal <= 0) continue;
+    map[i.vendorId] = map[i.vendorId] ?? { id: i.vendorId, name: pb.vendorsById[i.vendorId]?.name ?? 'Vendor', value: 0, count: 0 };
+    map[i.vendorId].value += bal;
+    map[i.vendorId].count += 1;
+  }
+  return Object.values(map).sort((a, b) => b.value - a.value);
+}
+
+// Nilai pembelian (DPP faktur, tanpa faktur uang muka dan pelepasan retensi) per bulan "YYYY-MM",
+// opsional hanya sampai tanggal ke-`untilDay` supaya awal bulan bisa dibanding periode yang sama.
+export function purchasesInMonth(pb, ym, untilDay = 31) {
+  return liveInvoices(pb.invoices)
+    .filter((i) => !isDpInvoice(i) && !isRetentionRelease(i) && i.date?.startsWith(ym) && Number(i.date.slice(8, 10)) <= untilDay)
+    .reduce((n, i) => n + invTotals(i, pb.calc).dpp, 0);
+}
+
+// Faktur yang jatuh tempo dalam n hari ke depan (belum lewat), untuk rencana kas.
+export function dueSoon(pb, n = 7) {
+  const until = addDays(TODAY, n);
+  return pb.invoices
+    .map((i) => ({ i, bal: invTotals(i, pb.calc).balance }))
+    .filter((x) => x.bal > 0 && x.i.dueDate >= TODAY && x.i.dueDate <= until)
+    .sort((a, b) => a.i.dueDate.localeCompare(b.i.dueDate));
+}
+
+// Permintaan yang masih berjalan menurut jalurnya. Vendor tunggal disimpan sebagai route
+// 'bidding' + single.on, jadi bidding murni = route bidding tanpa single.on.
+export function procurementMix(pb) {
+  const aktif = pb.fppbj.filter((f) => ['diajukan', 'diverifikasi', 'dalam_pengadaan', 'dikembalikan'].includes(f.status) && !pb.pos.some((p) => p.fppbjId === f.id));
+  return {
+    aktif: aktif.length,
+    bidding: aktif.filter((f) => f.route === 'bidding' && !f.single?.on).length,
+    single: aktif.filter((f) => f.single?.on).length,
+    belumJalur: aktif.filter((f) => !f.route && !f.single?.on).length,
+    late: aktif.filter((f) => f.neededBy && f.neededBy < TODAY).sort((a, b) => a.neededBy.localeCompare(b.neededBy)),
+  };
 }
 
 export { receiptsOf };

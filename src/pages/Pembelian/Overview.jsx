@@ -3,7 +3,8 @@ import { useState } from 'react';
 import { Badge, Box, Button, Card, Grid, Group, Pagination, Progress, RingProgress, SegmentedControl, SimpleGrid, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
 import { CheckCircle, ArrowRight, Warning } from '@/components/Icon.jsx';
 import { Callout, RoleChip } from './components.jsx';
-import { actionsFor, aging, daysLate, pipeline, readiness } from './selectors.js';
+import { actionsFor, aging, daysLate, debtByVendor, dueSoon, pipeline, procurementMix, purchasesInMonth, readiness, unbilled, vendorClaims } from './selectors.js';
+import { useData } from '@/lib/store.jsx';
 
 // Warna baris "Perlu tindakan" per tingkat umur tugas (lihat taskAge di selectors.js).
 const LEVEL = {
@@ -12,7 +13,7 @@ const LEVEL = {
 };
 
 import { roleOf, TODAY } from './data.js';
-import { invTotals, rupiah, rupiahShort, sum, formatDate } from './utils.js';
+import { invTotals, rupiah, rupiahShort, sum, formatDate, RETURN_STATUS } from './utils.js';
 
 // Kalimat umur tugas dalam hari dan tanggal, mis. "Lewat 43 hari dari batas 22 Sep 2026".
 function ageLine(a) {
@@ -21,9 +22,17 @@ function ageLine(a) {
   return `Batas ${formatDate(a.due)} · ${a.late === 0 ? 'hari ini' : `${-a.late} hari lagi`}`;
 }
 
-function Stat({ label, value, hint, right }) {
+function Stat({ label, value, hint, right, onClick }) {
   return (
-    <Card withBorder radius="md" padding="md" bg="white">
+    <Card
+      withBorder
+      radius="md"
+      padding="md"
+      bg="white"
+      component={onClick ? UnstyledButton : undefined}
+      onClick={onClick}
+      style={onClick ? { cursor: 'pointer', textAlign: 'left' } : undefined}
+    >
       <Group justify="space-between" align="flex-start" wrap="nowrap">
         <Box>
           <Text fz={11} fw={600} c="slate.6">{label}</Text>
@@ -75,14 +84,30 @@ export default function Overview({ pb, go, openDialog }) {
   };
   const buckets = aging(pb);
   const agingTotal = sum(buckets, (b) => b.value);
-  const late = pb.fppbj.filter((f) => f.neededBy < '2026-11-04' && !pb.pos.some((p) => p.fppbjId === f.id) && f.status !== 'draft' && f.status !== 'dibatalkan');
-  const bidding = pb.fppbj.filter((f) => f.route === 'bidding').length;
-  const single = pb.fppbj.filter((f) => f.single?.on).length;
+  const { stockMoves, products } = useData();
+  const ctx = { stockMoves, products };
+  const belumTagih = unbilled(pb, ctx);
+  const klaim = vendorClaims(pb, ctx);
+  const segera = dueSoon(pb, 7);
+  const perVendor = debtByVendor(pb);
+  const mix = procurementMix(pb);
+  const bulanIni = TODAY.slice(0, 7);
+  const bulanLalu = (() => {
+    const [y, m] = bulanIni.split('-').map(Number);
+    return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+  })();
+  const beliIni = purchasesInMonth(pb, bulanIni);
+  const hariKe = Number(TODAY.slice(8, 10));
+  const beliLalu = purchasesInMonth(pb, bulanLalu);
+  // Dibanding periode yang sama bulan lalu (1–tanggal hari ini), bukan sebulan penuh.
+  const beliLaluSd = purchasesInMonth(pb, bulanLalu, hariKe);
+  const beliDelta = beliLaluSd ? Math.round(((beliIni - beliLaluSd) / beliLaluSd) * 100) : null;
+  const namaBulan = (ym) => formatDate(`${ym}-01`).replace(/^1 /, '');
 
   return (
     <Stack gap="lg">
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-        <Stat label="Hutang usaha berjalan" value={rupiahShort(debt)} hint={`dari ${live.length} faktur yang belum lunas`} />
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
+        <Stat label="Hutang usaha berjalan" value={rupiahShort(debt)} hint={`dari ${live.length} faktur yang belum lunas`} onClick={() => go({ name: 'tab', tab: 'payables' })} />
         <Stat
           label="Sudah jatuh tempo"
           value={rupiahShort(overdue)}
@@ -90,17 +115,28 @@ export default function Overview({ pb, go, openDialog }) {
           right={<RingProgress size={44} thickness={5} roundCaps sections={[{ value: overduePct, color: overdue ? 'red.6' : 'green.6' }]} />}
         />
         <Stat
+          label="Jatuh tempo 7 hari ke depan"
+          value={rupiahShort(sum(segera, (x) => x.bal))}
+          hint={segera.length ? `${segera.length} faktur · paling dekat ${formatDate(segera[0].i.dueDate)}` : 'Tidak ada faktur jatuh tempo minggu ini'}
+        />
+        <Stat
+          label="Barang diterima belum ditagih"
+          value={rupiahShort(belumTagih.value)}
+          hint={belumTagih.count ? `${belumTagih.count} FPB/BAPP menunggu faktur vendor` : 'Semua penerimaan sudah difaktur'}
+          onClick={() => go({ name: 'tab', tab: 'receipts' })}
+        />
+        <Stat
           label="Menunggu tindakan Anda"
           value={todo.length}
           hint={telat.length > 0 ? `${telat.length} sudah lewat batas wajar` : `Sebagai ${roleOf(role).label}`}
           right={telat.length > 0 ? <ThemeIcon variant="light" color="red" size={32} radius="md"><Warning size={18} /></ThemeIcon> : undefined}
         />
-        <Stat label="Siap dibayar" value={ready.length} hint={ready.length ? `Total ${rupiah(sum(ready, (p) => p.amount))} menunggu Kasir` : 'Payment Request yang sudah disetujui'} />
+        <Stat label="Siap dibayar" value={ready.length} hint={ready.length ? `Total ${rupiah(sum(ready, (p) => p.amount))} menunggu Finance` : 'Payment Request yang sudah disetujui'} />
       </SimpleGrid>
 
       <Card withBorder radius="lg" padding="lg" bg="white">
         <Text fw={700} fz="sm" c="slate.9">Alur pembelian</Text>
-        <Text fz="xs" c="slate.6" mb="md">Dokumen yang masih berjalan di tiap tahap. Klik tahap untuk membuka daftarnya.</Text>
+        <Text fz="xs" c="slate.6" mb="md">Dokumen yang masih berjalan, masing-masing hanya di satu tahap. Klik tahap untuk membuka daftarnya.</Text>
         <SimpleGrid cols={{ base: 2, sm: 5 }} spacing="sm">
           {flow.map((s, i) => (
             <UnstyledButton key={s.key} onClick={() => go({ name: 'tab', tab: s.tab })} p="sm" style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 'var(--mantine-radius-md)', position: 'relative' }}>
@@ -109,6 +145,7 @@ export default function Overview({ pb, go, openDialog }) {
                 {i < flow.length - 1 && <ArrowRight size={12} color="var(--mantine-color-slate-4)" />}
               </Group>
               <Text fz={26} fw={700} c={s.count ? 'primary.9' : 'slate.4'} lh={1.2}>{s.count}</Text>
+              <Text fz={11} c="slate.6">{s.hint}</Text>
             </UnstyledButton>
           ))}
         </SimpleGrid>
@@ -247,13 +284,64 @@ export default function Overview({ pb, go, openDialog }) {
               </Stack>
             </Card>
             <Card withBorder radius="lg" padding="lg" bg="white">
-              <Text fw={700} fz="sm" c="slate.9" mb="xs">Pengadaan</Text>
+              <Text fw={700} fz="sm" c="slate.9">Hutang per vendor</Text>
+              <Text fz="xs" c="slate.6" mb="xs">Vendor dengan sisa hutang terbesar</Text>
+              {perVendor.length === 0 ? (
+                <Text fz="xs" c="slate.6">Tidak ada hutang berjalan.</Text>
+              ) : (
+                <Stack gap={0}>
+                  {perVendor.slice(0, 5).map((v) => (
+                    <Group key={v.id} justify="space-between" wrap="nowrap" gap="sm" py={8} style={{ borderTop: '1px solid var(--mantine-color-gray-2)' }}>
+                      <Box style={{ minWidth: 0 }}>
+                        <Text fz="xs" fw={600} c="slate.9" truncate>{v.name}</Text>
+                        <Text fz={11} c="slate.6">{v.count} faktur</Text>
+                      </Box>
+                      <Text fz="xs" fw={700} style={{ whiteSpace: 'nowrap' }}>{rupiah(v.value)}</Text>
+                    </Group>
+                  ))}
+                </Stack>
+              )}
+            </Card>
+            <Card withBorder radius="lg" padding="lg" bg="white">
+              <Text fw={700} fz="sm" c="slate.9">Uang muka, kredit & retur</Text>
+              <Text fz="xs" c="slate.6" mb="xs">Hak kita atas vendor yang belum terpakai</Text>
               <Stack gap={6}>
-                <Group justify="space-between"><Text fz="xs" c="slate.7">Jalur bidding</Text><Text fz="xs" fw={600}>{bidding} permintaan</Text></Group>
-                <Group justify="space-between"><Text fz="xs" c="slate.7">Vendor tunggal</Text><Text fz="xs" fw={600}>{single} permintaan</Text></Group>
-                <Group justify="space-between"><Text fz="xs" c="slate.7">Lewat tanggal dibutuhkan</Text><Badge size="sm" radius="sm" variant="light" color={late.length ? 'red' : 'gray'} tt="none">{late.length}</Badge></Group>
+                <Group justify="space-between"><Text fz="xs" c="slate.7">Uang muka belum dipotong</Text><Text fz="xs" fw={600}>{rupiah(klaim.dp)}</Text></Group>
+                <Group justify="space-between"><Text fz="xs" c="slate.7">Kredit vendor tersedia</Text><Text fz="xs" fw={600}>{rupiah(klaim.kredit)}</Text></Group>
+                <Group justify="space-between"><Text fz="xs" c="slate.7">Refund belum diterima</Text><Text fz="xs" fw={600} c={klaim.refund ? 'blue.8' : undefined}>{rupiah(klaim.refund)}</Text></Group>
               </Stack>
-              {late.slice(0, 2).map((f) => <Text key={f.id} fz={11} c="slate.6" mt={4}>{f.number} · {formatDate(f.neededBy)}</Text>)}
+              {klaim.openReturns.slice(0, 3).map(({ ret, state }) => (
+                <Group key={ret.id} justify="space-between" wrap="nowrap" mt={6}>
+                  <Text fz={11} c="slate.6" truncate>{ret.number} · {pb.vendorsById[ret.vendorId]?.name}</Text>
+                  <Badge size="xs" radius="sm" variant="light" color={RETURN_STATUS[state].color} tt="none" style={{ flexShrink: 0 }}>{RETURN_STATUS[state].label}</Badge>
+                </Group>
+              ))}
+            </Card>
+            <Card withBorder radius="lg" padding="lg" bg="white">
+              <Text fw={700} fz="sm" c="slate.9">Pembelian {namaBulan(bulanIni)}</Text>
+              <Text fz="xs" c="slate.6" mb="xs">Nilai faktur masuk 1–{hariKe} {namaBulan(bulanIni)} (DPP, tanpa uang muka)</Text>
+              <Group justify="space-between" align="flex-end">
+                <Text fz={22} fw={700} c="slate.9" lh={1.2}>{rupiahShort(beliIni)}</Text>
+                {beliDelta != null && (
+                  <Badge size="sm" radius="sm" variant="light" color={beliDelta > 0 ? 'orange' : 'green'} tt="none">
+                    {beliDelta > 0 ? '+' : ''}{beliDelta}% vs 1–{hariKe} {namaBulan(bulanLalu)}
+                  </Badge>
+                )}
+              </Group>
+              <Text fz={11} c="slate.6" mt={4}>
+                Periode sama bulan lalu {rupiah(beliLaluSd)} · sebulan penuh {namaBulan(bulanLalu)} {rupiah(beliLalu)}
+              </Text>
+            </Card>
+            <Card withBorder radius="lg" padding="lg" bg="white">
+              <Text fw={700} fz="sm" c="slate.9">Pengadaan berjalan</Text>
+              <Text fz="xs" c="slate.6" mb="xs">{mix.aktif} permintaan belum jadi PO</Text>
+              <Stack gap={6}>
+                <Group justify="space-between"><Text fz="xs" c="slate.7">Jalur bidding</Text><Text fz="xs" fw={600}>{mix.bidding} permintaan</Text></Group>
+                <Group justify="space-between"><Text fz="xs" c="slate.7">Vendor tunggal</Text><Text fz="xs" fw={600}>{mix.single} permintaan</Text></Group>
+                {mix.belumJalur > 0 && <Group justify="space-between"><Text fz="xs" c="slate.7">Belum pilih jalur</Text><Text fz="xs" fw={600}>{mix.belumJalur} permintaan</Text></Group>}
+                <Group justify="space-between"><Text fz="xs" c="slate.7">Lewat tanggal dibutuhkan</Text><Badge size="sm" radius="sm" variant="light" color={mix.late.length ? 'red' : 'gray'} tt="none">{mix.late.length}</Badge></Group>
+              </Stack>
+              {mix.late.slice(0, 2).map((f) => <Text key={f.id} fz={11} c="slate.6" mt={4}>{f.number} · {formatDate(f.neededBy)}</Text>)}
             </Card>
           </Stack>
         </Grid.Col>

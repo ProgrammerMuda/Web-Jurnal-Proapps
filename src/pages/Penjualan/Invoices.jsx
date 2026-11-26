@@ -793,7 +793,15 @@ export default function Invoices({ params }) {
       </SimpleGrid>
 
       <Card withBorder radius="lg" padding="lg" bg="white">
-        <Group gap={4} mb="md">
+        {/* Garis bawah tab menembus padding kartu sampai tepi kiri-kanan. */}
+        <Group
+          gap={4}
+          mx="calc(var(--mantine-spacing-lg) * -1)"
+          px="lg"
+          pb="md"
+          mb="md"
+          style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}
+        >
           {tabs.map((t) => {
             const active = tab === t.value;
             return (
