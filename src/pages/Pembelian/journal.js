@@ -210,6 +210,16 @@ export function invoiceJournal(inv, pb, ctx = {}) {
       const tutup = e ? e.unitCredit * l.qty : dpp;
       lines.push(dr(AKUN.belumDitagih, tutup, memo));
       didebit += tutup;
+      // Harga faktur beda dari nilai penerimaan (mis. ubah harga PO): untuk jasa dan barang yang
+      // tidak dilacak stoknya, selisihnya bagian dari biaya, jadi masuk akun bebannya sendiri.
+      // Barang stok tetap ke akun penyesuaian persediaan lewat selisih di bawah.
+      const product = productOfItem(ctx.products, item ?? { productId: l.productId, desc: l.desc });
+      const beban = (item?.kind ?? l.kind) === 'jasa' || !product?.tracked;
+      const beda = r(dpp - tutup);
+      if (beban && beda && !e?.vatCapitalized) {
+        lines.push(beda > 0 ? dr(expenseOf(product), beda, `Selisih harga · ${memo}`) : cr(expenseOf(product), -beda, `Selisih harga · ${memo}`));
+        didebit += beda;
+      }
       if (!e?.vatCapitalized) {
         ppnMasukan += ppn;
         didebit += ppn;
