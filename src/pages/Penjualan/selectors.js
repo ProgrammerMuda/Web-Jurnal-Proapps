@@ -13,11 +13,16 @@ export const sum = (list, f) => list.reduce((n, x) => n + f(x), 0);
 const levelOf = (late) => (late > 30 ? 'stale' : late > 0 ? 'warn' : 'ok');
 
 // Tugas yang menunggu tim penjualan / finance, diturunkan langsung dari dokumen.
+// Faktur terbit yang belum pernah dikirim ke email pelanggan.
+export const unsent = (sale) => !(sale.sends ?? []).length;
+
 export function actionsOf({ sales, quotes, orders, salesReturns }, nameOf) {
   const list = [];
   const push = (a) => {
     const late = a.due ? days(a.due) : 0;
-    list.push({ ...a, late, level: a.due ? levelOf(late) : levelOf((a.waiting ?? 0) - 7) });
+    // Dokumen bertanggal setelah hari ini belum "menunggu" apa-apa.
+    const waiting = a.waiting == null ? a.waiting : Math.max(a.waiting, 0);
+    list.push({ ...a, waiting, late, level: a.due ? levelOf(late) : levelOf((waiting ?? 0) - 7) });
   };
   sales.forEach((s) => {
     const st = statusOf(s);
@@ -27,11 +32,16 @@ export function actionsOf({ sales, quotes, orders, salesReturns }, nameOf) {
     } else if (['issued', 'partial'].includes(st) && s.dueDate <= TODAY) {
       const t = computeTotals(s);
       push({ id: `t-${s.id}`, title: `Tagih sisa ${rupiah(t.balance)}`, sub, due: s.dueDate, to: { name: 'invoice', id: s.id } });
+    } else if (['issued', 'partial'].includes(st) && unsent(s)) {
+      // Faktur terbit yang belum pernah dikirim: pelanggan belum tahu ada tagihan.
+      push({ id: `s-${s.id}`, title: 'Kirim faktur ke pelanggan', sub, waiting: days(s.date), to: { name: 'invoice', id: s.id } });
     }
   });
   quotes.forEach((q) => {
-    const sub = `${q.number} · ${nameOf(q.customerId)}`;
-    if (quoteStatus(q) === 'accepted') {
+    const sub = `${q.number || 'Draf'} · ${nameOf(q.customerId)}`;
+    if (quoteStatus(q) === 'draft') {
+      push({ id: `qd-${q.id}`, title: 'Kirim penawaran draf', sub, waiting: days(q.date), to: { name: 'quote', id: q.id } });
+    } else if (quoteStatus(q) === 'accepted') {
       push({ id: `qa-${q.id}`, title: 'Buat pesanan / faktur dari penawaran diterima', sub, waiting: days(q.acceptedAt?.slice(0, 10) ?? q.date), to: { name: 'quote', id: q.id } });
     } else if (isExpired(q) || isExpiring(q)) {
       push({ id: `qe-${q.id}`, title: isExpired(q) ? 'Penawaran kedaluwarsa tanpa jawaban' : 'Penawaran hampir kedaluwarsa', sub, due: q.dueDate, to: { name: 'quote', id: q.id } });
@@ -39,7 +49,8 @@ export function actionsOf({ sales, quotes, orders, salesReturns }, nameOf) {
   });
   orders.forEach((o) => {
     const st = orderStatus(o);
-    const sub = `${o.number} · ${nameOf(o.customerId)}`;
+    const sub = `${o.number || 'Draf'} · ${nameOf(o.customerId)}`;
+    if (st === 'draft') push({ id: `od-${o.id}`, title: 'Kirim pesanan draf', sub, waiting: days(o.date), to: { name: 'order', id: o.id } });
     if (st === 'sent') push({ id: `os-${o.id}`, title: 'Pesanan menunggu konfirmasi pelanggan', sub, waiting: days(o.date), to: { name: 'order', id: o.id } });
     if (['confirmed', 'partial'].includes(st)) push({ id: `oc-${o.id}`, title: st === 'partial' ? 'Fakturkan sisa pesanan' : 'Fakturkan pesanan', sub, due: o.dueDate, to: { name: 'order', id: o.id } });
   });
@@ -63,3 +74,6 @@ export function actionCountsByTab(data, nameOf = () => '') {
   });
   return out;
 }
+
+// Tugas yang sudah lewat batas wajar, dengan aturan yang sama dengan filter "Berlarut" + "Lewat batas".
+export const isLate = (a) => a.level !== 'ok';
