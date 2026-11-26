@@ -85,7 +85,7 @@ tanda tangan **kedua**.
 
 | Dokumen | Status |
 |---|---|
-| Permintaan | Draf → Diajukan → Diverifikasi → Dalam pengadaan → Selesai · (Dikembalikan, Dibatalkan) |
+| Permintaan | Draf → Menunggu verifikasi → Menunggu pengadaan → Dalam pengadaan → Selesai · (Dikembalikan, Dibatalkan) |
 | Pengadaan | Draf → Menunggu approval → Disetujui · (Ditolak) |
 | PO / SPK | Draf → Dikirim ke vendor → Diterima sebagian → Diterima penuh → **Masa pemeliharaan** → Selesai · (Dibatalkan, Ditutup) |
 | FPB / BAPP | Menunggu approval → Dikonfirmasi · (Ditolak → diajukan ulang / Dibatalkan) |

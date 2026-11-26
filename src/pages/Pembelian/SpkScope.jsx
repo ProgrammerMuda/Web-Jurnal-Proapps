@@ -70,16 +70,17 @@ export default function SpkScope({ po, pb, receipts, pakaiTerima, noPrice }) {
     const billed = pakaiTerima
       ? receipts.reduce((n, r) => n + invoicedQty(r.id, it.id, pb.invoices), 0)
       : invoicedQtyOfPo(po.id, it.id, pb.invoices);
-    if (billed >= it.qty) return { label: 'Difaktur', color: 'green' };
-    if (!pakaiTerima) return { label: 'Belum difaktur', color: 'gray' };
+    // Label dan warna sama dengan status yang sama di halaman lain (RECEIPT_STATUS, PO_STATUS).
+    if (billed >= it.qty) return { label: 'Sudah difaktur', color: 'green' };
+    if (!pakaiTerima) return { label: 'Menunggu tagihan', color: 'blue' }; // vendor belum menagih
     // BAPP yang masih draf belum sah sebagai serah terima: ia menunggu approval atasan.
     const qtyIn = (list) => list.reduce((n, r) => n + r.lines.filter((l) => l.itemId === it.id).reduce((m, l) => m + l.qty, 0), 0);
     const mine = receiptsOf(po, pb.receipts);
-    if (qtyIn(mine.filter(receiptConfirmed)) >= it.qty) return { label: 'BAPP · belum difaktur', color: 'orange' };
+    if (qtyIn(mine.filter(receiptConfirmed)) >= it.qty) return { label: 'Belum difaktur', color: 'cyan' };
     const draf = mine.find((r) => !receiptConfirmed(r) && r.status !== 'dibatalkan' && r.lines.some((l) => l.itemId === it.id));
     if (draf?.status === 'ditolak') return { label: 'BAPP ditolak', color: 'red' };
     if (draf) return { label: 'Menunggu approval', color: 'orange', pending: true, doc: draf };
-    return { label: 'Belum BAPP', color: 'gray' };
+    return { label: 'Menunggu BAPP', color: 'blue' }; // pekerjaan vendor belum diserahterimakan
   };
 
   return groups.map((g, gi) => {

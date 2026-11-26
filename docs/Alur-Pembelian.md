@@ -134,7 +134,7 @@ minimal jatuh ke angka terendah (2 penawaran). Begitu penawaran lengkap pertama 
 nilainya di atas Rp 10 juta, syaratnya naik jadi 3 — jadi badge "2 / 2" bisa berubah jadi
 "2 / 3". Ini disengaja, bukan bug.
 
-**Status:** `Draf → Diajukan → Dalam pengadaan → Selesai`,
+**Status:** `Draf → Menunggu verifikasi → Menunggu pengadaan → Dalam pengadaan → Selesai`,
 plus `Dikembalikan` dan `Dibatalkan`.
 
 - *Diverifikasi* — permintaannya sudah dinyatakan layak, jalur pengadaan belum dipilih

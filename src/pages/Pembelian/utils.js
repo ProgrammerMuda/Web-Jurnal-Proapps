@@ -1100,19 +1100,23 @@ export const bankLine = (vendor) => {
 // Aturan warna dibaca dari "siapa yang ditunggu", bukan dari seberapa jauh prosesnya:
 //   abu (gray)   = draf, belum berjalan
 //   oranye       = menunggu keputusan atau tindakan orang dalam (verifikasi, approval, bayar)
-//   biru         = berjalan, bolanya di pihak luar (vendor mengirim, gudang menerima)
-//   cyan         = sudah lolos tahap kritis, tinggal langkah terakhir
+//   biru         = berjalan, bolanya di pihak luar (vendor mengirim atau menagih)
+//   cyan         = beres di lapangan, tinggal urusan administrasi (buat PO, faktur, tagih).
+//                  Secara aturan "siapa bertindak" ini tim sendiri, tapi sengaja tidak oranye
+//                  supaya yang benar-benar macet tetap menonjol. Pengecualian: langkah yang
+//                  mengeluarkan uang (Menunggu PV, Menunggu pembayaran) tetap oranye karena
+//                  ada tenggat bayar ke vendor.
 //   hijau        = tuntas
-//   merah        = ditolak atau dikembalikan
-//   slate        = dihentikan (dibatalkan, ditutup)
+//   merah        = tidak akan berjalan (ditolak, dibatalkan)
+//   slate        = dihentikan setelah sebagian berjalan (ditutup)
+// Kata "Menunggu" di label menyebut APA yang ditunggu; warnanya menyebut SIAPA yang bertindak.
 // Oranye sengaja dibatasi supaya "ada yang perlu saya kerjakan" tetap menonjol di daftar.
 export const FPPBJ_STATUS = {
   draft: { label: 'Draf', color: 'gray' },
-  diajukan: { label: 'Diajukan', color: 'orange' }, // menunggu verifikasi (lihat VERIFY di permissions.js)
+  diajukan: { label: 'Menunggu verifikasi', color: 'orange' }, // lihat VERIFY di permissions.js
   // Dikembalikan bukan akhir: peminta memperbaiki lalu mengajukan ulang, jadi oranye (perlu tindakan).
   dikembalikan: { label: 'Dikembalikan', color: 'orange' },
-  // Dihentikan dengan sengaja, bukan galat: tetap netral, tapi bergaris supaya tidak tertukar dengan Draf.
-  dibatalkan: { label: 'Dibatalkan', color: 'slate', variant: 'outline' },
+  dibatalkan: { label: 'Dibatalkan', color: 'red' },
   // Lolos verifikasi, tim pengadaan belum memilih jalur. Label menyebut apa yang sedang ditunggu,
   // bukan tahap yang sudah lewat; oranye karena bolanya di tim sendiri (tugas "Pilih jalur pengadaan").
   diverifikasi: { label: 'Menunggu pengadaan', color: 'orange' },
@@ -1121,14 +1125,14 @@ export const FPPBJ_STATUS = {
 };
 export const PO_STATUS = {
   menunggu_dp: { label: 'Menunggu uang muka', color: 'orange' }, // DP belum dicatat/dibayar, belum ada penerimaan/tagihan
-  menunggu: { label: 'Menunggu penerimaan', color: 'gray' }, // PO berlaku, belum ada yang diterima
-  menunggu_tagihan: { label: 'Menunggu tagihan', color: 'gray' }, // tanpa FPB/BAPP: ditagih langsung dari PO/SPK
+  menunggu: { label: 'Menunggu penerimaan', color: 'blue' }, // PO berlaku, vendor belum mengirim
+  menunggu_tagihan: { label: 'Menunggu tagihan', color: 'blue' }, // tanpa FPB/BAPP: vendor belum menagih
   sebagian: { label: 'Diterima sebagian', color: 'blue' },
   diterima: { label: 'Diterima penuh', color: 'cyan' }, // barang beres, tinggal faktur & bayar
   ditagih: { label: 'Ditagih penuh', color: 'cyan' }, // tanpa FPB/BAPP: semua sudah ditagih, tinggal bayar
   pemeliharaan: { label: 'Masa pemeliharaan', color: 'violet' }, // termin lunas, retensi masih ditahan
   selesai: { label: 'Selesai', color: 'green' },
-  dibatalkan: { label: 'Dibatalkan', color: 'slate' },
+  dibatalkan: { label: 'Dibatalkan', color: 'red' },
   ditutup: { label: 'Ditutup', color: 'slate' },
 };
 // SPK jasa: yang diterima adalah pekerjaan, jadi "Diterima" diganti bahasa pekerjaan.
@@ -1147,8 +1151,8 @@ export const PR_STATUS = {
   diajukan: { label: 'Menunggu approval', color: 'orange', pending: true },
   // Lolos approval; Finance sendiri yang harus menerbitkan PV, jadi oranye (perlu tindakan).
   disetujui: { label: 'Menunggu PV', color: 'orange' },
-  // Perintah bayar ada, uang belum keluar: tinggal satu langkah (bayar), jadi cyan.
-  diproses: { label: 'Menunggu pembayaran', color: 'cyan' },
+  // Perintah bayar ada, uang belum keluar; Finance sendiri yang membayar, jadi oranye.
+  diproses: { label: 'Menunggu pembayaran', color: 'orange' },
   dibayar: { label: 'Dibayar', color: 'green' },
   ditolak: { label: 'Ditolak', color: 'red' },
 };
@@ -1177,7 +1181,7 @@ export const INV_STATUS = {
   lunas: { label: 'Lunas', color: 'green' },
   // Bukan tahap pembayaran, tapi faktur yang dibatalkan harus tetap bisa dibedakan: tanpa ini
   // ia akan terbaca "Belum dibayar" padahal memang tidak akan pernah dibayar.
-  dibatalkan: { label: 'Dibatalkan', color: 'slate' },
+  dibatalkan: { label: 'Dibatalkan', color: 'red' },
 };
 // Status FPB/BAPP yang dilihat orang: satu siklus hidup, bukan status approval mentah.
 // "Dikonfirmasi" sendiri tidak pernah tampil, karena begitu sah pertanyaannya tinggal
@@ -1189,7 +1193,7 @@ export const RECEIPT_STATUS = {
   // dengan yang masih macet di approval.
   belum_difaktur: { label: 'Belum difaktur', color: 'cyan' },
   sudah_difaktur: { label: 'Sudah difaktur', color: 'green' },
-  dibatalkan: { label: 'Dibatalkan', color: 'slate', variant: 'outline' },
+  dibatalkan: { label: 'Dibatalkan', color: 'red' },
 };
 // Menunggu tanda tangan approver (bukan ditolak / dibatalkan).
 export const receiptPending = (r) => r?.status === 'draf';
