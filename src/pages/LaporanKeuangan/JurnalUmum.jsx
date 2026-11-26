@@ -208,7 +208,7 @@ export default function JurnalUmum({ onBack }) {
       </Card>
 
       <Card withBorder radius="lg" padding={0} bg="white">
-        <Group justify="space-between" gap="sm" px="lg" py="md" className="no-print" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
+        <Group justify="space-between" gap="sm" px="lg" py="sm" bg="slate.0" className="no-print" style={{ borderBottom: '1px solid var(--mantine-color-gray-3)' }}>
           <TextInput
             size="sm"
             radius="md"

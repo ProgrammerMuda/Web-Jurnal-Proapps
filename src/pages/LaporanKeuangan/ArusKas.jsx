@@ -312,7 +312,7 @@ export default function ArusKas({ onBack }) {
       </Card>
 
       <Card withBorder radius="lg" padding={0} bg="white">
-        <Group justify="flex-end" gap="lg" px="lg" py="md" className="no-print" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
+        <Group justify="flex-end" gap="lg" px="lg" py="sm" bg="slate.0" className="no-print" style={{ borderBottom: '1px solid var(--mantine-color-gray-3)' }}>
           <Switch size="sm" label="Sembunyikan pos nol" checked={hideZero} onChange={(e) => setHideZero(e.currentTarget.checked)} />
           <Button size="sm" variant="default" radius="md" disabled={!itemRows.length} onClick={() => setExpanded(allOpen ? new Set() : new Set(itemRows))}>
             {allOpen ? 'Tutup semua rincian' : 'Buka semua rincian'}

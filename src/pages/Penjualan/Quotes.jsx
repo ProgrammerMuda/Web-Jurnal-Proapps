@@ -5,17 +5,12 @@ import {
   Box,
   Button,
   Card,
-  Center,
   Group,
   Menu,
-  Pagination,
-  ScrollArea,
-  Select,
   SimpleGrid,
   Stack,
   Table,
   Text,
-  TextInput,
   ThemeIcon,
   UnstyledButton,
 } from '@mantine/core';
@@ -31,7 +26,6 @@ import {
   Eye,
   FileText,
   Invoice,
-  MagnifyingGlass,
   PaperPlaneTilt,
   PencilSimple,
   Plus,
@@ -40,6 +34,7 @@ import {
   TrendUp,
 } from '@/components/Icon.jsx';
 import { useData } from '@/lib/store.jsx';
+import { ListShell, TabBar } from '@/pages/Pembelian/components.jsx';
 import { toCustomer } from '@/pages/Kontak/utils.js';
 import { CopyIcon, PageIntro, StatusBadge } from './components.jsx';
 import { DeleteModal, ReasonModal, SendModal } from './Dialogs.jsx';
@@ -65,14 +60,7 @@ import {
   quoteBadge,
   quoteStatus,
 } from './quotes.js';
-import {
-  computeTotals,
-  formatDate,
-  nowIso,
-  rupiah,
-  rupiahShort,
-  useCustomer,
-} from './utils.js';
+import { computeTotals, formatDate, nowIso, rupiah, rupiahShort, useCustomer } from './utils.js';
 
 // P2: tab mengikuti status. Kedaluwarsa masuk "Selesai" karena sudah tidak
 // menunggu jawaban siapa pun.
@@ -87,10 +75,14 @@ const tabs = [
 ];
 
 // P8: pilihan alasan dibuat tetap supaya bisa dihitung, bukan teks bebas.
-const REJECT_REASONS = ['Harga', 'Waktu pengerjaan', 'Pindah ke kompetitor', 'Kebutuhan batal', 'Lainnya'];
+const REJECT_REASONS = [
+  'Harga',
+  'Waktu pengerjaan',
+  'Pindah ke kompetitor',
+  'Kebutuhan batal',
+  'Lainnya',
+];
 const CANCEL_REASONS = ['Salah input', 'Harga berubah', 'Kebutuhan pelanggan berubah', 'Lainnya'];
-
-const pageSizes = ['10', '20', '50'].map((v) => ({ value: v, label: `${v} / hal` }));
 
 // P13: rincian dan form penawaran punya alamatnya sendiri, bukan state lokal.
 const goForm = (v) => {
@@ -459,11 +451,6 @@ export default function Quotes({ params }) {
     });
   }, [quotes, contactsById, tab, query]);
 
-  const size = Number(pageSize);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / size));
-  const current = Math.min(page, totalPages);
-  const pageRows = filtered.slice((current - 1) * size, current * size);
-
   const detail = quotes.find((q) => q.id === detailId);
   const dialogQuote = dialog && quotes.find((q) => q.id === dialog.id);
 
@@ -563,137 +550,41 @@ export default function Quotes({ params }) {
         ))}
       </SimpleGrid>
 
-      <Card withBorder radius="lg" padding="lg" bg="white">
-        {/* Garis bawah tab menembus padding kartu sampai tepi kiri-kanan. */}
-        <Group
-          gap={4}
-          mx="calc(var(--mantine-spacing-lg) * -1)"
-          px="lg"
-          pb="md"
-          mb="md"
-          style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}
-        >
-          {tabs.map((t) => {
-            const active = tab === t.value;
-            return (
-              <Button
-                key={t.value}
-                size="sm"
-                radius="md"
-                variant={active ? 'filled' : 'subtle'}
-                color={active ? 'primary.9' : 'slate.7'}
-                fw={active ? 700 : 500}
-                fz="xs"
-                onClick={() => {
-                  setTab(t.value);
-                  setPage(1);
-                }}
-              >
-                {t.label} ({tabCounts[t.value]})
-              </Button>
-            );
-          })}
-        </Group>
-
-        <TextInput
-          placeholder="Cari nomor penawaran, pelanggan, atau referensi..."
-          size="sm"
-          radius="md"
-          w={320}
-          maw="100%"
-          mb="md"
-          leftSection={<MagnifyingGlass size={14} />}
-          value={query}
-          onChange={(e) => {
-            setQuery(e.currentTarget.value);
+      <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
+        <TabBar
+          tabs={tabs.map((t) => ({ ...t, label: `${t.label} (${tabCounts[t.value]})` }))}
+          value={tab}
+          onChange={(v) => {
+            setTab(v);
             setPage(1);
           }}
         />
-
-        <Box
-          className="table-frame"
-          style={{
-            border: '1px solid var(--mantine-color-gray-3)',
-            borderRadius: 'var(--mantine-radius-md)',
-            overflow: 'hidden',
+        <ListShell
+          query={query}
+          onQuery={(v) => {
+            setQuery(v);
+            setPage(1);
           }}
-        >
-          <ScrollArea type="auto">
-            <Table
-              verticalSpacing="sm"
-              horizontalSpacing="md"
-              miw={980}
-              highlightOnHover
-              styles={{
-                th: {
-                  fontSize: 'var(--mantine-font-size-xs)',
-                  color: 'var(--mantine-color-slate-7)',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                },
-              }}
-            >
-              <Table.Thead bg="slate.0">
-                <Table.Tr>
-                  <Table.Th>No. Penawaran</Table.Th>
-                  <Table.Th>Pelanggan</Table.Th>
-                  <Table.Th>Tanggal</Table.Th>
-                  <Table.Th>Berlaku sampai</Table.Th>
-                  <Table.Th ta="right">Nilai Penawaran</Table.Th>
-                  <Table.Th ta="center">Status</Table.Th>
-                  <Table.Th ta="center" w={60}>
-                    Aksi
-                  </Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {pageRows.map((q) => (
-                  <QuoteRow
-                    key={q.id}
-                    quote={q}
-                    onOpen={() => openDetail(q.id)}
-                    actions={actions}
-                  />
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        </Box>
-
-        {filtered.length === 0 && (
-          <Center py="xl">
-            <Text fz="sm" c="slate.6">
-              Tidak ada penawaran yang cocok.
-            </Text>
-          </Center>
-        )}
-
-        <Group justify="space-between" mt="md" gap="sm">
-          <Text fz="xs" c="slate.7">
-            Menampilkan {pageRows.length} dari {filtered.length} data penawaran
-          </Text>
-          <Group gap="sm">
-            <Select
-              size="xs"
-              radius="md"
-              w={96}
-              allowDeselect={false}
-              data={pageSizes}
-              value={pageSize}
-              onChange={(v) => {
-                setPageSize(v);
-                setPage(1);
-              }}
-            />
-            <Pagination
-              size="sm"
-              radius="md"
-              total={totalPages}
-              value={current}
-              onChange={setPage}
-            />
-          </Group>
-        </Group>
+          placeholder="Cari nomor penawaran, pelanggan, atau referensi..."
+          head={[
+            { label: 'No. Penawaran' },
+            { label: 'Pelanggan' },
+            { label: 'Tanggal' },
+            { label: 'Berlaku sampai' },
+            { label: 'Nilai Penawaran', align: 'right' },
+            { label: 'Status', align: 'center' },
+            { label: 'Aksi', align: 'center', w: 60 },
+          ]}
+          rows={filtered.map((q) => (
+            <QuoteRow key={q.id} quote={q} onOpen={() => openDetail(q.id)} actions={actions} />
+          ))}
+          noun="penawaran"
+          minWidth={980}
+          page={page}
+          setPage={setPage}
+          pageSize={pageSize}
+          setPageSize={setPageSize}
+        />
       </Card>
 
       {modals}

@@ -4,17 +4,12 @@ import {
   Box,
   Button,
   Card,
-  Center,
   Group,
   Menu,
-  Pagination,
-  ScrollArea,
-  Select,
   SimpleGrid,
   Stack,
   Table,
   Text,
-  TextInput,
   ThemeIcon,
   UnstyledButton,
 } from '@mantine/core';
@@ -29,7 +24,6 @@ import {
   EnvelopeSimple,
   Eye,
   Invoice,
-  MagnifyingGlass,
   PaperPlaneTilt,
   PencilSimple,
   Plus,
@@ -37,6 +31,7 @@ import {
   Trash,
 } from '@/components/Icon.jsx';
 import { useData } from '@/lib/store.jsx';
+import { ListShell, TabBar } from '@/pages/Pembelian/components.jsx';
 import { toCustomer } from '@/pages/Kontak/utils.js';
 import { CopyIcon, PageIntro, StatusBadge } from './components.jsx';
 import { DeleteModal, SendModal } from './Dialogs.jsx';
@@ -59,14 +54,7 @@ import {
   orderStatus,
   orderValueSplit,
 } from './orders.js';
-import {
-  computeTotals,
-  formatDate,
-  nowIso,
-  rupiah,
-  rupiahShort,
-  useCustomer,
-} from './utils.js';
+import { computeTotals, formatDate, nowIso, rupiah, rupiahShort, useCustomer } from './utils.js';
 
 const tabs = [
   {
@@ -77,8 +65,6 @@ const tabs = [
   { value: 'done', label: 'Selesai', match: (o) => orderStatus(o) === 'invoiced' },
   { value: 'cancelled', label: 'Dibatalkan', match: (o) => orderStatus(o) === 'cancelled' },
 ];
-
-const pageSizes = ['10', '20', '50'].map((v) => ({ value: v, label: `${v} / hal` }));
 
 // S14: rincian dan form pesanan punya alamatnya sendiri, bukan state lokal.
 const goForm = (v) => {
@@ -384,11 +370,6 @@ export default function Orders({ params }) {
     });
   }, [orders, contactsById, tab, query]);
 
-  const size = Number(pageSize);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / size));
-  const current = Math.min(page, totalPages);
-  const pageRows = filtered.slice((current - 1) * size, current * size);
-
   const detail = orders.find((o) => o.id === detailId);
   const dialogOrder = dialog && orders.find((o) => o.id === dialog.id);
 
@@ -458,131 +439,41 @@ export default function Orders({ params }) {
         ))}
       </SimpleGrid>
 
-      <Card withBorder radius="lg" padding="lg" bg="white">
-        {/* Garis bawah tab menembus padding kartu sampai tepi kiri-kanan. */}
-        <Group
-          gap={4}
-          mx="calc(var(--mantine-spacing-lg) * -1)"
-          px="lg"
-          pb="md"
-          mb="md"
-          style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}
-        >
-          {tabs.map((t) => {
-            const active = tab === t.value;
-            return (
-              <Button
-                key={t.value}
-                size="sm"
-                radius="md"
-                variant={active ? 'filled' : 'subtle'}
-                color={active ? 'primary.9' : 'slate.7'}
-                fw={active ? 700 : 500}
-                fz="xs"
-                onClick={() => {
-                  setTab(t.value);
-                  setPage(1);
-                }}
-              >
-                {t.label} ({tabCounts[t.value]})
-              </Button>
-            );
-          })}
-        </Group>
-
-        <TextInput
-          placeholder="Cari nomor pesanan, pelanggan, atau referensi..."
-          size="sm"
-          radius="md"
-          w={320}
-          maw="100%"
-          mb="md"
-          leftSection={<MagnifyingGlass size={14} />}
-          value={query}
-          onChange={(e) => {
-            setQuery(e.currentTarget.value);
+      <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
+        <TabBar
+          tabs={tabs.map((t) => ({ ...t, label: `${t.label} (${tabCounts[t.value]})` }))}
+          value={tab}
+          onChange={(v) => {
+            setTab(v);
             setPage(1);
           }}
         />
-
-        <Box
-          className="table-frame"
-          style={{
-            border: '1px solid var(--mantine-color-gray-3)',
-            borderRadius: 'var(--mantine-radius-md)',
-            overflow: 'hidden',
+        <ListShell
+          query={query}
+          onQuery={(v) => {
+            setQuery(v);
+            setPage(1);
           }}
-        >
-          <ScrollArea type="auto">
-            <Table
-              verticalSpacing="sm"
-              horizontalSpacing="md"
-              miw={960}
-              highlightOnHover
-              styles={{
-                th: {
-                  fontSize: 'var(--mantine-font-size-xs)',
-                  color: 'var(--mantine-color-slate-7)',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                },
-              }}
-            >
-              <Table.Thead bg="slate.0">
-                <Table.Tr>
-                  <Table.Th>No. Pesanan</Table.Th>
-                  <Table.Th>Pelanggan</Table.Th>
-                  <Table.Th>Tanggal</Table.Th>
-                  <Table.Th>Target selesai</Table.Th>
-                  <Table.Th ta="right">Nilai Pesanan</Table.Th>
-                  <Table.Th ta="center">Status</Table.Th>
-                  <Table.Th ta="center" w={60}>
-                    Aksi
-                  </Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {pageRows.map((o) => (
-                  <OrderRow
-                    key={o.id}
-                    order={o}
-                    onOpen={() => openDetail(o.id)}
-                    actions={actions}
-                  />
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        </Box>
-
-        {filtered.length === 0 && (
-          <Center py="xl">
-            <Text fz="sm" c="slate.6">
-              Tidak ada pesanan yang cocok.
-            </Text>
-          </Center>
-        )}
-
-        <Group justify="space-between" mt="md" gap="sm">
-          <Text fz="xs" c="slate.7">
-            Menampilkan {pageRows.length} dari {filtered.length} data pesanan
-          </Text>
-          <Group gap="sm">
-            <Select
-              size="xs"
-              radius="md"
-              w={96}
-              allowDeselect={false}
-              data={pageSizes}
-              value={pageSize}
-              onChange={(v) => {
-                setPageSize(v);
-                setPage(1);
-              }}
-            />
-            <Pagination size="sm" radius="md" total={totalPages} value={current} onChange={setPage} />
-          </Group>
-        </Group>
+          placeholder="Cari nomor pesanan, pelanggan, atau referensi..."
+          head={[
+            { label: 'No. Pesanan' },
+            { label: 'Pelanggan' },
+            { label: 'Tanggal' },
+            { label: 'Target selesai' },
+            { label: 'Nilai Pesanan', align: 'right' },
+            { label: 'Status', align: 'center' },
+            { label: 'Aksi', align: 'center', w: 60 },
+          ]}
+          rows={filtered.map((o) => (
+            <OrderRow key={o.id} order={o} onOpen={() => openDetail(o.id)} actions={actions} />
+          ))}
+          noun="pesanan"
+          minWidth={960}
+          page={page}
+          setPage={setPage}
+          pageSize={pageSize}
+          setPageSize={setPageSize}
+        />
       </Card>
 
       {modals}

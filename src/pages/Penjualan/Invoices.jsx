@@ -4,17 +4,13 @@ import {
   Box,
   Button,
   Card,
-  Center,
   Group,
   Menu,
-  Pagination,
-  ScrollArea,
   Select,
   SimpleGrid,
   Stack,
   Table,
   Text,
-  TextInput,
   ThemeIcon,
   Tooltip,
   UnstyledButton,
@@ -36,7 +32,6 @@ import {
   FileText,
   Invoice,
   Link,
-  MagnifyingGlass,
   Notebook,
   PaperPlaneTilt,
   PencilSimple,
@@ -46,13 +41,7 @@ import {
   Warning,
 } from '@/components/Icon.jsx';
 import { CopyIcon, PageIntro, StatusBadge } from './components.jsx';
-import {
-  BulkBillingModal,
-  DeleteModal,
-  JournalModal,
-  ReasonModal,
-  SendModal,
-} from './Dialogs.jsx';
+import { BulkBillingModal, DeleteModal, JournalModal, ReasonModal, SendModal } from './Dialogs.jsx';
 import PaymentModal from './PaymentModal.jsx';
 import SaleDetail from './SaleDetail.jsx';
 import { downloadInvoice } from './invoicePdf.js';
@@ -84,6 +73,7 @@ import {
   useCustomer,
 } from './utils.js';
 import { useData } from '@/lib/store.jsx';
+import { ListShell, TabBar } from '@/pages/Pembelian/components.jsx';
 import { canBeInvoiced, formatAddress, toCustomer } from '@/pages/Kontak/utils.js';
 
 // Dua tab: belum terbit dan sudah terbit. Tab ini soal status dokumen — status
@@ -122,8 +112,6 @@ const VOID_REASONS = [
   'Transaksi batal',
   'Lainnya',
 ];
-
-const pageSizes = ['10', '20', '50'].map((v) => ({ value: v, label: `${v} / hal` }));
 
 // Dokumen asal faktur, bila ada dan masih ketemu (S5).
 const sourceOf = (sale, orders, quotes) => {
@@ -192,11 +180,7 @@ function SaleRow({ sale, onOpen, onPay, onCreateLink, actions }) {
           </UnstyledButton>
           <CopyIcon value={sale.number} />
           {sent && (
-            <Tooltip
-              withArrow
-              fz="xs"
-              label={`Terkirim ${formatDateTime(sent.at)} · ${sent.to}`}
-            >
+            <Tooltip withArrow fz="xs" label={`Terkirim ${formatDateTime(sent.at)} · ${sent.to}`}>
               <span style={{ display: 'inline-flex' }}>
                 <PaperPlaneTilt size={13} color="var(--mantine-color-slate-5)" />
               </span>
@@ -458,7 +442,10 @@ export default function Invoices({ params }) {
     const at = nowIso();
     updateSale(saleId, (s) =>
       logActivity(
-        { ...s, payments: s.payments.map((p, i) => (i === index ? voidPayment(p, reason, at) : p)) },
+        {
+          ...s,
+          payments: s.payments.map((p, i) => (i === index ? voidPayment(p, reason, at) : p)),
+        },
         'paymentVoided',
         `${rupiah(payment.amount)} · ${reason}`,
       ),
@@ -500,10 +487,7 @@ export default function Invoices({ params }) {
       ),
     );
     closeDialog();
-    toast(
-      resend ? 'Faktur dikirim ulang' : 'Faktur terkirim',
-      `${sale.number} dikirim ke ${to}.`,
-    );
+    toast(resend ? 'Faktur dikirim ulang' : 'Faktur terkirim', `${sale.number} dikirim ke ${to}.`);
   };
 
   // #8: pembatalan tidak menghapus apa pun — fakturnya tetap ada, jurnalnya dibalik.
@@ -516,8 +500,7 @@ export default function Invoices({ params }) {
   };
 
   // #29: denda ditagih lewat faktur tersendiri supaya nilainya terpisah dari pokok.
-  const toLateFeeInvoice = (sale) =>
-    goForm({ name: 'sale-new', from: `late:${sale.id}` });
+  const toLateFeeInvoice = (sale) => goForm({ name: 'sale-new', from: `late:${sale.id}` });
 
   const deleteSale = (sale) => {
     setSales((list) => list.filter((s) => s.id !== sale.id));
@@ -663,11 +646,6 @@ export default function Invoices({ params }) {
     });
   }, [sales, contactsById, tab, status, query]);
 
-  const size = Number(pageSize);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / size));
-  const current = Math.min(page, totalPages);
-  const pageRows = filtered.slice((current - 1) * size, current * size);
-
   const detail = sales.find((s) => s.id === detailId);
   const paying = sales.find((s) => s.id === payId);
   // Dokumen dialog dibaca ulang dari daftar agar isinya ikut perubahan terbaru.
@@ -792,157 +770,68 @@ export default function Invoices({ params }) {
         ))}
       </SimpleGrid>
 
-      <Card withBorder radius="lg" padding="lg" bg="white">
-        {/* Garis bawah tab menembus padding kartu sampai tepi kiri-kanan. */}
-        <Group
-          gap={4}
-          mx="calc(var(--mantine-spacing-lg) * -1)"
-          px="lg"
-          pb="md"
-          mb="md"
-          style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}
-        >
-          {tabs.map((t) => {
-            const active = tab === t.value;
-            return (
-              <Button
-                key={t.value}
-                size="sm"
-                radius="md"
-                variant={active ? 'filled' : 'subtle'}
-                color={active ? 'primary.9' : 'slate.7'}
-                leftSection={<t.icon size={16} />}
-                fw={active ? 700 : 500}
-                fz="xs"
-                onClick={() => {
-                  setTab(t.value);
-                  setPage(1);
-                }}
-              >
-                {t.label} ({tabCounts[t.value]})
-              </Button>
-            );
-          })}
-        </Group>
-
-        <Group gap="sm" mb="md">
-          <TextInput
-            placeholder="Cari nomor transaksi, pelanggan, atau referensi..."
-            size="sm"
-            radius="md"
-            w={320}
-            maw="100%"
-            leftSection={<MagnifyingGlass size={14} />}
-            value={query}
-            onChange={(e) => {
-              setQuery(e.currentTarget.value);
-              setPage(1);
-            }}
-          />
-          {tab === 'sent' && (
-            <Select
-              size="sm"
-              radius="md"
-              w={170}
-              allowDeselect={false}
-              aria-label="Saring status pembayaran"
-              data={statusFilters.map((f) => ({ value: f.value, label: f.label }))}
-              value={status}
-              onChange={(v) => {
-                setStatus(v);
-                setPage(1);
-              }}
-            />
-          )}
-        </Group>
-
-        <Box
-          className="table-frame"
-          style={{
-            border: '1px solid var(--mantine-color-gray-3)',
-            borderRadius: 'var(--mantine-radius-md)',
-            overflow: 'hidden',
+      <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
+        <TabBar
+          tabs={tabs.map((t) => ({ ...t, label: `${t.label} (${tabCounts[t.value]})` }))}
+          value={tab}
+          onChange={(v) => {
+            setTab(v);
+            setPage(1);
           }}
-        >
-          <ScrollArea type="auto">
-            <Table
-              verticalSpacing="sm"
-              horizontalSpacing="md"
-              miw={1100}
-              highlightOnHover
-              styles={{
-                th: {
-                  fontSize: 'var(--mantine-font-size-xs)',
-                  color: 'var(--mantine-color-slate-7)',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                },
-              }}
-            >
-              <Table.Thead bg="slate.0">
-                <Table.Tr>
-                  <Table.Th>No. Transaksi</Table.Th>
-                  <Table.Th>Pelanggan</Table.Th>
-                  <Table.Th>Tanggal</Table.Th>
-                  <Table.Th>Jatuh Tempo</Table.Th>
-                  <Table.Th ta="right">Total Faktur</Table.Th>
-                  <Table.Th ta="right">Sisa Tagihan</Table.Th>
-                  <Table.Th ta="center">Status</Table.Th>
-                  <Table.Th ta="center" w={60}>
-                    Aksi
-                  </Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {pageRows.map((s) => (
-                  <SaleRow
-                    key={s.id}
-                    sale={s}
-                    onOpen={() => openDetail(s.id)}
-                    onPay={() => setPayId(s.id)}
-                    onCreateLink={() => createLink(s.id)}
-                    actions={actions}
-                  />
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        </Box>
-
-        {filtered.length === 0 && (
-          <Center py="xl">
-            <Text fz="sm" c="slate.6">
-              Tidak ada faktur penjualan yang cocok.
-            </Text>
-          </Center>
-        )}
-
-        <Group justify="space-between" mt="md" gap="sm">
-          <Text fz="xs" c="slate.7">
-            Menampilkan {pageRows.length} dari {filtered.length} data faktur
-          </Text>
-          <Group gap="sm">
-            <Select
-              size="xs"
-              radius="md"
-              w={96}
-              allowDeselect={false}
-              data={pageSizes}
-              value={pageSize}
-              onChange={(v) => {
-                setPageSize(v);
-                setPage(1);
-              }}
+        />
+        <ListShell
+          query={query}
+          onQuery={(v) => {
+            setQuery(v);
+            setPage(1);
+          }}
+          placeholder="Cari nomor transaksi, pelanggan, atau referensi..."
+          filters={
+            <>
+              {tab === 'sent' && (
+                <Select
+                  size="sm"
+                  radius="md"
+                  w={170}
+                  allowDeselect={false}
+                  aria-label="Saring status pembayaran"
+                  data={statusFilters.map((f) => ({ value: f.value, label: f.label }))}
+                  value={status}
+                  onChange={(v) => {
+                    setStatus(v);
+                    setPage(1);
+                  }}
+                />
+              )}
+            </>
+          }
+          head={[
+            { label: 'No. Transaksi' },
+            { label: 'Pelanggan' },
+            { label: 'Tanggal' },
+            { label: 'Jatuh Tempo' },
+            { label: 'Total Faktur', align: 'right' },
+            { label: 'Sisa Tagihan', align: 'right' },
+            { label: 'Status', align: 'center' },
+            { label: 'Aksi', align: 'center', w: 60 },
+          ]}
+          rows={filtered.map((s) => (
+            <SaleRow
+              key={s.id}
+              sale={s}
+              onOpen={() => openDetail(s.id)}
+              onPay={() => setPayId(s.id)}
+              onCreateLink={() => createLink(s.id)}
+              actions={actions}
             />
-            <Pagination
-              size="sm"
-              radius="md"
-              total={totalPages}
-              value={current}
-              onChange={setPage}
-            />
-          </Group>
-        </Group>
+          ))}
+          noun="faktur"
+          minWidth={1100}
+          page={page}
+          setPage={setPage}
+          pageSize={pageSize}
+          setPageSize={setPageSize}
+        />
       </Card>
 
       {modals}

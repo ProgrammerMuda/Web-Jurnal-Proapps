@@ -22,6 +22,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { AccountLink } from '@/pages/LaporanKeuangan/StatementParts.jsx';
 import { useData } from '@/lib/store.jsx';
+import { TabBar } from '@/pages/Pembelian/components.jsx';
 import { accountBalances, buildLedger } from '@/pages/LaporanKeuangan/ledger.js';
 import { TODAY } from '@/pages/Penjualan/data.js';
 import AccountDetail from './AccountDetail.jsx';
@@ -173,7 +174,16 @@ function StatCard({ stat }) {
   );
 }
 
-function AccountRow({ account, balance, depth, expandable, expanded, onToggle, selected, onSelect }) {
+function AccountRow({
+  account,
+  balance,
+  depth,
+  expandable,
+  expanded,
+  onToggle,
+  selected,
+  onSelect,
+}) {
   const isSub = depth > 0;
   return (
     <Table.Tr bg={expanded ? 'slate.0' : undefined}>
@@ -272,7 +282,13 @@ function AccountRow({ account, balance, depth, expandable, expanded, onToggle, s
         </Text>
       </Table.Td>
       <Table.Td ta="right">
-        <Text fz="sm" fw={700} c={toCents(balance) < 0 ? 'red.8' : 'slate.9'} ff="monospace" style={{ whiteSpace: 'nowrap' }}>
+        <Text
+          fz="sm"
+          fw={700}
+          c={toCents(balance) < 0 ? 'red.8' : 'slate.9'}
+          ff="monospace"
+          style={{ whiteSpace: 'nowrap' }}
+        >
           {formatBalance(balance)}
         </Text>
       </Table.Td>
@@ -301,7 +317,11 @@ export default function DaftarAkun() {
   if (journal) return <JournalDetail key={hash} id={decodeURIComponent(journal[1])} />;
   const detail = parseHash(hash);
   // key: pindah ke akun lain atau periode lain memasang ulang halaman detail dengan filter barunya.
-  return detail ? <AccountDetail key={hash} code={detail.code} initialRange={detail.range} /> : <DaftarAkunList />;
+  return detail ? (
+    <AccountDetail key={hash} code={detail.code} initialRange={detail.range} />
+  ) : (
+    <DaftarAkunList />
+  );
 }
 
 function DaftarAkunList() {
@@ -376,29 +396,23 @@ function DaftarAkunList() {
         ))}
       </SimpleGrid>
 
-      <Card withBorder radius="lg" padding="lg" bg="white">
-        <Group gap={4} mb="md">
-          {tabs.map((t) => {
-            const active = tab === t.value;
-            return (
-              <Button
-                key={t.value}
-                size="sm"
-                radius="md"
-                variant={active ? 'filled' : 'subtle'}
-                color={active ? 'primary.9' : 'slate.7'}
-                leftSection={<t.icon size={16} />}
-                fw={active ? 700 : 500}
-                fz="xs"
-                onClick={() => setTab(t.value)}
-              >
-                {t.label} ({accounts.filter(t.match).length})
-              </Button>
-            );
-          })}
-        </Group>
+      <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
+        <TabBar
+          tabs={tabs.map((t) => ({
+            ...t,
+            label: `${t.label} (${accounts.filter(t.match).length})`,
+          }))}
+          value={tab}
+          onChange={setTab}
+        />
 
-        <Group gap="sm" mb="md">
+        <Group
+          gap="md"
+          px="lg"
+          py="sm"
+          bg="slate.0"
+          style={{ borderBottom: '1px solid var(--mantine-color-gray-3)' }}
+        >
           <TextInput
             placeholder="Cari kode atau nama akun..."
             size="sm"
@@ -427,80 +441,81 @@ function DaftarAkunList() {
           />
         </Group>
 
-        {/* Border + radius di pembungkus (radius md = sama dengan input pencarian & tab) */}
-        <Box
-          className="table-frame"
-          style={{
-            // Warna sama dengan garis antar-baris tabel (--table-border-color Mantine)
-            border: '1px solid var(--mantine-color-gray-3)',
-            borderRadius: 'var(--mantine-radius-md)',
-            overflow: 'hidden',
-          }}
-        >
-          <ScrollArea type="auto">
-            <Table
-              verticalSpacing="sm"
-              horizontalSpacing="md"
-              miw={1200}
-              highlightOnHover
-              styles={{
-                th: {
-                  fontSize: 'var(--mantine-font-size-xs)',
-                  color: 'var(--mantine-color-slate-7)',
-                  textTransform: 'uppercase',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                },
-              }}
-            >
-              <Table.Thead bg="slate.0">
-                <Table.Tr>
-                  <Table.Th w={44}>
-                    <Checkbox
-                      size="xs"
-                      radius="sm"
-                      checked={allSelected}
-                      indeterminate={someSelected && !allSelected}
-                      onChange={toggleAll}
-                      aria-label="Pilih semua akun"
+        <Box p="lg">
+          {/* Border + radius di pembungkus (radius md = sama dengan input pencarian & tab) */}
+          <Box
+            className="table-frame"
+            style={{
+              // Warna sama dengan garis antar-baris tabel (--table-border-color Mantine)
+              border: '1px solid var(--mantine-color-gray-3)',
+              borderRadius: 'var(--mantine-radius-md)',
+              overflow: 'hidden',
+            }}
+          >
+            <ScrollArea type="auto">
+              <Table
+                verticalSpacing="sm"
+                horizontalSpacing="md"
+                miw={1200}
+                highlightOnHover
+                styles={{
+                  th: {
+                    fontSize: 'var(--mantine-font-size-xs)',
+                    color: 'var(--mantine-color-slate-7)',
+                    textTransform: 'uppercase',
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                  },
+                }}
+              >
+                <Table.Thead bg="slate.0">
+                  <Table.Tr>
+                    <Table.Th w={44}>
+                      <Checkbox
+                        size="xs"
+                        radius="sm"
+                        checked={allSelected}
+                        indeterminate={someSelected && !allSelected}
+                        onChange={toggleAll}
+                        aria-label="Pilih semua akun"
+                      />
+                    </Table.Th>
+                    <Table.Th w={170}>Kode Akun</Table.Th>
+                    <Table.Th miw={96}>Status</Table.Th>
+                    <Table.Th>Nama Akun</Table.Th>
+                    <Table.Th>Kategori</Table.Th>
+                    <Table.Th miw={110}>Posisi Saldo</Table.Th>
+                    <Table.Th miw={116}>Akses</Table.Th>
+                    <Table.Th>Pajak</Table.Th>
+                    <Table.Th ta="right">Saldo Akhir</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {visibleRows.map(({ account, depth, expandable, open }) => (
+                    <AccountRow
+                      key={account.code}
+                      account={account}
+                      balance={balances[account.code] ?? 0}
+                      depth={depth}
+                      expandable={expandable}
+                      expanded={!!open}
+                      onToggle={() => toggleIn(setExpanded, account.code)}
+                      selected={selected.has(account.code)}
+                      onSelect={() => toggleIn(setSelected, account.code)}
                     />
-                  </Table.Th>
-                  <Table.Th w={170}>Kode Akun</Table.Th>
-                  <Table.Th miw={96}>Status</Table.Th>
-                  <Table.Th>Nama Akun</Table.Th>
-                  <Table.Th>Kategori</Table.Th>
-                  <Table.Th miw={110}>Posisi Saldo</Table.Th>
-                  <Table.Th miw={116}>Akses</Table.Th>
-                  <Table.Th>Pajak</Table.Th>
-                  <Table.Th ta="right">Saldo Akhir</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {visibleRows.map(({ account, depth, expandable, open }) => (
-                  <AccountRow
-                    key={account.code}
-                    account={account}
-                    balance={balances[account.code] ?? 0}
-                    depth={depth}
-                    expandable={expandable}
-                    expanded={!!open}
-                    onToggle={() => toggleIn(setExpanded, account.code)}
-                    selected={selected.has(account.code)}
-                    onSelect={() => toggleIn(setSelected, account.code)}
-                  />
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+            {visibleRows.length === 0 && (
+              <Center py="xl">
+                <Text fz="sm" c="slate.6">
+                  Belum ada data akun yang sesuai kriteria
+                </Text>
+              </Center>
+            )}
+          </Box>
         </Box>
-
-        {visibleRows.length === 0 && (
-          <Center py="xl">
-            <Text fz="sm" c="slate.6">
-              Belum ada data akun yang sesuai kriteria
-            </Text>
-          </Center>
-        )}
       </Card>
     </Stack>
   );

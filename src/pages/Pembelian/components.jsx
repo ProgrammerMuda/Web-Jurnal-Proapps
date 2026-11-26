@@ -484,7 +484,7 @@ export function TabBar({ tabs, value, onChange }) {
             color={active ? 'primary.9' : 'slate.7'}
             bg={active ? 'slate.1' : undefined}
             c={active ? 'primary.9' : 'slate.7'}
-            leftSection={<t.icon size={16} />}
+            leftSection={t.icon ? <t.icon size={16} /> : undefined}
             fw={active ? 700 : 500}
             fz="xs"
             onClick={() => onChange(t.value)}

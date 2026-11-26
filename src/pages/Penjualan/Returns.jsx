@@ -8,9 +8,7 @@ import {
   Center,
   Group,
   Menu,
-  Pagination,
   ScrollArea,
-  Select,
   SimpleGrid,
   Stack,
   Table,
@@ -39,6 +37,7 @@ import {
   Trash,
 } from '@/components/Icon.jsx';
 import { useData } from '@/lib/store.jsx';
+import { ListShell, TabBar } from '@/pages/Pembelian/components.jsx';
 import { toCustomer } from '@/pages/Kontak/utils.js';
 import { CopyIcon, PageIntro, StatusBadge } from './components.jsx';
 import { TODAY } from './data.js';
@@ -64,7 +63,15 @@ import {
   settlementLabel,
   splitSettlement,
 } from './returns.js';
-import { computeTotals, formatDate, logActivity, nowIso, rupiah, rupiahShort, useCustomer } from './utils.js';
+import {
+  computeTotals,
+  formatDate,
+  logActivity,
+  nowIso,
+  rupiah,
+  rupiahShort,
+  useCustomer,
+} from './utils.js';
 
 // B12: nama tab mengikuti status returnya, supaya retur berstatus SELESAI tidak
 // tersembunyi di tab yang menamai dirinya lain.
@@ -87,8 +94,6 @@ const VOID_REASONS = [
   'Lainnya',
 ];
 
-const pageSizes = ['10', '20', '50'].map((v) => ({ value: v, label: `${v} / hal` }));
-
 const goForm = (v) => {
   window.location.hash = formatHash(v);
   window.scrollTo({ top: 0 });
@@ -100,7 +105,8 @@ const settlementSummary = (ret, invoiceNumber) => {
   const kredit = creditPart(ret);
   if (dipotong > 0 && kredit > 0)
     return `${ret.number}: ${rupiah(dipotong)} memotong ${invoiceNumber}, ${rupiah(kredit)} jadi kredit pelanggan.`;
-  if (dipotong > 0) return `${ret.number} memotong tagihan ${invoiceNumber} sebesar ${rupiah(dipotong)}.`;
+  if (dipotong > 0)
+    return `${ret.number} memotong tagihan ${invoiceNumber} sebesar ${rupiah(dipotong)}.`;
   return `${ret.number} menjadi kredit pelanggan sebesar ${rupiah(kredit)}.`;
 };
 
@@ -188,11 +194,7 @@ function PickInvoiceModal({ sales, contactsById, onClose, onPick }) {
                   const t = computeTotals(s);
                   const c = toCustomer(contactsById[s.customerId]);
                   return (
-                    <Table.Tr
-                      key={s.id}
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => onPick(s)}
-                    >
+                    <Table.Tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => onPick(s)}>
                       <Table.Td>
                         <Text fz="sm" fw={700} c="primary.9">
                           {s.number}
@@ -414,9 +416,7 @@ export default function Returns({ params }) {
   };
 
   const stats = useMemo(() => {
-    const aktif = salesReturns.filter((r) =>
-      ['issued', 'completed'].includes(returnStatus(r)),
-    );
+    const aktif = salesReturns.filter((r) => ['issued', 'completed'].includes(returnStatus(r)));
     // Bulan berjalan menurut tanggal aplikasi, sama seperti halaman lain.
     const bulan = TODAY.slice(0, 7);
     const bulanIni = aktif.filter((r) => r.date.startsWith(bulan));
@@ -465,11 +465,6 @@ export default function Returns({ params }) {
       return [ret.number, ret.invoiceNumber, c?.name].some((v) => v?.toLowerCase().includes(q));
     });
   }, [salesReturns, contactsById, tab, query]);
-
-  const size = Number(pageSize);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / size));
-  const current = Math.min(page, totalPages);
-  const pageRows = filtered.slice((current - 1) * size, current * size);
 
   const detail = salesReturns.find((r) => r.id === detailId);
   const dialogReturn = dialog && salesReturns.find((r) => r.id === dialog.id);
@@ -532,8 +527,8 @@ export default function Returns({ params }) {
           }
         >
           <Text fz="xs" c="slate.6">
-            Draf ini belum pernah diterbitkan, jadi penghapusannya tidak memengaruhi tagihan
-            faktur {dialogReturn.invoiceNumber} maupun jurnal.
+            Draf ini belum pernah diterbitkan, jadi penghapusannya tidak memengaruhi tagihan faktur{' '}
+            {dialogReturn.invoiceNumber} maupun jurnal.
           </Text>
         </FormModal>
       )}
@@ -583,133 +578,48 @@ export default function Returns({ params }) {
         ))}
       </SimpleGrid>
 
-      <Card withBorder radius="lg" padding="lg" bg="white">
-        {/* Garis bawah tab menembus padding kartu sampai tepi kiri-kanan. */}
-        <Group
-          gap={4}
-          mx="calc(var(--mantine-spacing-lg) * -1)"
-          px="lg"
-          pb="md"
-          mb="md"
-          style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}
-        >
-          {tabs.map((t) => {
-            const active = tab === t.value;
-            return (
-              <Button
-                key={t.value}
-                size="sm"
-                radius="md"
-                variant={active ? 'filled' : 'subtle'}
-                color={active ? 'primary.9' : 'slate.7'}
-                fw={active ? 700 : 500}
-                fz="xs"
-                onClick={() => {
-                  setTab(t.value);
-                  setPage(1);
-                }}
-              >
-                {t.label} ({tabCounts[t.value]})
-              </Button>
-            );
-          })}
-        </Group>
-
-        <TextInput
-          placeholder="Cari nomor retur, faktur, atau pelanggan..."
-          size="sm"
-          radius="md"
-          w={320}
-          maw="100%"
-          mb="md"
-          leftSection={<MagnifyingGlass size={14} />}
-          value={query}
-          onChange={(e) => {
-            setQuery(e.currentTarget.value);
+      <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
+        <TabBar
+          tabs={tabs.map((t) => ({ ...t, label: `${t.label} (${tabCounts[t.value]})` }))}
+          value={tab}
+          onChange={(v) => {
+            setTab(v);
             setPage(1);
           }}
         />
-
-        <Box
-          className="table-frame"
-          style={{
-            border: '1px solid var(--mantine-color-gray-3)',
-            borderRadius: 'var(--mantine-radius-md)',
-            overflow: 'hidden',
+        <ListShell
+          query={query}
+          onQuery={(v) => {
+            setQuery(v);
+            setPage(1);
           }}
-        >
-          <ScrollArea type="auto">
-            <Table
-              verticalSpacing="sm"
-              horizontalSpacing="md"
-              miw={1040}
-              highlightOnHover
-              styles={{
-                th: {
-                  fontSize: 'var(--mantine-font-size-xs)',
-                  color: 'var(--mantine-color-slate-7)',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                },
-              }}
-            >
-              <Table.Thead bg="slate.0">
-                <Table.Tr>
-                  <Table.Th>No. Retur</Table.Th>
-                  <Table.Th>Faktur Sumber</Table.Th>
-                  <Table.Th>Pelanggan</Table.Th>
-                  <Table.Th>Tanggal</Table.Th>
-                  <Table.Th>Penyelesaian</Table.Th>
-                  <Table.Th ta="right">Nilai Retur</Table.Th>
-                  <Table.Th ta="center">Status</Table.Th>
-                  <Table.Th ta="center" w={60}>
-                    Aksi
-                  </Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {pageRows.map((r) => (
-                  <ReturnRow
-                    key={r.id}
-                    ret={r}
-                    onOpen={() => openDetail(r.id)}
-                    onOpenInvoice={() => openInvoice(r.invoiceId)}
-                    actions={actions}
-                  />
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        </Box>
-
-        {filtered.length === 0 && (
-          <Center py="xl">
-            <Text fz="sm" c="slate.6">
-              Tidak ada retur yang cocok.
-            </Text>
-          </Center>
-        )}
-
-        <Group justify="space-between" mt="md" gap="sm">
-          <Text fz="xs" c="slate.7">
-            Menampilkan {pageRows.length} dari {filtered.length} data retur
-          </Text>
-          <Group gap="sm">
-            <Select
-              size="xs"
-              radius="md"
-              w={96}
-              allowDeselect={false}
-              data={pageSizes}
-              value={pageSize}
-              onChange={(v) => {
-                setPageSize(v);
-                setPage(1);
-              }}
+          placeholder="Cari nomor retur, faktur, atau pelanggan..."
+          head={[
+            { label: 'No. Retur' },
+            { label: 'Faktur Sumber' },
+            { label: 'Pelanggan' },
+            { label: 'Tanggal' },
+            { label: 'Penyelesaian' },
+            { label: 'Nilai Retur', align: 'right' },
+            { label: 'Status', align: 'center' },
+            { label: 'Aksi', align: 'center', w: 60 },
+          ]}
+          rows={filtered.map((r) => (
+            <ReturnRow
+              key={r.id}
+              ret={r}
+              onOpen={() => openDetail(r.id)}
+              onOpenInvoice={() => openInvoice(r.invoiceId)}
+              actions={actions}
             />
-            <Pagination size="sm" radius="md" total={totalPages} value={current} onChange={setPage} />
-          </Group>
-        </Group>
+          ))}
+          noun="retur"
+          minWidth={1040}
+          page={page}
+          setPage={setPage}
+          pageSize={pageSize}
+          setPageSize={setPageSize}
+        />
       </Card>
 
       {modals}

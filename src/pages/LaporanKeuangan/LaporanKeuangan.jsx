@@ -1,7 +1,5 @@
 import {
-  Badge,
   Box,
-  Button,
   Card,
   Group,
   SimpleGrid,
@@ -31,6 +29,7 @@ import {
   Table,
   TrendUp,
 } from '@/components/Icon.jsx';
+import { TabBar } from '@/pages/Pembelian/components.jsx';
 import { categories, reports } from './data.js';
 import ArusKas from './ArusKas.jsx';
 import BukuBesar from './BukuBesar.jsx';
@@ -40,7 +39,14 @@ import Neraca from './Neraca.jsx';
 import NeracaSaldo from './NeracaSaldo.jsx';
 
 // Laporan yang sudah punya halaman: dibuka lewat #laporan/<key>.
-const READY = { 'arus-kas': ArusKas, 'buku-besar': BukuBesar, 'jurnal-umum': JurnalUmum, neraca: Neraca, 'laba-rugi': LabaRugi, 'neraca-saldo': NeracaSaldo };
+const READY = {
+  'arus-kas': ArusKas,
+  'buku-besar': BukuBesar,
+  'jurnal-umum': JurnalUmum,
+  neraca: Neraca,
+  'laba-rugi': LabaRugi,
+  'neraca-saldo': NeracaSaldo,
+};
 
 const tabIcons = {
   all: SquaresFour,
@@ -78,34 +84,6 @@ function PageIntro() {
         </Box>
       </Group>
     </Card>
-  );
-}
-
-function CategoryTab({ item, active, count, onClick }) {
-  const Icon = tabIcons[item.icon];
-  return (
-    <Button
-      size="sm"
-      radius="md"
-      variant={active ? 'filled' : 'subtle'}
-      color={active ? 'primary.9' : 'slate.7'}
-      leftSection={<Icon size={16} />}
-      rightSection={
-        <Badge
-          size="xs"
-          circle
-          variant={active ? 'white' : 'light'}
-          color={active ? 'primary.9' : 'slate'}
-        >
-          {count}
-        </Badge>
-      }
-      onClick={onClick}
-      fw={active ? 700 : 500}
-      fz="xs"
-    >
-      {item.label}
-    </Button>
   );
 }
 
@@ -155,7 +133,15 @@ export default function LaporanKeuangan() {
     window.location.hash = `laporan/${key}`;
     window.scrollTo({ top: 0 });
   };
-  return Report ? <Report onBack={() => { window.location.hash = 'laporan'; }} /> : <ReportHub onOpen={openReport} />;
+  return Report ? (
+    <Report
+      onBack={() => {
+        window.location.hash = 'laporan';
+      }}
+    />
+  ) : (
+    <ReportHub onOpen={openReport} />
+  );
 }
 
 function ReportHub({ onOpen }) {
@@ -186,41 +172,48 @@ function ReportHub({ onOpen }) {
     <Stack gap="lg" p="lg" maw={1440} mx="auto">
       <PageIntro />
 
-      <Card withBorder radius="lg" p="lg" bg="white">
-        <Group justify="space-between" mb="md" gap="sm">
-          <Group gap={4}>
-            {categories.map((c) => (
-              <CategoryTab
-                key={c.value}
-                item={c}
-                count={counts[c.value]}
-                active={category === c.value}
-                onClick={() => setCategory(c.value)}
-              />
-            ))}
-          </Group>
+      <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
+        <TabBar
+          tabs={categories.map((c) => ({
+            value: c.value,
+            icon: tabIcons[c.icon],
+            label: `${c.label} (${counts[c.value]})`,
+          }))}
+          value={category}
+          onChange={setCategory}
+        />
+        <Group
+          gap="md"
+          px="lg"
+          py="sm"
+          bg="slate.0"
+          style={{ borderBottom: '1px solid var(--mantine-color-gray-3)' }}
+        >
           <TextInput
             placeholder="Cari laporan keuangan..."
-            size="xs"
+            size="sm"
             radius="md"
-            w={260}
+            w={320}
+            maw="100%"
             leftSection={<MagnifyingGlass size={14} />}
             value={query}
             onChange={(e) => setQuery(e.currentTarget.value)}
           />
         </Group>
 
-        {visible.length ? (
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
-            {visible.map((r) => (
-              <ReportCard key={r.key} report={r} onOpen={() => onOpen(r.key)} />
-            ))}
-          </SimpleGrid>
-        ) : (
-          <Text ta="center" c="slate.6" fz="sm" py="xl">
-            Tidak ada laporan yang cocok dengan pencarian Anda.
-          </Text>
-        )}
+        <Box p="lg">
+          {visible.length ? (
+            <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
+              {visible.map((r) => (
+                <ReportCard key={r.key} report={r} onOpen={() => onOpen(r.key)} />
+              ))}
+            </SimpleGrid>
+          ) : (
+            <Text ta="center" c="slate.6" fz="sm" py="xl">
+              Tidak ada laporan yang cocok dengan pencarian Anda.
+            </Text>
+          )}
+        </Box>
       </Card>
     </Stack>
   );
