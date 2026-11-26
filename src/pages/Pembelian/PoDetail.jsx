@@ -154,12 +154,12 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const prs = pb.prs.filter((p) => p.poId === po.id);
   const returns = pb.returns.filter((r) => invoices.some((i) => i.id === r.invoiceId));
   // Ada pembayaran di muka? CBD/DP (barang) maupun termin jasa yang menagih di awal.
-  const hasDp = advancePct(po.term) > 0;
   const dpPr = prs.find((p) => p.kind === 'dp' && p.status !== 'ditolak');
   // Uang muka ditagih vendor lewat faktur uang muka dulu; PR-nya dibuat dari faktur itu.
   const dpInv = dpInvoiceOf(po.id, pb.invoices);
   // Status uang muka bertahap: belum ditagih -> belum dibayar -> lunas (atau dibatalkan resmi).
   const dp = dpState(po, pb.calc);
+  const hasDp = !!dp && dp.state !== 'dibatalkan';
   const waiver = po.dpWaiver;
   const waiverPending = waiver?.status === 'diajukan';
   // Jalan keluar resmi bila vendor tidak pernah menagih DP: selama faktur uang mukanya belum ada.
@@ -855,9 +855,9 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               )}
             </Section>
 
-            <Section divided flush icon={Money} title="Payment Request" description="Pembayaran DP dan pelunasan ke vendor" right={count(prs.length, 'dokumen')}>
+            <Section divided flush icon={Money} title="Payment Request" description={hasDp ? 'Pembayaran DP dan pelunasan ke vendor' : 'Pembayaran tagihan vendor'} right={count(prs.length, 'dokumen')}>
               {prs.length === 0 ? (
-                <Text fz="xs" c="slate.6" p="lg">{hasDp ? (dpInv ? `Faktur uang muka ${dpInv.number} sudah dicatat. Buat Payment Request ${advanceLabel(po.term)} dari tombol di atas.` : 'Termin ini menagih di muka. Catat dulu faktur uang muka dari vendor, lalu ajukan Payment Request-nya.') : 'Payment Request pelunasan dibuat dari faktur.'}</Text>
+                <Text fz="xs" c="slate.6" p="lg">{waiverPending ? 'Menunggu keputusan Chief Finance atas pembatalan uang muka.' : hasDp ? (dpInv ? `Faktur uang muka ${dpInv.number} sudah dicatat. Buat Payment Request ${advanceLabel(po.term)} dari tombol di atas.` : 'Termin ini menagih di muka. Catat dulu faktur uang muka dari vendor, lalu ajukan Payment Request-nya.') : 'Payment Request pelunasan dibuat dari faktur.'}</Text>
               ) : (
                 <DataTable bare head={[{ label: 'Nomor' }, { label: 'Jenis' }, { label: 'Status' }, { label: 'Nominal', align: 'right' }, { label: '', w: 160 }]} minWidth={640}>
                   {prs.map((p) => (
@@ -935,7 +935,9 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
             {/* Pembatalan uang muka; kartunya muncul begitu diajukan. */}
             {po.dpWaiver && (
               <ApprovalLog
-                title="Log pembatalan uang muka"
+                title={dp?.state === 'dibatalkan' && !noPrice
+                  ? `Log pembatalan uang muka · ${rupiah(poDpAmount(po))}`
+                  : 'Log pembatalan uang muka'}
                 steps={[{
                   key: 'dw',
                   verb: 'Approval',
@@ -964,7 +966,7 @@ function DpStatusStrip({ dp, po, go }) {
   const tone = { belum_faktur: 'wait', belum_bayar: 'wait', lunas: 'ok', dibatalkan: 'info' }[dp.state];
   const nominal = rupiah(poDpAmount(po));
   const pct = advancePct(po.term);
-  const judul = `${pct >= 100 ? 'Bayar penuh di muka' : `Uang muka ${pct}%`} · ${nominal} · ${DP_STATE[dp.state].label}`;
+  const judul = dp.state === 'dibatalkan' ? DP_STATE.dibatalkan.label : `${pct >= 100 ? 'Bayar penuh di muka' : `Uang muka ${pct}%`} · ${nominal} · ${DP_STATE[dp.state].label}`;
   const link = (doc, view) => <DocNumber onClick={() => go(view)}>{doc}</DocNumber>;
   return (
     <Callout tone={tone} title={judul}>

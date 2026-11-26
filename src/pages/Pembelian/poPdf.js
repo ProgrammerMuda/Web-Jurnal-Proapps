@@ -20,6 +20,7 @@ import {
 import { personName, personTitle } from './data.js';
 import {
   advancePct,
+  effectivePoTerm,
   approverFor,
   bankLine,
   formatDate,
@@ -62,7 +63,9 @@ export function poPdfBlob(po, { vendor, fppbj, warehouse } = {}) {
   const label = poDocLabel(po);
   const isJasa = poAllJasa(po);
   const pph = Math.round(po.items.reduce((n, i) => n + i.qty * i.price * (i.pphRate ?? 0), 0));
-  const termin = termParts(po.term);
+  const term = effectivePoTerm(po);
+  const termin = termParts(term);
+  const dpPct = advancePct(term);
   // Katalog memisahkan nama dan penjelasan termin dengan em dash ("CAD — bayar setelah
   // diterima"); dokumen lama memakai titik tengah. Dua-duanya diterima di sini.
   const [terminUtama, ...terminLain] = termin.label.split(/\s+[\u2014\u2013\u00b7]\s+/);
@@ -190,8 +193,8 @@ export function poPdfBlob(po, { vendor, fppbj, warehouse } = {}) {
     ['DPP', rp(poSubtotal(po))],
     [ppnLabel(po.items), rp(poPpn(po))],
     ...(pph > 0 ? [['Potongan PPh (saat bayar)', `-${rp(pph)}`]] : []),
-    ...(advancePct(po.term) > 0
-      ? [[advancePct(po.term) >= 100 ? 'Dibayar di muka' : `Uang muka ${advancePct(po.term)}%`, rp(poDpAmount(po))]]
+    ...(dpPct > 0
+      ? [[dpPct >= 100 ? 'Dibayar di muka' : `Uang muka ${dpPct}%`, rp(poDpAmount(po))]]
       : []),
   ];
   let ry = atasRingkasan;

@@ -5,7 +5,7 @@
 import { Box, Group, Stack, Text } from '@mantine/core';
 import { termMechanics } from './paymentTerms.js';
 import { periodOptions } from './data.js';
-import { advancePct, dueDaysOf, poAllJasa, poSubtotal, poTotal, rupiah, scheduleCount, termPcts } from './utils.js';
+import { advancePct, dueDaysOf, effectivePoTerm, poAllJasa, poSubtotal, poTotal, rupiah, scheduleCount, termPcts } from './utils.js';
 
 // Batas termin yang dirinci satu per satu; lebih dari ini diringkas jadi satu baris.
 const MAX_ROWS = 4;
@@ -74,7 +74,7 @@ export function termStages({ term: t, total = 0, jasa = false, dppRatio = 1 }) {
 
 // Pakai `po` untuk pesanan, atau `term` + `total` (+ `jasa`) untuk penawaran.
 export default function TermBreakdown({ po, term, total, jasa, noPrice = false }) {
-  const t = po ? po.term : term;
+  const t = po ? effectivePoTerm(po) : term;
   const mech = termMechanics(t);
   const name = (mech.label ?? t?.type ?? '—').split(' (')[0];
   const stages = termStages(po ? { term: t, total: poTotal(po), jasa: poAllJasa(po), dppRatio: poTotal(po) ? poSubtotal(po) / poTotal(po) : 1 } : { term: t, total, jasa });

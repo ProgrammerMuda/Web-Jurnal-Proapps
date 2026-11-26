@@ -76,6 +76,7 @@ import {
   priceChangePending,
   receiptPriceAdj,
   rupiah,
+  effectivePoTerm,
   termKey,
   dpBlockReason,
   dpState,
@@ -249,7 +250,7 @@ function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, 
   // Faktur uang muka tidak digabung dengan apa pun, jadi tidak mengunci termin baris lain.
   const lockedKey = picked.length && !isDp ? keyOf(docById(picked[0])) : null;
   const lockedTerm = lockedKey
-    ? termParts(fromPo ? docById(picked[0])?.term : pb.posById[docById(picked[0])?.poId]?.term).label
+    ? termParts(effectivePoTerm(fromPo ? docById(picked[0]) : pb.posById[docById(picked[0])?.poId])).label
     : null;
 
   // Termin boleh sama sementara tanggal penerimaannya berbeda — kiriman bertahap atas satu PO,
@@ -327,7 +328,7 @@ function SourceStep({ mode, setMode, vendorId, setVendorId, picked, togglePick, 
                   {rows.map((r) => {
                     // Pada jalur PO/SPK, dokumennya adalah pesanan itu sendiri.
                     const po = fromPo ? r : pb.posById[r.poId];
-                    const { label, detail } = termParts(po?.term);
+                    const { label, detail } = termParts(effectivePoTerm(po));
                     const due = fromPo ? poDue(po) : receiptDue(po, r.date);
                     const dipilih = picked.includes(r.id);
                     // Tertahan uang muka: faktur pelunasan menunggu DP pesanannya lunas atau
@@ -463,7 +464,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   const seeded = (() => {
     const ada = initialReceiptIds.map((id) => readyReceipts.find((r) => r.id === id)).filter((r) => r && !dpTahanOf(r));
     if (!ada.length) return [];
-    const k = (r) => termKey(pb.posById[r.poId]?.term);
+    const k = (r) => termKey(effectivePoTerm(pb.posById[r.poId]));
     const first = ada[0];
     return ada.filter((r) => r.vendorId === first.vendorId && k(r) === k(first)).map((r) => r.id);
   })();
@@ -516,7 +517,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   const pickVendor = (id) => { setVendorId(id); setPicked([]); setDpInput(null); };
   // Identitas termin satu dokumen sumber. Penerimaan mewarisi termin pesanan asalnya;
   // pesanan membawa terminnya sendiri.
-  const keyOf = (d) => termKey(fromPo ? d?.term : pb.posById[d?.poId]?.term);
+  const keyOf = (d) => termKey(effectivePoTerm(fromPo ? d : pb.posById[d?.poId]));
   // Dokumen bertermin lain ditolak di sini juga, bukan hanya dinonaktifkan di tabel:
   // pilihan awal bisa datang dari alamat halaman (?from=...), yang tidak lewat tabel itu.
   const togglePick = (id) => setPicked((p) => {
@@ -587,7 +588,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   // Jatuh tempo mengikuti termin pesanan; titik hitungnya diatur di Pengaturan (sejak
   // penerimaan atau sejak tanggal faktur vendor). Faktur manual tidak punya pesanan,
   // jadi selalu dihitung dari tanggal fakturnya sendiri.
-  const poTerm = fromPo ? orders[0]?.term : pb.posById[receipts[0]?.poId]?.term;
+  const poTerm = effectivePoTerm(fromPo ? orders[0] : pb.posById[receipts[0]?.poId]);
   // Uang muka ditagih saat itu juga, bukan menurut tempo pelunasan pesanannya.
   const termDue = isDp ? 0 : dueDaysOf(poTerm);
   // Tanpa FPB/BAPP tidak ada tanggal penerimaan untuk dijadikan acuan, jadi tempo apa pun

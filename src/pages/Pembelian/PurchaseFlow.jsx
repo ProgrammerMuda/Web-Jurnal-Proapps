@@ -14,6 +14,7 @@ import { termMechanics } from './paymentTerms.js';
 import { TODAY } from './data.js';
 import {
   advancePct,
+  effectivePoTerm,
   dpState,
   poAllJasa,
   isDpInvoice,
@@ -202,8 +203,9 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
   const dp = dpStates.length
     ? dpStates.reduce((a, b) => (RANK.indexOf(b.state) < RANK.indexOf(a.state) ? b : a))
     : dps.some((p) => p.status === 'dibayar') ? { state: 'lunas' } : { state: dps.length ? 'belum_bayar' : 'belum_faktur' };
-  const dpPct = dpPos.length ? advancePct(dpPos[0].term) : null;
-  const dpAmount = dpPos.reduce((n, p) => n + poDpAmount(p), 0);
+  const activeDpPos = dpPos.filter((p) => advancePct(effectivePoTerm(p)) > 0);
+  const dpPct = activeDpPos.length ? advancePct(activeDpPos[0].term) : null;
+  const dpAmount = activeDpPos.reduce((n, p) => n + poDpAmount(p), 0);
   // PR uang muka lama (sebelum ada faktur DP) tidak punya faktur; barisnya tidak ditampilkan
   // agar tidak terbaca "belum dicatat" padahal memang tidak akan pernah ada.
   const legacyDp = !dpInvoices.length && dps.length > 0;
@@ -287,7 +289,7 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
 
         {showDp && step('dp', {
           title: dpPct != null ? `Uang muka ${dpPct}%` : 'Uang muka',
-          meta: dpAmount > 0 ? `${rupiah(dpAmount)} · dibayar ${sebelum}` : `Dibayar ${sebelum}`,
+          meta: dp.state === 'dibatalkan' ? null : dpAmount > 0 ? `${rupiah(dpAmount)} · dibayar ${sebelum}` : `Dibayar ${sebelum}`,
           right: <Pill {...DP_PILL[dp.state]} />,
         }, dp.state === 'dibatalkan' ? (
           <Empty>Uang muka dibatalkan (disetujui Chief Finance), ditagih penuh di akhir</Empty>

@@ -33,6 +33,7 @@ import {
   poDocLabel,
   PR_STATUS,
   ppnLabel,
+  effectivePoTerm,
   termParts,
   vendorEmail,
 } from './utils.js';
@@ -109,7 +110,7 @@ export function invoicePdfBlob(inv, { vendor, po, posById = {}, receiptsById = {
     title: `${inv.lines.length} baris difaktur`,
     rows: [
       ['Dari penerimaan', noPenerimaan.join(', ') || 'Tanpa penerimaan'],
-      ['Termin bayar', po ? termParts(po.term).label : ''],
+      ['Termin bayar', po ? termParts(effectivePoTerm(po)).label : ''],
       ['Berkas', (inv.files ?? []).join(', ')],
     ],
   };

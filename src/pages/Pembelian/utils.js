@@ -842,6 +842,16 @@ export const dueDaysOf = (t) => {
   return termMechanics(t).due ? Math.max(t.dueDays ?? 0, 0) : 0;
 };
 
+// Simpan termin asli untuk log pembatalan. Jadwal dan tagihan memakai termin yang berlaku.
+export function effectivePoTerm(po) {
+  const t = po?.term;
+  if (!t || po.dpWaiver?.status !== 'disetujui') return t;
+  const mech = termMechanics(t);
+  const label = mech.split === 'terms' ? 'Termin progres'
+    : mech.split === 'periods' ? 'Pembayaran berkala' : 'Pembayaran di akhir';
+  return { ...t, label, dpPct: 0, mech: { ...mech, label, advance: 'none', dpOutOfSchedule: false } };
+}
+
 export function termParts(t) {
   if (!t) return { label: '—', detail: '' };
   const mech = termMechanics(t);
@@ -889,7 +899,7 @@ export function termKey(t) {
 // Titik hitung 'receipt' -> tanggalnya sudah pasti sekarang, jadi bisa ditampilkan.
 // Titik hitung 'invoice' -> belum bisa dihitung, karena tanggal fakturnya baru diisi nanti.
 export function receiptDue(po, receiptDate) {
-  const t = po?.term;
+  const t = effectivePoTerm(po);
   const m = termMechanics(t);
   const days = dueDaysOf(t);
   if (m.advance === 'full') return { date: null, text: 'Dibayar di muka' };
@@ -904,8 +914,9 @@ export function receiptDue(po, receiptDate) {
 // untuk dijadikan acuan, jadi tempo apa pun yang disepakati dihitung dari tanggal faktur —
 // tanggal yang baru diisi di langkah berikutnya, maka yang ditampilkan rumusnya.
 export function poDue(po) {
-  const m = termMechanics(po?.term);
-  const days = dueDaysOf(po?.term);
+  const t = effectivePoTerm(po);
+  const m = termMechanics(t);
+  const days = dueDaysOf(t);
   if (m.advance === 'full') return { date: null, text: 'Dibayar di muka' };
   return { date: null, text: days > 0 ? `${days} hari sejak tgl faktur` : 'Saat faktur terbit' };
 }
