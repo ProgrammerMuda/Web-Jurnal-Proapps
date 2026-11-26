@@ -80,6 +80,7 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
   ] : [
     ['Vendor', vendor?.name],
     ['No. invoice vendor', inv.vendorNo || '—'],
+    ['No. faktur pajak', inv.taxNo || '—'],
     ['Tanggal faktur', formatDate(inv.date)],
     ['Jatuh tempo', <Text key="d" span fz="sm" fw={700} c={overdue ? 'red.7' : 'slate.9'}>{formatDate(inv.dueDate)}{overdue && ' · lewat jatuh tempo'}</Text>],
     [po ? poDocLabel(po) : 'Pesanan', po ? <DocNumber onClick={() => go({ name: 'po', id: po.id })}>{po.number}</DocNumber> : '—'],

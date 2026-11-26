@@ -1358,6 +1358,7 @@ export function DpInvoiceModal({ opened, onClose, po, pb, onSaved }) {
   const base = po ? poDpDpp(po) : 0;
   const rate = po ? poPpnRate(po) : 0;
   const [vendorNo, setVendorNo] = useState('');
+  const [taxNo, setTaxNo] = useState('');
   const [date, setDate] = useState(TODAY);
   const [dueDate, setDueDate] = useState(TODAY);
   const [amount, setAmount] = useState(base);
@@ -1389,6 +1390,7 @@ export function DpInvoiceModal({ opened, onClose, po, pb, onSaved }) {
       number: nextNumber('FKT', pb.invoices),
       type: 'dp',
       vendorNo: vendorNo.trim(),
+      taxNo: taxNo.trim(),
       poId: po.id,
       vendorId: po.vendorId,
       date,
@@ -1456,6 +1458,7 @@ export function DpInvoiceModal({ opened, onClose, po, pb, onSaved }) {
         <NumberField label="Potongan PPh" suffix=" %" size="sm" radius="md" min={0} max={100} decimalScale={2} value={pphPct} onChange={(v) => setPphPct(Number(v) || 0)} />
         <DateField label="Tanggal faktur" withAsterisk size="sm" radius="md" max={TODAY} value={date} error={sub && err.date} onChange={(e) => setDate(e.currentTarget.value)} />
         <DateField label="Jatuh tempo" withAsterisk size="sm" radius="md" min={date} value={dueDate} error={sub && err.dueDate} onChange={(e) => setDueDate(e.currentTarget.value)} />
+        <TextInput label="No. faktur pajak (opsional)" placeholder="Contoh: 04002600123456789" size="sm" radius="md" value={taxNo} onChange={(e) => setTaxNo(e.currentTarget.value)} />
       </SimpleGrid>
 
       <SimpleGrid cols={{ base: 1, sm: 2 }}>
@@ -2494,6 +2497,7 @@ export function DetailModal({ opened, onClose, kind, doc, pb, onRefund }) {
         {po && <Field label={poDocLabel(po)}>{po.number}</Field>}
         {doc.doNumber && <Field label="Surat jalan / BAPP">{doc.doNumber}</Field>}
         {doc.vendorNo && <Field label="No. invoice vendor" placeholder="Contoh: INV-2026-0123">{doc.vendorNo}</Field>}
+        {doc.taxNo && <Field label="No. faktur pajak">{doc.taxNo}</Field>}
         {doc.dueDate && <Field label="Jatuh tempo">{formatDate(doc.dueDate)}</Field>}
         {doc.reason && <Field label="Alasan">{doc.reason}</Field>}
         {doc.settlement && <Field label="Penyelesaian">{SETTLEMENT_LABEL[doc.settlement]}</Field>}

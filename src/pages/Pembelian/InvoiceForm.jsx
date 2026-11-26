@@ -75,7 +75,6 @@ import {
   receiptDue,
   rupiah,
   termKey,
-  termText,
   dpBlockReason,
   dpState,
   termParts,
@@ -486,6 +485,8 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   const [manualLines, setManualLines] = useState([blankLine()]);
 
   const [vendorNo, setVendorNo] = useState('');
+  // Nomor seri faktur pajak (e-Faktur) dari vendor. Opsional: vendor non-PKP tidak menerbitkannya.
+  const [taxNo, setTaxNo] = useState('');
   const [date, setDate] = useState(TODAY);
   const [dueInput, setDueInput] = useState(null);
   const [pphInput, setPphInput] = useState(null);
@@ -666,6 +667,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
         number: nextNumber('FKT', pb.invoices),
         type: 'dp',
         vendorNo: vendorNo.trim(),
+        taxNo: taxNo.trim(),
         poId: dpPo.id,
         vendorId: dpPo.vendorId,
         date,
@@ -684,6 +686,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
       id: uid('fkt'),
       number: nextNumber('FKT', pb.invoices),
       vendorNo,
+      taxNo: taxNo.trim(),
       poId: lines[0]?.poId,
       vendorId: vendor.id,
       date,
@@ -993,10 +996,10 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
               <Grid.Col span={{ base: 12, sm: 4 }}>
                 <TextInput label="No. invoice vendor" placeholder="Contoh: INV-2026-0123" withAsterisk size="sm" radius="md" value={vendorNo} error={errors.no} onChange={(e) => setVendorNo(e.currentTarget.value)} />
               </Grid.Col>
-              <Grid.Col span={{ base: 6, sm: isDp ? 4 : 3 }}>
+              <Grid.Col span={{ base: 6, sm: 4 }}>
                 <DateField label="Tanggal faktur" withAsterisk size="sm" radius="md" max={TODAY} error={errors.date} value={date} onChange={(e) => setDate(e.currentTarget.value)} />
               </Grid.Col>
-              <Grid.Col span={{ base: 6, sm: isDp ? 4 : 3 }}>
+              <Grid.Col span={{ base: 6, sm: 4 }}>
                 {/* Tanpa keterangan di bawahnya: tanggalnya sudah terisi, dan dasar
                     perhitungannya sudah diterangkan di langkah Sumber Tagihan. */}
                 <DateField
@@ -1008,42 +1011,14 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
                   onChange={(e) => setDueInput(e.currentTarget.value)}
                 />
               </Grid.Col>
-              {<Grid.Col span={{ base: 12, sm: 2 }}>
+              {/* Baris kedua sejajar dengan unggahan di bawahnya: PPh dan no. faktur pajak.
+                  Nilai uang muka mengikuti termin pesanan dan tampil di ringkasan. */}
+              <Grid.Col span={{ base: 12, sm: 6 }}>
                 <NumberField label="Potongan PPh" suffix=" %" size="sm" radius="md" min={0} max={100} decimalScale={2} value={pph} onChange={(v) => setPphInput(Number(v) || 0)} />
-              </Grid.Col>}
-              {isDp && dpPo && (
-                <Grid.Col span={{ base: 12, sm: 4 }}>
-                  <NumberField
-                    label="Nilai uang muka (DPP)"
-                    withAsterisk
-                    money
-                    size="sm"
-                    radius="md"
-                    prefix="Rp "
-                    value={dpAmount}
-                    error={errors.amount}
-                    onChange={(v) => setDpInput(Number(v) || 0)}
-                  />
-                </Grid.Col>
-              )}
-              {isDp && dpPo && (
-                <Grid.Col span={{ base: 12, sm: 8 }}>
-                  <Group
-                    justify="space-between"
-                    px="md"
-                    py="sm"
-                    bg="primary.0"
-                    style={{ border: '1px solid var(--mantine-color-primary-1)', borderRadius: 'var(--mantine-radius-md)' }}
-                  >
-                    <Box>
-                      <Text fz={11} fw={600} c="primary.9">{dpLabelOf(dpPo)} menurut termin</Text>
-                      <Text fz={11} c="slate.6">{termText(dpPo.term)} · total {poDocLabel(dpPo)} {rupiah(poTotal(dpPo))}</Text>
-                      {dpAmount !== dpBase && <Text fz={11} fw={600} c="orange.8">Nilai di invoice berbeda dari termin ({rupiah(dpBase)})</Text>}
-                    </Box>
-                    <Text fz={22} fw={700} c="primary.9">{rupiah(dpAmount)}</Text>
-                  </Group>
-                </Grid.Col>
-              )}
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <TextInput label="No. faktur pajak (opsional)" placeholder="Contoh: 04002600123456789" size="sm" radius="md" value={taxNo} onChange={(e) => setTaxNo(e.currentTarget.value)} />
+              </Grid.Col>
               <Grid.Col span={{ base: 12, sm: 6 }}>
                 <FileField label="Invoice vendor" withAsterisk value={inv} error={errors.files} onChange={setInv} />
               </Grid.Col>
