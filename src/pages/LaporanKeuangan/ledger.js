@@ -8,7 +8,7 @@ import { accounts } from '@/pages/DaftarAkun/accounts.js';
 import { moveJournal } from '@/pages/Gudang/journal.js';
 import { formatHash as gudangHash } from '@/pages/Gudang/routes.js';
 import { listMoves, MOVE_TYPE } from '@/pages/Gudang/stock.js';
-import { invoiceJournal as pbInvoiceJournal, receiptJournal, voucherJournal } from '@/pages/Pembelian/journal.js';
+import { invoiceJournal as pbInvoiceJournal, invoiceReversal, receiptJournal, refundJournal, returnJournal, voucherJournal } from '@/pages/Pembelian/journal.js';
 import { formatHash as pembelianHash } from '@/pages/Pembelian/routes.js';
 import { isDpInvoice, receiptConfirmed } from '@/pages/Pembelian/utils.js';
 import { saleJournals } from '@/pages/Penjualan/journal.js';
@@ -60,7 +60,7 @@ function pbContext(pb) {
 }
 
 function pembelianEntries(rawPb, ctx) {
-  if (!rawPb) return { list: [], receiptIds: new Set() };
+  if (!rawPb) return { list: [], receiptIds: new Set(), returnIds: new Set() };
   const pb = pbContext(rawPb);
   const receiptIds = new Set();
   const list = [];
@@ -76,8 +76,10 @@ function pembelianEntries(rawPb, ctx) {
       lines: receiptJournal(r, pb, ctx),
     }));
   });
-  // Faktur yang dibatalkan: jurnal dan pembaliknya saling meniadakan, jadi tidak ikut.
-  (pb.invoices ?? []).filter((i) => !i.cancelled).forEach((inv) => {
+  // Faktur yang dibatalkan tetap dijurnal di tanggalnya, lalu dibalik di tanggal pembatalan,
+  // supaya laporan periode sebelum pembatalan tidak berubah. Faktur batal lama yang tidak
+  // menyimpan tanggal pembatalannya tidak bisa ditempatkan, jadi keduanya tidak ikut.
+  (pb.invoices ?? []).filter((i) => !i.cancelled || i.cancelledAt).forEach((inv) => {
     list.push(entry({
       id: `pb-inv-${inv.id}`,
       module: 'Pembelian',
@@ -87,6 +89,46 @@ function pembelianEntries(rawPb, ctx) {
       href: pembelianHash({ name: 'invoice', id: inv.id }),
       lines: pbInvoiceJournal(inv, pb, ctx),
     }));
+    if (inv.cancelled) {
+      list.push(entry({
+        id: `pb-invx-${inv.id}`,
+        module: 'Pembelian',
+        date: inv.cancelledAt,
+        title: 'Pembatalan faktur',
+        ref: inv.number,
+        href: pembelianHash({ name: 'invoice', id: inv.id }),
+        lines: invoiceReversal(inv, pb, ctx),
+      }));
+    }
+  });
+  // Retur pembelian: satu jurnal per dokumen retur, termasuk barang yang tidak dilacak stoknya.
+  // Mutasi retur di Gudang tidak dihitung lagi (lihat gudangEntries).
+  const returnIds = new Set();
+  (pb.returns ?? []).forEach((ret) => {
+    returnIds.add(ret.id);
+    const lines = returnJournal(ret, pb, ctx);
+    if (!lines.length) return;
+    list.push(entry({
+      id: `pb-rt-${ret.id}`,
+      module: 'Pembelian',
+      date: ret.date,
+      title: 'Retur pembelian',
+      ref: ret.number,
+      href: pembelianHash({ name: 'invoice', id: ret.invoiceId }),
+      lines,
+    }));
+    const refund = refundJournal(ret, pb);
+    if (refund.length) {
+      list.push(entry({
+        id: `pb-rf-${ret.id}`,
+        module: 'Pembelian',
+        date: ret.refund.date,
+        title: 'Refund retur pembelian',
+        ref: ret.number,
+        href: pembelianHash({ name: 'invoice', id: ret.invoiceId }),
+        lines: refund,
+      }));
+    }
   });
   // PV baru berjurnal saat pembayarannya dicatat; voucherJournal mengembalikan [] sebelum itu.
   // Baris pelunasan faktur ditandai bagian asetnya, supaya Arus Kas bisa memisahkan pembayaran
@@ -114,7 +156,7 @@ function pembelianEntries(rawPb, ctx) {
       lines,
     }));
   });
-  return { list, receiptIds };
+  return { list, receiptIds, returnIds };
 }
 
 // Porsi faktur (0–1) yang berasal dari penerimaan aset tetap / aset lainnya: nilai DPP baris
@@ -137,12 +179,13 @@ function investShare(inv, pb, ctx) {
   return all > 0 ? aset / all : 0;
 }
 
-// Mutasi stok. Penerimaan barang yang sudah dijurnal lewat FPB-nya di Pembelian tidak dihitung
-// lagi di sini: jurnal FPB memakai mutasi yang sama (lihat Pembelian/journal.js).
-function gudangEntries({ stockMoves = [], products = [] }, skipReceipts) {
+// Mutasi stok. Penerimaan barang dan retur pembelian yang sudah dijurnal lewat dokumennya di
+// Pembelian tidak dihitung lagi di sini: jurnal itu memakai mutasi yang sama (lihat Pembelian/journal.js).
+function gudangEntries({ products = [] }, pricedMoves, skipReceipts, skipReturns) {
   const byId = Object.fromEntries(products.map((p) => [p.id, p]));
-  return listMoves(stockMoves)
+  return pricedMoves
     .filter((m) => !(m.type === 'receipt' && skipReceipts.has(m.sourceId)))
+    .filter((m) => !(m.type === 'purchase_return' && skipReturns.has(m.sourceId)))
     .map((m) => entry({
       id: `gd-${m.id}`,
       module: 'Gudang',
@@ -156,9 +199,10 @@ function gudangEntries({ stockMoves = [], products = [] }, skipReceipts) {
 }
 
 export function buildLedger(data) {
-  const ctx = { stockMoves: data.stockMoves, products: data.products };
+  const pricedMoves = listMoves(data.stockMoves ?? []);
+  const ctx = { stockMoves: data.stockMoves, products: data.products, pricedMoves };
   const pb = pembelianEntries(data.pb, ctx);
-  const list = [...penjualanEntries(data), ...pb.list, ...gudangEntries(data, pb.receiptIds)]
+  const list = [...penjualanEntries(data), ...pb.list, ...gudangEntries(data, pricedMoves, pb.receiptIds, pb.returnIds)]
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   // Nomor jurnal ("Jurnal Transaksi #17001") berurutan menurut tanggal jurnal, seperti nomor urut
   // di aplikasi produksi. Tautan memakai `id` (tetap), bukan nomor ini, karena dokumen bertanggal
@@ -587,9 +631,11 @@ const CF_FINANCE = ['Ekuitas', 'Kewajiban Jangka Panjang'];
 const isTaxCode = (c = '') => INCOME_TAX_CODES.includes(c) || c.startsWith('2-5') || /^1-1040[4-8]$/.test(c) || c.startsWith('8-2');
 
 // Pos arus kas untuk satu baris lawan kas. `amount` = efek ke kas (+ masuk, − keluar).
-function cfItem(code, amount) {
+function cfItem(code, amount, module) {
   const c = code ?? '';
   if (isTaxCode(c)) return 'pajak';
+  // Piutang di jurnal Pembelian adalah tagihan ke vendor (refund retur), bukan ke pelanggan.
+  if (module === 'Pembelian' && accountsByCode[c]?.category === 'Akun Piutang') return 'pemasok';
   switch (accountsByCode[c]?.category) {
     case 'Akun Piutang':
     case 'Pendapatan':
@@ -680,10 +726,10 @@ export function cashFlow(ledger, from, to) {
     // pelanggan / pemasok); jurnal yang isinya pajak saja masuk "Pembayaran pajak".
     const lines = other.flatMap((l) => {
       const v = l.credit - l.debit;
-      if (!l.invest) return [{ l, v, item: cfItem(l.code, v) }];
+      if (!l.invest) return [{ l, v, item: cfItem(l.code, v, e.module) }];
       // Pelunasan faktur aset tetap: bagian asetnya investasi, sisanya pembayaran pemasok.
       investPaid += l.invest;
-      return [{ l, v: -l.invest, item: 'asetBeli' }, { l, v: v + l.invest, item: cfItem(l.code, v) }];
+      return [{ l, v: -l.invest, item: 'asetBeli' }, { l, v: v + l.invest, item: cfItem(l.code, v, e.module) }];
     });
     const main = lines
       .filter((x) => !isTaxCode(x.l.code) && CF_ITEMS.find((i) => i.key === x.item).section === 'operasi')

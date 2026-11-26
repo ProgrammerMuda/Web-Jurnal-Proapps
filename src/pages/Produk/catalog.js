@@ -113,7 +113,7 @@ const raw = [
   {
     id: 'pameran', name: 'Pameran', description: 'Pameran',
     categoryId: 'sewa', sellable: true, salePrice: 1000000, saleTax: 'ppn11',
-    saleUnitId: 'paket', saleAccount: '4-20013', arAccount: '1-10108',
+    saleUnitId: 'paket', saleAccount: '4-20003', arAccount: '1-10108',
   },
   {
     id: 'ipl', name: 'Iuran Pengelolaan Lingkungan', description: 'IPL bulanan unit',
@@ -123,7 +123,8 @@ const raw = [
   {
     id: 'sewa', name: 'Sewa Ruang Usaha', description: 'Sewa ruang usaha per bulan',
     categoryId: 'sewa', sellable: true, salePrice: 2000000, saleTax: 'ppn11',
-    saleUnitId: 'bulan', saleAccount: '4-20013', arAccount: '1-10108',
+    // Sewa ditagih di muka: diterima di muka (liabilitas), belum pendapatan.
+    saleUnitId: 'bulan', saleAccount: '2-20001', arAccount: '1-10108',
   },
   {
     id: 'listrik', name: 'Tagihan Listrik', description: 'Pemakaian listrik unit',
@@ -138,7 +139,8 @@ const raw = [
   {
     id: 'fitout', name: 'Deposit Fit Out', description: 'Deposit renovasi unit',
     categoryId: 'lainnya', sellable: true, salePrice: 10000000, saleTax: null,
-    saleUnitId: 'unit', saleAccount: '4-20001', arAccount: '1-10108',
+    // Deposit: uang titipan yang dikembalikan, jadi liabilitas — bukan pendapatan.
+    saleUnitId: 'unit', saleAccount: '2-30001', arAccount: '1-10108',
   },
   {
     id: 'parkir', name: 'Sewa Parkir', description: 'Sewa parkir kendaraan',
@@ -148,7 +150,8 @@ const raw = [
   {
     id: 'denda', name: 'Denda Keterlambatan', description: 'Denda atas keterlambatan pembayaran',
     categoryId: 'lainnya', sellable: true, salePrice: 0, saleTax: null,
-    saleUnitId: 'pcs', saleAccount: '4-20000', arAccount: '1-10105',
+    // Denda keterlambatan: pendapatan di luar usaha.
+    saleUnitId: 'pcs', saleAccount: '7-10002', arAccount: '1-10105',
   },
 
   // --- Dibeli dari vendor (sebelumnya `productCatalog` di modul Pembelian) ---
@@ -323,6 +326,9 @@ export const toSalesItem = (p) => ({
   description: p.description || p.name,
   price: p.salePrice,
   tax: p.saleTax,
+  // Akun jurnal penjualan (Penjualan/journal.js membacanya dari sini).
+  saleAccount: p.saleAccount,
+  arAccount: p.arAccount,
 });
 
 /** Bentuk yang dipakai modul Pembelian: { id, name, description, kind, unit, price }. */

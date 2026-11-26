@@ -8,7 +8,7 @@ import PurchaseFlow from './PurchaseFlow.jsx';
 import JournalCard from './JournalCard.jsx';
 import { invoiceJournal } from './journal.js';
 import { useData } from '@/lib/store.jsx';
-import { personLabel } from './data.js';
+import { personLabel, TODAY } from './data.js';
 import { ReasonModal } from './Dialogs.jsx';
 import { downloadInvoice } from './invoicePdf.js';
 import { PrActions } from './PoDetail.jsx';
@@ -31,6 +31,10 @@ import {
   rupiah,
   vendorCredit,
   retentionDocName,
+  RETURN_STATUS,
+  returnGross,
+  returnState,
+  SETTLEMENT_LABEL,
 } from './utils.js';
 
 const th = { th: { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 600, color: 'var(--mantine-color-slate-7)', whiteSpace: 'nowrap' } };
@@ -51,7 +55,7 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
   // Saldo kredit vendor yang masih bisa dialokasikan ke faktur ini.
   const credit = cancelled ? 0 : vendorCredit(inv.vendorId, pb) + (inv.credit ?? 0);
   const cancelInvoice = (note) => {
-    pb.update('invoices', inv.id, (d) => ({ ...d, cancelled: true, cancelNote: note, cancelledBy: personLabel(role) }));
+    pb.update('invoices', inv.id, (d) => ({ ...d, cancelled: true, cancelledAt: TODAY, cancelNote: note, cancelledBy: personLabel(role) }));
     setCancelOpen(false);
     toast('Faktur dibatalkan. Qty-nya kembali terbuka untuk difaktur ulang.');
   };
@@ -171,6 +175,7 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
         <Callout tone="stop" title="Faktur dibatalkan">
           {inv.cancelNote}
           {inv.cancelledBy && <> — {inv.cancelledBy}</>}
+          {inv.cancelledAt && <>, {formatDate(inv.cancelledAt)}</>}
           <Text fz="xs" mt={4}>Qty pada penerimaan kembali terbuka dan bisa difaktur ulang.</Text>
         </Callout>
       )}
@@ -285,13 +290,14 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
 
             {returns.length > 0 && (
               <Section divided flush icon={ArrowCounterClockwise} title="Retur pembelian" description="Barang yang dikembalikan dari faktur ini" right={count(returns.length, 'retur')}>
-                <DataTable bare head={[{ label: 'Nomor' }, { label: 'Alasan' }, { label: 'Penyelesaian' }, { label: 'Nilai', align: 'right' }]} minWidth={520}>
+                <DataTable bare head={[{ label: 'Nomor' }, { label: 'Alasan' }, { label: 'Penyelesaian' }, { label: 'Status' }, { label: 'Nilai', align: 'right' }]} minWidth={520}>
                   {returns.map((r) => (
                     <Table.Tr key={r.id}>
                       <Table.Td><DocNumber onClick={() => openDialog({ type: 'detail', kind: 'returns', id: r.id })}>{r.number}</DocNumber></Table.Td>
                       <Table.Td fz="sm">{r.reason}</Table.Td>
-                      <Table.Td fz="sm">{{ potong: 'Potong hutang', kredit: 'Kredit vendor', refund: 'Refund' }[r.settlement]}</Table.Td>
-                      <Table.Td ta="right" fz="sm" fw={700}>{rupiah(Math.round(r.lines.reduce((n, l) => n + l.qty * l.price, 0) * 1.11))}</Table.Td>
+                      <Table.Td fz="sm">{SETTLEMENT_LABEL[r.settlement]}</Table.Td>
+                      <Table.Td><StatusPill map={RETURN_STATUS} status={returnState(r, pb)} size="xs" /></Table.Td>
+                      <Table.Td ta="right" fz="sm" fw={700}>{rupiah(returnGross(r, pb.invoices))}</Table.Td>
                     </Table.Tr>
                   ))}
                 </DataTable>
@@ -346,7 +352,9 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
               lines={inv.cancelled ? [] : invoiceJournal(inv, pb, { stockMoves, products })}
               description={`Atas ${inv.number}`}
               onDetail={() => go({ name: 'journal', kind: 'invoice', id: inv.id })}
-              empty="Faktur dibatalkan — jurnalnya dibalik pada tanggal pembatalan."
+              empty={inv.cancelledAt
+                ? `Faktur dibatalkan — jurnalnya dibalik pada ${formatDate(inv.cancelledAt)}.`
+                : 'Faktur dibatalkan — jurnal dan pembaliknya tidak dibukukan.'}
             />
             <PurchaseFlow pb={pb} go={go} current={{ kind: 'invoice', id: inv.id }} />
           </Stack>

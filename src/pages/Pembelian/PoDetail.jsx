@@ -64,6 +64,10 @@ import {
   reorderBlock,
   reordersOf,
   poOriginFppbj,
+  RETURN_STATUS,
+  returnGross,
+  returnState,
+  SETTLEMENT_LABEL,
 } from './utils.js';
 import { downloadPo } from './poPdf.js';
 import { toast } from './usePb.js';
@@ -725,13 +729,14 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
 
             {returns.length > 0 && (
               <Section divided flush icon={ArrowCounterClockwise} title="Retur pembelian" description="Barang yang dikembalikan ke vendor" right={count(returns.length, 'retur')}>
-                <DataTable bare head={[{ label: 'Nomor' }, { label: 'Alasan' }, { label: 'Penyelesaian' }, { label: 'Nilai', align: 'right' }]} minWidth={560}>
+                <DataTable bare head={[{ label: 'Nomor' }, { label: 'Alasan' }, { label: 'Penyelesaian' }, { label: 'Status' }, { label: 'Nilai', align: 'right' }]} minWidth={560}>
                   {returns.map((r) => (
                     <Table.Tr key={r.id}>
                       <Table.Td><DocNumber onClick={() => openDialog({ type: 'detail', kind: 'returns', id: r.id })}>{r.number}</DocNumber></Table.Td>
                       <Table.Td fz="sm">{r.reason}</Table.Td>
-                      <Table.Td fz="sm">{{ potong: 'Potong hutang', kredit: 'Kredit vendor', refund: 'Refund' }[r.settlement]}</Table.Td>
-                      <Table.Td ta="right" fz="sm" fw={700}>{rupiah(Math.round(r.lines.reduce((n, l) => n + l.qty * l.price, 0) * 1.11))}</Table.Td>
+                      <Table.Td fz="sm">{SETTLEMENT_LABEL[r.settlement]}</Table.Td>
+                      <Table.Td><StatusPill map={RETURN_STATUS} status={returnState(r, pb)} size="xs" /></Table.Td>
+                      <Table.Td ta="right" fz="sm" fw={700}>{rupiah(returnGross(r, pb.invoices))}</Table.Td>
                     </Table.Tr>
                   ))}
                 </DataTable>

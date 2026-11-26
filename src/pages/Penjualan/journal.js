@@ -29,23 +29,115 @@ export const accountName = (code) =>
   accounts.find((a) => a.code === code)?.name ?? 'Akun tidak dikenal';
 export const accountLabel = (code) => `${code} · ${accountName(code)}`;
 
-// #23/#24: tiap produk punya akun pendapatan (atau liabilitas) dan akun piutangnya.
-// Deposit Fit Out sengaja ke liabilitas: uang titipan yang dikembalikan, bukan pendapatan.
-const PRODUCT_ACCOUNTS = {
-  'drain-ac': { revenue: '4-20005', receivable: '1-10108' },
-  pameran: { revenue: '4-20003', receivable: '1-10108' },
-  ipl: { revenue: '4-10001', receivable: '1-10101' },
-  sewa: { revenue: '2-20001', receivable: '1-10108' },
-  listrik: { revenue: '4-10002', receivable: '1-10104' },
-  air: { revenue: '4-10003', receivable: '1-10103' },
-  fitout: { revenue: '2-30001', receivable: '1-10108' },
-  parkir: { revenue: '4-20007', receivable: '1-10106' },
-  // #29: denda keterlambatan masuk pendapatan di luar usaha.
-  denda: { revenue: '7-10002', receivable: '1-10105' },
-};
+// #23/#24: tiap produk punya akun pendapatan (atau liabilitas) dan akun piutangnya. Keduanya
+// milik katalog Produk (saleAccount / arAccount) — satu sumber, jadi mengubahnya di halaman
+// Produk ikut mengubah jurnal, dan produk baru langsung memakai akunnya sendiri. Cadangan hanya
+// untuk produk yang sudah dihapus dari katalog.
 const FALLBACK = { revenue: '4-20000', receivable: PIUTANG_UMUM };
 
-export const productAccounts = (productId) => PRODUCT_ACCOUNTS[productId] ?? FALLBACK;
+export const productAccounts = (productId) => {
+  const p = products.find((x) => x.id === productId);
+  return { revenue: p?.saleAccount || FALLBACK.revenue, receivable: p?.arAccount || FALLBACK.receivable };
+};
+
+// --- Pembagian piutang per akun ------------------------------------------------------------------
+// Faktur bisa memakai beberapa akun piutang (mis. IPL dan Listrik). Pelunasan dan retur harus
+// mengurangi akun yang benar, supaya saldo tiap akun piutang habis tepat nol saat fakturnya lunas.
+// Urutan kejadian (tanggal, lalu urutan catat) dijalankan ulang dari piutang awal faktur:
+//   pembayaran : dibagi menurut sisa piutang tiap akun saat itu
+//   retur      : ke akun baris yang diretur, paling banyak sisa akun itu; lebihnya ke akun lain
+// Pembayaran / retur yang dibatalkan tidak mengubah sisa (jurnal dan pembaliknya saling
+// meniadakan); bagiannya dihitung dari piutang awal / baris returnya.
+function splitBy(amount, weights) {
+  const codes = Object.keys(weights).filter((c) => weights[c] > 0);
+  const total = codes.reduce((n, c) => n + weights[c], 0);
+  const out = {};
+  if (!codes.length || total <= 0) return out;
+  let sisa = round(amount);
+  codes.forEach((c, i) => {
+    const v = i === codes.length - 1 ? sisa : round((amount * weights[c]) / total);
+    out[c] = v;
+    sisa -= v;
+  });
+  return out;
+}
+const addTo = (a, b) => Object.entries(b).forEach(([c, v]) => { a[c] = (a[c] ?? 0) + v; });
+
+function receivableBase(sale) {
+  const j = invoiceJournal(sale);
+  const codes = new Set(sale.items.map((l) => productAccounts(l.productId).receivable));
+  const base = {};
+  (j?.lines ?? []).forEach((l) => { if (codes.has(l.code)) base[l.code] = (base[l.code] ?? 0) + l.debit - l.credit; });
+  // Faktur tanpa nilai (atau belum terbit): tetap ada akun tujuannya.
+  if (!Object.keys(base).length) codes.forEach((c) => { base[c] = 0; });
+  return base;
+}
+
+// Nilai retur per akun piutang: nilai bersih baris + PPN-nya.
+function returnWeights(ret, sale) {
+  const w = {};
+  ret.lines.forEach((l) => {
+    const qty = Number(l.qty) || 0;
+    const asal = sale.items[l.index];
+    if (!qty || !asal) return;
+    const net = netUnitPrice(sale, asal) * qty;
+    const code = productAccounts(asal.productId).receivable;
+    w[code] = (w[code] ?? 0) + net * (1 + (taxRate(asal.tax) || 0));
+  });
+  return w;
+}
+
+export function receivableAllocation(sale, returns = []) {
+  const base = receivableBase(sale);
+  const sisa = { ...base };
+  const pay = {};
+  const ret = {};
+  const events = [
+    ...(sale.payments ?? []).map((p, i) => ({ kind: 'pay', key: i, date: p.date, order: i, doc: p })),
+    ...returns
+      .filter((r) => r.invoiceId === sale.id && !r.draft)
+      .map((r, i) => ({ kind: 'ret', key: r.id, date: r.date, order: 1000 + i, doc: r })),
+  ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.order - b.order));
+
+  for (const e of events) {
+    if (e.kind === 'pay') {
+      const amount = e.doc.amount ?? 0;
+      if (e.doc.cancelledAt) { pay[e.key] = splitBy(amount, base); continue; }
+      const terbuka = Object.fromEntries(Object.entries(sisa).map(([c, v]) => [c, Math.max(v, 0)]));
+      const dalam = Math.min(amount, Object.values(terbuka).reduce((n, v) => n + v, 0));
+      const out = splitBy(dalam, terbuka);
+      // Kelebihan bayar (di atas sisa tagihan) dibagi menurut piutang awal.
+      if (amount - dalam > 0) addTo(out, splitBy(amount - dalam, base));
+      if (!Object.keys(out).length) addTo(out, splitBy(amount, Object.fromEntries(Object.keys(base).map((c) => [c, 1]))));
+      Object.entries(out).forEach(([c, v]) => { sisa[c] = (sisa[c] ?? 0) - v; });
+      pay[e.key] = out;
+    } else {
+      const dipotong = deductPart(e.doc);
+      if (!(dipotong > 0)) { ret[e.key] = {}; continue; }
+      const w = returnWeights(e.doc, sale);
+      if (e.doc.cancelledAt) { ret[e.key] = splitBy(dipotong, w); continue; }
+      // Ke akun baris yang diretur, dibatasi sisanya; yang tidak muat ke akun lain yang masih terbuka.
+      const ingin = splitBy(dipotong, w);
+      const out = {};
+      let lebih = 0;
+      Object.entries(ingin).forEach(([c, v]) => {
+        const muat = Math.min(v, Math.max(sisa[c] ?? 0, 0));
+        out[c] = muat;
+        lebih += v - muat;
+      });
+      if (lebih > 0) {
+        const terbuka = Object.fromEntries(Object.entries(sisa).map(([c, v]) => [c, Math.max(v - (out[c] ?? 0), 0)]));
+        const tambahan = splitBy(lebih, terbuka);
+        const masuk = Object.values(tambahan).reduce((n, v) => n + v, 0);
+        addTo(out, tambahan);
+        if (lebih - masuk > 0) addTo(out, splitBy(lebih - masuk, w));
+      }
+      Object.entries(out).forEach(([c, v]) => { sisa[c] = (sisa[c] ?? 0) - v; });
+      ret[e.key] = Object.fromEntries(Object.entries(out).filter(([, v]) => v));
+    }
+  }
+  return { base, pay, ret };
+}
 export const productName = (productId) =>
   products.find((p) => p.id === productId)?.name ?? productId;
 
@@ -127,13 +219,7 @@ export function invoiceJournal(sale) {
 
 // Jurnal saat pembayaran dicatat (#21). PPh yang dipotong pelanggan ikut di sini,
 // karena pemotongan terjadi saat membayar — bukan saat faktur terbit.
-export function paymentJournal(sale, payment, index = 0) {
-  const akunPiutang = Object.keys(
-    sale.items.reduce((acc, l) => {
-      acc[productAccounts(l.productId).receivable] = true;
-      return acc;
-    }, {}),
-  );
+export function paymentJournal(sale, payment, index = 0, returns = []) {
   const pph = withholdingType(payment.withholdingType);
   // B3: pemakaian kredit pelanggan bukan penerimaan kas, jadi tidak ada PPh di sini —
   // yang terjadi hanya kewajiban kredit ditutup lawan piutang.
@@ -149,12 +235,10 @@ export function paymentJournal(sale, payment, index = 0) {
   if (potongan > 0) {
     lines.push({ code: pph.account, debit: potongan, credit: 0, note: pph.label });
   }
-  // Pelunasan mengurangi piutang. Bila fakturnya memakai lebih dari satu akun piutang,
-  // pembayaran dibagi rata — pembagian per baris baru mungkin setelah ada buku besar.
-  const porsi = round(payment.amount / akunPiutang.length);
-  akunPiutang.forEach((code, i) => {
-    const nilai = i === akunPiutang.length - 1 ? payment.amount - porsi * (akunPiutang.length - 1) : porsi;
-    lines.push({ code, debit: 0, credit: round(nilai), note: 'Pelunasan piutang' });
+  // Pelunasan mengurangi piutang per akun menurut sisanya (receivableAllocation).
+  const bagian = receivableAllocation(sale, returns).pay[index] ?? {};
+  Object.entries(bagian).forEach(([code, nilai]) => {
+    if (nilai) lines.push({ code, debit: 0, credit: nilai, note: 'Pelunasan piutang' });
   });
 
   return {
@@ -195,9 +279,9 @@ export function reversalJournal(sale) {
 
 // B3: pembatalan pembayaran juga tidak menghapus jurnalnya, melainkan membalikkannya
 // pada tanggal pembatalan — pola yang sama dengan pembatalan faktur di atas.
-export function paymentReversalJournal(sale, payment, index = 0) {
+export function paymentReversalJournal(sale, payment, index = 0, returns = []) {
   if (!payment.cancelledAt) return null;
-  const asli = paymentJournal(sale, payment, index);
+  const asli = paymentJournal(sale, payment, index, returns);
   return {
     id: `void-pay-${sale.id}-${index}`,
     title: `Pembatalan pembayaran ${formatDate(payment.date)}`,
@@ -209,7 +293,7 @@ export function paymentReversalJournal(sale, payment, index = 0) {
 
 // Jurnal retur (bagian 5). Akun debitnya mengikuti akun baris faktur: produk yang
 // akunnya liabilitas (mis. Deposit Fit Out) didebit ke akun itu, bukan ke Retur Penjualan.
-export function returnJournal(ret, sale) {
+export function returnJournal(ret, sale, returns = [ret]) {
   if (!sale || ret.draft) return null;
   const lines = [];
   const perAkun = {};
@@ -240,19 +324,11 @@ export function returnJournal(ret, sale) {
   const jadiKredit = creditPart(ret);
 
   if (dipotong > 0) {
-    // Piutang dikurangi di akun piutang produk-produk yang diretur.
-    const akunPiutang = [
-      ...new Set(
-        ret.lines
-          .filter((l) => Number(l.qty) > 0)
-          .map((l) => productAccounts(sale.items[l.index].productId).receivable),
-      ),
-    ];
-    const porsi = Math.round(dipotong / akunPiutang.length);
-    akunPiutang.forEach((code, i) => {
-      const nilai =
-        i === akunPiutang.length - 1 ? dipotong - porsi * (akunPiutang.length - 1) : porsi;
-      lines.push({ code, debit: 0, credit: nilai, note: 'Tagihan dipotong' });
+    // Piutang dikurangi di akun baris yang diretur, sebesar sisanya (receivableAllocation).
+    const daftar = returns.some((r) => r.id === ret.id) ? returns : [...returns, ret];
+    const bagian = receivableAllocation(sale, daftar).ret[ret.id] ?? {};
+    Object.entries(bagian).forEach(([code, nilai]) => {
+      if (nilai) lines.push({ code, debit: 0, credit: nilai, note: 'Tagihan dipotong' });
     });
   }
   if (jadiKredit > 0) {
@@ -274,8 +350,8 @@ export function returnJournal(ret, sale) {
 }
 
 // Pembatalan retur: jurnalnya dibalik, dokumennya tetap ada.
-export function returnReversal(ret, sale) {
-  const asli = returnJournal(ret, sale);
+export function returnReversal(ret, sale, returns = [ret]) {
+  const asli = returnJournal(ret, sale, returns);
   if (!asli || !ret.cancelledAt) return null;
   return {
     id: `ret-void-${ret.id}`,
@@ -291,11 +367,11 @@ export function returnReversal(ret, sale) {
   };
 }
 
-export function returnJournals(ret, sale) {
+export function returnJournals(ret, sale, returns = [ret]) {
   const out = [];
-  const j = returnJournal(ret, sale);
+  const j = returnJournal(ret, sale, returns);
   if (j) out.push(j);
-  const v = returnReversal(ret, sale);
+  const v = returnReversal(ret, sale, returns);
   if (v) out.push(v);
   return out;
 }
@@ -307,13 +383,13 @@ export function saleJournals(sale, returns = []) {
   const faktur = invoiceJournal(sale);
   if (faktur) jurnal.push(faktur);
   (sale.payments ?? []).forEach((p, i) => {
-    jurnal.push(paymentJournal(sale, p, i));
-    const balikBayar = paymentReversalJournal(sale, p, i);
+    jurnal.push(paymentJournal(sale, p, i, returns));
+    const balikBayar = paymentReversalJournal(sale, p, i, returns);
     if (balikBayar) jurnal.push(balikBayar);
   });
   returns
     .filter((r) => r.invoiceId === sale.id && !r.draft)
-    .forEach((r) => jurnal.push(...returnJournals(r, sale)));
+    .forEach((r) => jurnal.push(...returnJournals(r, sale, returns)));
   const balik = reversalJournal(sale);
   if (balik) jurnal.push(balik);
   // Urut menurut tanggal supaya terbaca sebagai riwayat, bukan daftar acak.

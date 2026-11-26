@@ -796,7 +796,7 @@ const histDocs = [
   { po: poBintang1, rc: ['fpb-0004', 'FPB/2026/06/0004', '2026-06-20', 'SJ-BF-2210'], inv: ['fkt-0011', 'FKT/2026/06/0011', 'INV-BF-60418', '2026-06-22', '2026-07-22'], pr: ['pr-0008', 'PR/2026/07/0008', '2026-07-20'] },
   { po: poMitra1, rc: ['bapp-0002', 'BAPP/2026/08/0002', '2026-08-28', 'BAPP-MTL-0828'], inv: ['fkt-0019', 'FKT/2026/08/0019', 'INV-MTL-2208', '2026-08-29', '2026-09-28'], pr: ['pr-0014', 'PR/2026/09/0014', '2026-09-25'] },
 ];
-const histReceipts = histDocs.map(({ po, rc }) => ({
+const receiptOf = ({ po, rc }) => ({
   id: rc[0],
   number: rc[1],
   poId: po.id,
@@ -807,8 +807,9 @@ const histReceipts = histDocs.map(({ po, rc }) => ({
   createdBy: 'Rudi Hermawan · Kepala Gudang',
   lines: po.items.map((i) => ({ itemId: i.id, qty: i.qty, rejected: 0 })),
   note: '',
-}));
-const histInvoices = histDocs.map(({ po, rc, inv }) => ({
+});
+const histReceipts = histDocs.map(receiptOf);
+const invoiceOf = ({ po, rc, inv }) => ({
   id: inv[0],
   number: inv[1],
   vendorNo: inv[2],
@@ -819,8 +820,9 @@ const histInvoices = histDocs.map(({ po, rc, inv }) => ({
   lines: po.items.map((i) => ({ receiptId: rc[0], itemId: i.id, qty: i.qty, price: i.price })),
   pphPct: 0,
   files: [`invoice-${inv[0]}.pdf`],
-}));
-const histPrs = histDocs.map(({ po, inv, pr }) => {
+});
+const histInvoices = histDocs.map(invoiceOf);
+const prOf = ({ po, inv, pr }) => {
   const dpp = po.items.reduce((n, i) => n + i.qty * i.price, 0);
   return {
     id: pr[0],
@@ -835,7 +837,46 @@ const histPrs = histDocs.map(({ po, inv, pr }) => {
     note: '',
     paidAt: pr[2],
   };
-});
+};
+const histPrs = histDocs.map(prOf);
+
+// --- Pembelian di balik penerimaan contoh Gudang ------------------------------------------------
+// Riwayat mutasi Gudang (Gudang/stock.js, mv-04 … mv-19) mencatat delapan penerimaan barang
+// bernomor FPB. Dokumen Pembelian-nya ada di sini dengan id dan nomor FPB yang sama, jadi jurnal
+// penerimaannya dibaca dari mutasi itu (lihat Pembelian/journal.js) dan Barang Diterima Belum
+// Ditagih tertutup oleh fakturnya. Harga PO = harga perolehan di mutasinya.
+//   Jul–Sep : difaktur dan lunas · Okt : difaktur, belum jatuh tempo · akhir Okt & Nov : menunggu faktur
+const gPo = (id, number, date, vendorId, productId, desc, qty, unit, price) =>
+  histPo(id, number, date, vendorId, [poItem('g1', desc, qty, unit, price, { productId })]);
+const gudangDocs = [
+  { po: gPo('po-0021', 'PO/2026/07/0021', '2026-07-03', 'v-karya', 'kertas-a4', 'Kertas A4 80 gsm', 40, 'rim', 56000),
+    rc: ['gr-19', 'FPB/2026/07/0019', '2026-07-08', 'SJ-KO-0708'], inv: ['fkt-0015', 'FKT/2026/07/0015', 'INV-KO-0710', '2026-07-10', '2026-08-09'], pr: ['pr-0009', 'PR/2026/08/0009', '2026-08-07'],
+    fppbj: { seq: '0022', purpose: 'Stok kertas Juli', dept: 'Umum', requester: 'Andi Wijaya · Staff Housekeeping' } },
+  { po: gPo('po-0023', 'PO/2026/08/0023', '2026-08-01', 'v-karya', 'map-plastik', 'Map plastik', 100, 'pcs', 3500),
+    rc: ['gr-24', 'FPB/2026/08/0024', '2026-08-05', 'SJ-KO-0805'], inv: ['fkt-0016', 'FKT/2026/08/0016', 'INV-KO-0806', '2026-08-06', '2026-09-05'], pr: ['pr-0012', 'PR/2026/09/0012', '2026-09-03'],
+    fppbj: { seq: '0023', purpose: 'Map arsip Agustus', dept: 'Keuangan', requester: 'Maya Sari · Staff Keuangan' } },
+  { po: gPo('po-0026', 'PO/2026/09/0026', '2026-09-09', 'v-karya', 'kertas-a4', 'Kertas A4 80 gsm', 50, 'rim', 56000),
+    rc: ['gr-28', 'FPB/2026/09/0028', '2026-09-14', 'SJ-KO-0914'], inv: ['fkt-0020', 'FKT/2026/09/0020', 'INV-KO-0915', '2026-09-15', '2026-10-15'], pr: ['pr-0016', 'PR/2026/10/0016', '2026-10-13'],
+    fppbj: { seq: '0024', purpose: 'Stok kertas September', dept: 'Umum', requester: 'Andi Wijaya · Staff Housekeeping' } },
+  { po: gPo('po-0033', 'PO/2026/10/0033', '2026-10-14', 'v-alfa', 'pipa-pvc', 'Pipa PVC', 64, 'batang', 65000),
+    rc: ['gr-37', 'FPB/2026/10/0037', '2026-10-20', 'SJ-ALF-7020'], inv: ['fkt-0025', 'FKT/2026/10/0025', 'INV-ALF-10211', '2026-10-21', '2026-11-20'],
+    fppbj: { seq: '0025', purpose: 'Perbaikan saluran air basement', dept: 'Engineering', requester: 'Budi Santoso · Teknisi' } },
+  { po: gPo('po-0034', 'PO/2026/10/0034', '2026-10-15', 'v-alfa', 'elbow-pvc', 'Elbow PVC', 60, 'pcs', 6500),
+    rc: ['gr-38', 'FPB/2026/10/0038', '2026-10-22', 'SJ-ALF-7022'], inv: ['fkt-0026', 'FKT/2026/10/0026', 'INV-ALF-10233', '2026-10-23', '2026-11-22'],
+    fppbj: { seq: '0026', purpose: 'Sambungan pipa saluran basement', dept: 'Engineering', requester: 'Budi Santoso · Teknisi' } },
+  { po: gPo('po-0038', 'PO/2026/10/0038', '2026-10-24', 'v-alfa', 'cairan-lantai', 'Cairan pembersih lantai', 14, 'karton', 85000),
+    rc: ['gr-41', 'FPB/2026/10/0041', '2026-10-30', 'SJ-ALF-7030'], inv: ['fkt-0027', 'FKT/2026/10/0027', 'INV-ALF-10310', '2026-10-31', '2026-11-30'],
+    fppbj: { seq: '0027', purpose: 'Bahan kebersihan November', dept: 'Umum', requester: 'Andi Wijaya · Staff Housekeeping' } },
+  { po: gPo('po-0039', 'PO/2026/10/0039', '2026-10-25', 'v-alfa', 'kain-pel', 'Kain pel microfiber', 11, 'pcs', 22500),
+    rc: ['gr-42', 'FPB/2026/10/0042', '2026-10-31', 'SJ-ALF-7031'],
+    fppbj: { seq: '0028', purpose: 'Kain pel pengganti', dept: 'Umum', requester: 'Andi Wijaya · Staff Housekeeping' } },
+  { po: gPo('po-0043', 'PO/2026/10/0043', '2026-10-28', 'v-karya', 'tinta-printer', 'Tinta printer', 9, 'box', 185000),
+    rc: ['gr-2', 'FPB/2026/11/0002', '2026-11-03', 'SJ-KO-1103'],
+    fppbj: { seq: '0029', purpose: 'Tinta printer kuartal IV', dept: 'Keuangan', requester: 'Maya Sari · Staff Keuangan' } },
+];
+const gudangReceipts = gudangDocs.map(receiptOf);
+const gudangInvoices = gudangDocs.filter((d) => d.inv).map(invoiceOf);
+const gudangPrs = gudangDocs.filter((d) => d.pr).map(prOf);
 
 
 
@@ -890,16 +931,18 @@ const histFppbjs = [
   histFppbj(poOld, { seq: '0017', purpose: 'ATK bulanan September', dept: 'Keuangan', requester: 'Maya Sari · Staff Keuangan' }),
   histFppbj(spkLift, { seq: '0018', purpose: 'Servis berkala lift gedung A', dept: 'Engineering', requester: 'Budi Santoso · Teknisi' }),
   histFppbj(poOngkir, { seq: '0021', purpose: 'Map plastik dan kertas ruang arsip', dept: 'Umum', requester: 'Andi Wijaya · Staff Housekeeping' }),
+  ...gudangDocs.map((d) => histFppbj(d.po, d.fppbj)),
 ];
 // fppbjSeed didefinisikan di atas PO riwayat, jadi permintaannya ditambahkan di sini.
 fppbjSeed.push(...histFppbjs);
 
-export const posSeed = [...uji.map((u) => u.po), poOngkir, poOld, poChair, spkLift, poAlfaStaged, poBintangStaged, poAlfa2, poAlfa1, poBintang1, poMitra1];
+export const posSeed = [...uji.map((u) => u.po), poOngkir, poOld, poChair, spkLift, poAlfaStaged, poBintangStaged, poAlfa2, poAlfa1, poBintang1, poMitra1, ...gudangDocs.map((d) => d.po)];
 
 // poOld: selesai (diterima penuh, difaktur, lunas). poChair: diterima sebagian, DP disetujui.
 export const receiptsSeed = [
   rcOngkir,
   ...histReceipts,
+  ...gudangReceipts,
   {
     id: 'bapp-0003',
     number: 'BAPP/2026/10/0003',
@@ -1123,6 +1166,7 @@ const fakturRutin = [
 export const invoicesSeed = [
   invOngkir,
   ...histInvoices,
+  ...gudangInvoices,
   ...fakturRutin,
   {
     id: 'fkt-0024',
@@ -1182,6 +1226,8 @@ export const prsSeed = [
     status: 'disetujui',
     note: 'DP 30% PO/2026/10/0040',
   },
+  // Paling akhir: nomor PV contoh diturunkan dari urutan PR ini, jadi PV lama tidak bergeser.
+  ...gudangPrs,
 ];
 
 export const returnsSeed = [rtrOngkir];
@@ -1211,3 +1257,15 @@ export const vouchersSeed = prsSeed
     journalPostedAt: p.paidAt,
     journalBy: 'Maya Sari · Staff Accounting',
   }));
+
+// Dokumen contoh yang ditambahkan sesudah data Pembelian mungkin sudah tersimpan di browser.
+// store.jsx menambahkannya ke data tersimpan bila id-nya belum ada, tanpa menyentuh dokumen lain.
+const gudangPrIds = new Set(gudangPrs.map((p) => p.id));
+export const seedAdditions = {
+  fppbj: fppbjSeed.filter((f) => gudangDocs.some((d) => d.po.fppbjId === f.id)),
+  pos: gudangDocs.map((d) => d.po),
+  receipts: gudangReceipts,
+  invoices: gudangInvoices,
+  prs: gudangPrs,
+  vouchers: vouchersSeed.filter((v) => v.prIds.some((id) => gudangPrIds.has(id))),
+};

@@ -462,10 +462,17 @@ export function dpAmortization(inv, pos, prs = [], invoices = []) {
 export const returnValue = (ret) => sum(ret.lines, (l) => l.qty * l.price);
 // Nilai retur yang diselesaikan sebagai "kredit vendor": tidak memotong faktur asalnya,
 // tapi jadi saldo yang bisa dialokasikan ke faktur lain milik vendor yang sama.
-export const returnGross = (r, invoices) => {
-  const inv = invoices.find((x) => x.id === r.invoiceId);
-  return Math.round(sum(r.lines, (l) => l.qty * l.price * (1 + lineRate(inv?.lines.find((x) => x.itemId === l.itemId)))));
-};
+// Nilai satu retur yang mengurangi tagihan: harga faktur + PPN faktur per baris, ditambah ongkir
+// bila vendor ikut mengembalikannya (`freight` per unit disimpan di baris retur). Dibulatkan per
+// baris, sama dengan jurnal retur (Pembelian/journal.js), supaya sub-buku dan buku besar satu angka.
+export const returnBilled = (r, inv) =>
+  sum(r.lines, (l) => {
+    const dpp = l.qty * l.price;
+    const il = inv?.lines.find((x) => x.itemId === l.itemId && (!l.receiptId || x.receiptId === l.receiptId))
+      ?? inv?.lines.find((x) => x.itemId === l.itemId);
+    return Math.round(dpp) + Math.round(dpp * lineRate(il)) + Math.round(r.freightRefunded ? l.qty * (l.freight ?? 0) : 0);
+  });
+export const returnGross = (r, invoices) => returnBilled(r, invoices.find((x) => x.id === r.invoiceId));
 // Saldo kredit vendor = kredit dari retur - yang sudah dipakai di faktur mana pun (kecuali yang dibatalkan).
 export function vendorCredit(vendorId, { returns, invoices }) {
   const earned = sum(
@@ -476,11 +483,43 @@ export function vendorCredit(vendorId, { returns, invoices }) {
   return Math.max(earned - used, 0);
 }
 
+// Sisa kredit vendor milik satu retur. Pemakaian kredit dicatat per faktur (inv.credit), bukan per
+// retur, jadi dibagi ke retur vendor itu urut dari yang paling lama: retur lama habis lebih dulu.
+export function returnCreditLeft(ret, { returns = [], invoices = [] }) {
+  if (ret?.settlement !== 'kredit') return 0;
+  const vendorOf = (r) => invoices.find((x) => x.id === r.invoiceId)?.vendorId;
+  const vendorId = vendorOf(ret);
+  let used = sum(liveInvoices(invoices).filter((i) => i.vendorId === vendorId), (i) => i.credit ?? 0);
+  const urut = returns
+    .filter((r) => r.settlement === 'kredit' && vendorOf(r) === vendorId)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : String(a.number).localeCompare(String(b.number))));
+  for (const r of urut) {
+    const nilai = returnGross(r, invoices);
+    const pakai = Math.min(nilai, Math.max(used, 0));
+    used -= pakai;
+    if (r.id === ret.id) return nilai - pakai;
+  }
+  return 0;
+}
+
+// Status retur yang dilihat orang, dari penyelesaiannya:
+//   potong : hutang faktur langsung berkurang → Selesai
+//   kredit : saldo kredit vendor menunggu dipakai di faktur berikutnya → Selesai setelah habis
+//   refund : menunggu uang dari vendor (bolanya di vendor) → Selesai setelah refund dicatat
+export const RETURN_STATUS = {
+  menunggu_refund: { label: 'Menunggu refund', color: 'blue' },
+  kredit_tersedia: { label: 'Kredit tersedia', color: 'cyan' },
+  selesai: { label: 'Selesai', color: 'green' },
+};
+export function returnState(ret, ctx) {
+  if (ret?.settlement === 'refund') return ret.refund ? 'selesai' : 'menunggu_refund';
+  if (ret?.settlement === 'kredit') return returnCreditLeft(ret, ctx) > 0 ? 'kredit_tersedia' : 'selesai';
+  return 'selesai';
+}
+export const SETTLEMENT_LABEL = { potong: 'Potong hutang', kredit: 'Kredit vendor', refund: 'Refund dari vendor' };
+
 export const invReturns = (inv, returns) =>
-  sum(
-    returns.filter((r) => r.invoiceId === inv.id && r.settlement === 'potong'),
-    (r) => Math.round(sum(r.lines, (l) => l.qty * l.price * (1 + lineRate(inv.lines.find((x) => x.itemId === l.itemId))))),
-  );
+  sum(returns.filter((r) => r.invoiceId === inv.id && r.settlement === 'potong'), (r) => returnBilled(r, inv));
 
 // Pembayaran pelunasan yang menunjuk faktur ini. committed = termasuk yang belum dibayar.
 export function prAllocated(inv, prs, { onlyPaid }) {

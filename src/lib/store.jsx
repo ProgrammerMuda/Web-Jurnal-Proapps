@@ -28,6 +28,7 @@ import {
   prsSeed,
   receiptsSeed,
   returnsSeed,
+  seedAdditions,
   vendorsSeed,
   vouchersSeed,
 } from '@/pages/Pembelian/data.js';
@@ -84,12 +85,19 @@ function loadGudang() {
 const PERALATAN_LAMA = new Set(['printer-laser', 'meja-lipat', 'kursi-kantor', 'lemari-arsip']);
 const fixBuyAccount = (p) => (PERALATAN_LAMA.has(p.id) && p.buyAccount === '6-50002' ? { ...p, buyAccount: '1-20004' } : p);
 
+// Katalog contoh lama memberi empat produk jual akun yang berbeda dengan jurnal Penjualan (yang
+// dulu memakai tabel akunnya sendiri). Kini jurnal membaca katalog, jadi produk contoh yang
+// masih tersimpan dengan akun lama dibetulkan; akun yang sudah diubah pengguna tidak disentuh.
+const AKUN_JUAL_LAMA = { pameran: '4-20013', sewa: '4-20013', fitout: '4-20001', denda: '4-20000' };
+const AKUN_JUAL_BARU = { pameran: '4-20003', sewa: '2-20001', fitout: '2-30001', denda: '7-10002' };
+const fixSaleAccount = (p) => (AKUN_JUAL_LAMA[p.id] && p.saleAccount === AKUN_JUAL_LAMA[p.id] ? { ...p, saleAccount: AKUN_JUAL_BARU[p.id] } : p);
+
 function loadProduk() {
   try {
     const raw = JSON.parse(localStorage.getItem(PRODUK_KEY));
     if (Array.isArray(raw?.products) && raw.products.length)
       return {
-        products: raw.products.map(fixBuyAccount),
+        products: raw.products.map(fixBuyAccount).map(fixSaleAccount),
         categories: Array.isArray(raw.categories) ? raw.categories : productCategoriesSeed,
         units: Array.isArray(raw.units) ? raw.units : productUnitsSeed,
       };
@@ -135,12 +143,26 @@ function mergeSeedOrigins(raw) {
   return { pos, fppbj };
 }
 
+// Dokumen contoh yang lahir sesudah data tersimpan (seedAdditions) ditambahkan bila id-nya belum
+// ada. Dokumen yang sudah ada — termasuk yang diubah pengguna — tidak ditimpa.
+function mergeSeedAdditions(raw) {
+  const out = {};
+  for (const [key, docs] of Object.entries(seedAdditions)) {
+    const list = raw[key] ?? [];
+    const have = new Set(list.map((d) => d.id));
+    out[key] = [...list, ...docs.filter((d) => !have.has(d.id))];
+  }
+  return out;
+}
+
 function loadPb() {
   try {
-    const raw = JSON.parse(localStorage.getItem(PB_KEY));
+    const stored = JSON.parse(localStorage.getItem(PB_KEY));
     // Gabung dengan seed supaya data lama yang belum punya koleksi baru tetap bisa dibuka.
-    if (raw?.fppbj && raw?.pos)
+    if (stored?.fppbj && stored?.pos) {
+      const raw = { ...stored, ...mergeSeedAdditions(stored) };
       return { ...pbSeed, ...raw, ...mergeSeedOrigins(raw), vendors: mergeVendors(raw.vendors), paymentTerms: raw.paymentTerms ?? paymentTermsSeed };
+    }
   } catch {
     /* abaikan: pakai data contoh */
   }

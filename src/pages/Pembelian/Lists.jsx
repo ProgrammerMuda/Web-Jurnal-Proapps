@@ -36,7 +36,10 @@ import {
   PR_ACTIVE,
   PR_STATUS,
   prCancelledPo,
-  returnValue,
+  RETURN_STATUS,
+  returnGross,
+  returnState,
+  SETTLEMENT_LABEL,
   RECEIPT_STATUS,
   receiptConfirmed,
   receiptStatus,
@@ -63,7 +66,6 @@ const Money = ({ children, c }) => (
 const Sub = ({ children }) => <Text fz={11} c="slate.6" style={{ whiteSpace: 'nowrap' }}>{children}</Text>;
 const statusOptions = (map) => Object.entries(map).map(([value, s]) => ({ value, label: s.label }));
 const match = (q, ...vals) => !q.trim() || vals.some((v) => v?.toLowerCase().includes(q.trim().toLowerCase()));
-const settleLabel = { potong: 'Potong hutang', kredit: 'Kredit vendor', refund: 'Refund' };
 
 // Badge jalur pengadaan: latar abu muda, teks abu, dengan ikon sesuai jalur.
 function RouteBadge({ f }) {
@@ -364,8 +366,8 @@ export default function ListTab({ tab, pb, go, openDialog }) {
       {...shell}
       noun="retur"
       placeholder="Cari nomor, vendor, alasan, atau faktur..."
-      head={[{ label: 'Retur & Tanggal' }, { label: 'Vendor' }, { label: 'Referensi Faktur' }, { label: 'Alasan' }, { label: 'Penyelesaian' }, { label: 'Nilai Retur', align: 'right' }, { label: 'Aksi', align: 'right', w: 70 }]}
-      minWidth={1000}
+      head={[{ label: 'Retur & Tanggal' }, { label: 'Vendor' }, { label: 'Referensi Faktur' }, { label: 'Alasan' }, { label: 'Penyelesaian' }, { label: 'Status' }, { label: 'Nilai Retur', align: 'right' }, { label: 'Aksi', align: 'right', w: 70 }]}
+      minWidth={1120}
       empty={pb.returns.length === 0 ? <EmptyState icon={ArrowCounterClockwise} title="Belum ada retur pembelian" text="Barang ditolak saat diterima cukup dicatat di FPB. Retur dibuat dari faktur bila barang dikembalikan ke vendor setelah difaktur." /> : undefined}
       rows={rows.map((r) => (
         <Table.Tr key={r.id}>
@@ -376,10 +378,14 @@ export default function ListTab({ tab, pb, go, openDialog }) {
           <Table.Td fz="sm" fw={600} c="slate.9">{vendor(r.vendorId)}</Table.Td>
           <Table.Td fz="sm">{pb.invoicesById[r.invoiceId]?.number}</Table.Td>
           <Table.Td fz="sm">{r.reason}</Table.Td>
-          <Table.Td fz="sm">{settleLabel[r.settlement]}</Table.Td>
-          <Table.Td><Money>{rupiah(Math.round(returnValue(r) * 1.11))}</Money></Table.Td>
+          <Table.Td fz="sm">{SETTLEMENT_LABEL[r.settlement]}</Table.Td>
+          <Table.Td><StatusPill map={RETURN_STATUS} status={returnState(r, pb)} /></Table.Td>
+          <Table.Td><Money>{rupiah(returnGross(r, pb.invoices))}</Money></Table.Td>
           <Table.Td ta="right">
-            <RowMenu label={r.number} items={[{ label: 'Lihat Rincian', icon: Eye, onClick: () => openDialog({ type: 'detail', kind: 'returns', id: r.id }) }]} />
+            <RowMenu label={r.number} items={[
+              { label: 'Lihat Rincian', icon: Eye, onClick: () => openDialog({ type: 'detail', kind: 'returns', id: r.id }) },
+              returnState(r, pb) === 'menunggu_refund' && canCreate(role, 'pv') && { label: 'Catat refund diterima', icon: CurrencyCircleDollar, onClick: () => openDialog({ type: 'refund', id: r.id }) },
+            ]} />
           </Table.Td>
         </Table.Tr>
       ))}

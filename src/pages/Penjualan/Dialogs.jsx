@@ -29,6 +29,7 @@ import {
 import { blockedProps, Field, FormModal } from './components.jsx';
 import { DOC } from './docTypes.js';
 import { accountLabel, journalTotals, saleJournals } from './journal.js';
+import { useData } from '@/lib/store.jsx';
 import { downloadInvoice, invoicePdfBlob } from './invoicePdf.js';
 import NumberField from '@/components/NumberField.jsx';
 import { lockedMessage, periodLocked, products, TODAY } from './data.js';
@@ -314,7 +315,9 @@ export function ReasonModal({
 // `journals` boleh dikirim langsung untuk dokumen yang jurnalnya dibentuk di luar sini
 // (mis. retur, yang butuh faktur sumbernya juga).
 export function JournalModal({ sale, journals: given, word = 'Faktur', onClose }) {
-  const journals = given ?? saleJournals(sale);
+  // Retur ikut dikirim: ia menentukan pembagian pelunasan ke tiap akun piutang.
+  const { salesReturns } = useData();
+  const journals = given ?? saleJournals(sale, salesReturns);
 
   return (
     <FormModal

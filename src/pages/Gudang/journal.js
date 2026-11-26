@@ -18,6 +18,8 @@ export const AKUN = {
   // Persediaan dipakai untuk selisih penilaian, termasuk sisa nilai saat qty habis.
   selisih: '8-10001',
   ongkir: AKUN_ONGKIR, // 5-10005 Pengiriman & Pengangkutan
+  uangMuka: '1-10403', // Uang Muka Pembelian — juga menampung kredit vendor dari retur
+  piutangLain: '1-10108', // Piutang Lainnya — refund retur yang ditunggu dari vendor
 };
 
 export const accountName = (code) => accounts.find((a) => a.code === code)?.name ?? code;
@@ -60,6 +62,25 @@ export function moveJournal(move, product, amount, opts = {}) {
       }
 
       case 'purchase_return': {
+        // Retur yang dokumennya dibaca Pembelian (returnMoveFacts) membawa nilai tagihannya
+        // sendiri: harga faktur + PPN faktur (+ ongkir yang dikembalikan), sama persis dengan
+        // potongan hutang / kredit vendor di dokumen retur. Persediaan tetap keluar sebesar harga
+        // perolehannya; bedanya (ongkir hangus, selisih harga) dibukukan terbuka.
+        if (move.billedValue != null) {
+          const akun = { kredit: AKUN.uangMuka, refund: AKUN.piutangLain }[move.settlement] ?? AKUN.hutangUsaha;
+          const ongkirHangus = cb?.freightCapitalized && !move.freightRefunded ? qty * (cb.freight ?? 0) : 0;
+          // PPN yang dulu dikapitalisasi (non-PKP) ikut keluar di nilai persediaan, bukan PPN Masukan.
+          const ppn = (cb?.vat ?? 0) > 0 ? 0 : move.billedPpn ?? 0;
+          const selisih = r(move.billedValue) + r(ongkirHangus) - nilai - r(ppn);
+          return [
+            dr(akun, move.billedValue),
+            ...(r(ongkirHangus) ? [dr(AKUN.ongkir, ongkirHangus)] : []),
+            ...(selisih < 0 ? [dr(AKUN.selisih, -selisih)] : []),
+            cr(persediaan),
+            ...(r(ppn) ? [cr(AKUN.ppnMasukan, ppn)] : []),
+            ...(selisih > 0 ? [cr(AKUN.selisih, selisih)] : []),
+          ];
+        }
         if (!cb) return [dr(AKUN.belumDitagih), cr(persediaan)];
         // Ongkir yang tidak ikut dikembalikan vendor menjadi beban: barangnya pulang,
         // ongkirnya sudah terlanjur dibayar.

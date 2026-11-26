@@ -5,6 +5,8 @@
 // Tampilannya dari JournalView, sama dengan Jurnal Transaksi di modul lain.
 import { Box, Group, Text } from '@mantine/core';
 import JournalView from '@/components/JournalView.jsx';
+import { useData } from '@/lib/store.jsx';
+import { returnMoveFacts } from '@/pages/Pembelian/journal.js';
 import { CopyIcon, DocNumber, StatusPill } from '@/pages/Pembelian/components.jsx';
 import { formatDate } from '@/pages/Pembelian/utils.js';
 import { rupiah } from '@/pages/Penjualan/utils.js';
@@ -17,7 +19,9 @@ const number = new Intl.NumberFormat('id-ID');
 export default function MoveJournal({ move, data, onBack, onOpenSource, onOpenCard }) {
   const product = data.products.find((p) => p.id === move.productId);
   const warehouse = data.warehouses.find((w) => w.id === move.warehouseId);
-  const jurnal = moveJournal(move, product, move.amount, { residual: move.residual });
+  const { pb } = useData();
+  // Retur pembelian: nilai tagihannya dibaca dari dokumen retur, sama dengan jurnal retur di Pembelian.
+  const jurnal = moveJournal(returnMoveFacts(move, pb, data.products), product, move.amount, { residual: move.residual });
   const masuk = move.qtyIn > 0;
   const qty = masuk ? move.qtyIn : move.qtyOut;
   const satuan = unitName(data.units, product?.baseUnitId ?? product?.buyUnitId);
@@ -64,8 +68,13 @@ export default function MoveJournal({ move, data, onBack, onOpenSource, onOpenCa
 
   return (
     <JournalView
-      // Penerimaan barang dari Pembelian dijurnal lewat FPB-nya, jadi nomornya ikut jurnal FPB.
-      entryIds={[`gd-${move.id}`, move.sourceType === 'goods_receipt' ? `pb-rc-${move.sourceId}` : null]}
+      // Penerimaan barang dan retur dari Pembelian dijurnal lewat dokumennya, jadi nomornya ikut
+      // jurnal FPB / retur.
+      entryIds={[
+        `gd-${move.id}`,
+        move.sourceType === 'goods_receipt' ? `pb-rc-${move.sourceId}` : null,
+        move.sourceType === 'purchase_return' ? `pb-rt-${move.sourceId}` : null,
+      ]}
       backLabel="Kembali ke riwayat mutasi"
       onBack={onBack}
       typeLabel={MOVE_TYPE[move.type].label}

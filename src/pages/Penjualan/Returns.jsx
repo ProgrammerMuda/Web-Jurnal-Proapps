@@ -492,7 +492,7 @@ export default function Returns({ params }) {
         <JournalModal
           sale={dialogReturn}
           word="Retur"
-          journals={returnJournals(dialogReturn, saleOf(dialogReturn))}
+          journals={returnJournals(dialogReturn, saleOf(dialogReturn), salesReturns)}
           onClose={closeDialog}
         />
       )}

@@ -32,12 +32,17 @@ import {
 import DateField from '@/components/DateField.jsx';
 import NumberField from '@/components/NumberField.jsx';
 import AttachmentList from './Attachments.jsx';
-import { Callout, CopyIcon, Field, FormModal, blockedProps } from './components.jsx';
+import { Callout, CopyIcon, Field, FormModal, StatusPill, blockedProps } from './components.jsx';
 import TermBreakdown from './TermBreakdown.jsx';
 import { periodOptions, personLabel, TODAY } from './data.js';
 import { logEntry, receiptKind, signApproval } from './permissions.js';
 import { snapshotTerm, termFields } from './paymentTerms.js';
 import {
+  RETURN_STATUS,
+  returnCreditLeft,
+  returnGross,
+  returnState,
+  SETTLEMENT_LABEL,
   addDays,
   advancePct,
   dpInvoiceOf,
@@ -1697,6 +1702,76 @@ export function PayModal({ opened, onClose, voucher: v, pb }) {
   );
 }
 
+// Refund retur diterima: uang dari vendor masuk ke rekening perusahaan, menutup tagihan ke vendor
+// (Piutang Lainnya) yang dibentuk jurnal returnya. Jurnal kas masuknya ikut terposting.
+export function RefundModal({ opened, onClose, ret, pb }) {
+  const vendor = pb.vendorsById[ret?.vendorId];
+  const [date, setDate] = useState(TODAY);
+  const [source, setSource] = useState(SOURCE_ACCOUNTS[0].label);
+  const [ref, setRef] = useState('');
+  const [sub, setSub] = useState(false);
+  if (!ret) return null;
+  const nilai = returnGross(ret, pb.invoices);
+  const err = {
+    date: (!date && 'Tanggal terima wajib diisi')
+      || (date > TODAY && 'Tidak boleh setelah hari ini')
+      || (date < ret.date && `Tidak boleh sebelum tanggal retur ${formatDate(ret.date)}`),
+    ref: !ref.trim() && 'No. referensi transfer wajib diisi',
+  };
+  const invalid = Object.values(err).some(Boolean);
+  const save = () => {
+    setSub(true);
+    if (invalid) return;
+    pb.update('returns', ret.id, (d) => ({
+      ...d,
+      refund: {
+        date,
+        source,
+        account: SOURCE_ACCOUNTS.find((x) => x.label === source)?.account,
+        ref: ref.trim(),
+        by: personLabel(pb.role),
+      },
+    }));
+    toast('Refund dicatat dan jurnal kas masuk diposting.');
+    onClose();
+  };
+  return (
+    <FormModal
+      opened={opened}
+      onClose={onClose}
+      size={560}
+      icon={CurrencyCircleDollar}
+      title="Catat refund diterima"
+      subtitle={`${ret.number} · ${vendor?.name ?? ''}`}
+      footer={
+        <>
+          <Cancel onClick={onClose} />
+          <Button radius="md" disabled={sub && invalid} onClick={save}>Simpan refund</Button>
+        </>
+      }
+    >
+      <Group justify="space-between" px="md" py="sm" bg="primary.0" style={{ border: '1px solid var(--mantine-color-primary-1)', borderRadius: 'var(--mantine-radius-md)' }}>
+        <Text fz={11} fw={600} c="primary.9">Nilai refund</Text>
+        <Text fz={22} fw={700} c="primary.9">{rupiah(nilai)}</Text>
+      </Group>
+      <SimpleGrid cols={{ base: 1, sm: 2 }}>
+        <DateField label="Tanggal diterima" withAsterisk size="sm" radius="md" max={TODAY} min={ret.date} value={date} error={sub && err.date} onChange={(e) => setDate(e.currentTarget.value)} />
+        <Select
+          label="Masuk ke rekening"
+          description={`Dijurnal ke ${accountLabel(SOURCE_ACCOUNTS.find((x) => x.label === source)?.account)}`}
+          size="sm"
+          radius="md"
+          allowDeselect={false}
+          data={SOURCE_ACCOUNTS.map((x) => x.label)}
+          value={source}
+          onChange={(v) => setSource(v ?? SOURCE_ACCOUNTS[0].label)}
+        />
+      </SimpleGrid>
+      <TextInput label="No. referensi transfer" withAsterisk placeholder="Contoh: TRF-20261104-0098" size="sm" radius="md" value={ref} error={sub && err.ref} onChange={(e) => setRef(e.currentTarget.value)} />
+    </FormModal>
+  );
+}
+
 export function ReturnModal({ opened, onClose, invoice, pb }) {
   const { postStock, products, stockMoves, stockOpnames, warehouses } = useData();
   const po = pb.posById[invoice.poId];
@@ -1709,7 +1784,8 @@ export function ReturnModal({ opened, onClose, invoice, pb }) {
   );
   const [date, setDate] = useState(TODAY);
   const [reason, setReason] = useState('');
-  const [settlement, setSettlement] = useState('potong');
+  // Faktur yang sudah lunas tidak bisa dipotong lagi: pilihan awalnya langsung kredit vendor.
+  const [settlement, setSettlement] = useState(() => (invTotals(invoice, pb.calc).balance > 0 ? 'potong' : 'kredit'));
   // Vendor biasanya hanya mengurangi tagihan sebesar barangnya; ongkirnya sudah
   // terlanjur dibayar. Dicentang bila vendor ikut mengembalikan ongkir.
   const [freightRefunded, setFreightRefunded] = useState(false);
@@ -1744,6 +1820,8 @@ export function ReturnModal({ opened, onClose, invoice, pb }) {
       // Ongkir ikut harga barang hanya bila penerimaannya dulu memang begitu;
       // kebijakan yang berlaku sekarang tidak mengubah dokumen yang sudah lewat.
       ongkirDiHarga: !!asal?.costBreakdown?.freightCapitalized && (asal.costBreakdown.freight || 0) > 0,
+      // Ongkir per unit di harga perolehannya: ikut mengurangi tagihan bila vendor mengembalikannya.
+      freight: asal?.costBreakdown?.freightCapitalized ? asal.costBreakdown.freight || 0 : 0,
       noSource: dilacak && !asal,
       sisaFaktur,
       stok,
@@ -1753,6 +1831,15 @@ export function ReturnModal({ opened, onClose, invoice, pb }) {
 
   const picked = rows.filter((r) => (qtys[r.key] || 0) > 0);
   const adaOngkir = rows.some((r) => r.ongkirDiHarga);
+  // Nilai retur yang mengurangi tagihan (harga + PPN faktur, + ongkir bila dikembalikan vendor).
+  const nilaiRetur = picked.reduce(
+    (n, r) => n + Math.round(qtys[r.key] * r.price) + Math.round(qtys[r.key] * r.price * r.rate)
+      + (adaOngkir && freightRefunded ? Math.round(qtys[r.key] * r.freight) : 0),
+    0,
+  );
+  // "Potong hutang" hanya sampai sisa hutang faktur. Faktur yang sudah (sebagian) dibayar tidak
+  // bisa dipotong melebihi sisanya: kelebihannya hak tagih ke vendor, jadi kredit vendor / refund.
+  const sisaHutang = invTotals(invoice, pb.calc).balance;
   // Stok hari ini cukup belum tentu cukup pada hari-hari sesudahnya bila ada
   // dokumen bertanggal mundur, jadi dicek dengan canIssue, bukan sekadar saldo.
   const stokKurang = (r) => {
@@ -1769,8 +1856,11 @@ export function ReturnModal({ opened, onClose, invoice, pb }) {
       picked.some((r) => r.noSource) &&
       'Penerimaan asal tidak ditemukan untuk salah satu barang — harga perolehannya tidak bisa dipastikan',
     stock: picked.some((r) => stokKurang(r) !== null) && 'Qty retur melebihi stok yang masih ada di gudang',
+    settlement:
+      settlement === 'potong' && nilaiRetur > sisaHutang &&
+      `Nilai retur ${rupiah(nilaiRetur)} melebihi sisa hutang faktur ${rupiah(sisaHutang)}. Kurangi qty, atau pilih kredit vendor / refund.`,
   };
-  const blocked = errors.beku || errors.reason || errors.qty || errors.source || errors.stock;
+  const blocked = errors.beku || errors.reason || errors.qty || errors.source || errors.stock || errors.settlement;
   return (
     <FormModal
       opened={opened}
@@ -1797,6 +1887,7 @@ export function ReturnModal({ opened, onClose, invoice, pb }) {
                 receiptId: r.receiptId,
                 qty: qtys[r.key],
                 price: r.price,
+                ...(r.freight ? { freight: r.freight } : {}),
               }));
               pb.add('returns', {
                 id: returnId,
@@ -1843,13 +1934,17 @@ export function ReturnModal({ opened, onClose, invoice, pb }) {
           allowDeselect={false}
           value={settlement}
           onChange={setSettlement}
+          description={sisaHutang > 0 ? `Sisa hutang faktur ${rupiah(sisaHutang)}` : 'Faktur sudah lunas — tidak ada hutang untuk dipotong'}
           data={[
-            { value: 'potong', label: 'Potong hutang faktur' },
+            { value: 'potong', label: 'Potong hutang faktur', disabled: sisaHutang <= 0 },
             { value: 'kredit', label: 'Kredit vendor (dipakai di pembelian berikutnya)' },
             { value: 'refund', label: 'Refund dari vendor' },
           ]}
         />
       </SimpleGrid>
+      {picked.length > 0 && errors.settlement && (
+        <Callout tone="warn" title="Melebihi sisa hutang">{errors.settlement}</Callout>
+      )}
       {errors.beku && (
         <Callout tone="warn" title="Gudang sedang diopname">
           {errors.beku}. Retur ditahan sampai opname-nya diposting atau dibatalkan, supaya saldo
@@ -1930,7 +2025,7 @@ export function ReturnModal({ opened, onClose, invoice, pb }) {
       {sub && blocked && blocked !== errors.reason && <Text fz="xs" c="red.7">{blocked}</Text>}
       <Group justify="space-between">
         <Text fz="sm" fw={700}>Nilai retur (termasuk PPN)</Text>
-        <Text fz="md" fw={700}>{rupiah(Math.round(picked.reduce((n, r) => n + qtys[r.key] * r.price * (1 + r.rate), 0)))}</Text>
+        <Text fz="md" fw={700}>{rupiah(nilaiRetur)}</Text>
       </Group>
       <Callout>Retur hanya untuk barang. Untuk jasa, koreksi lewat revisi BAPP atau potongan di faktur.</Callout>
     </FormModal>
@@ -2362,8 +2457,10 @@ export function CreditModal({ opened, onClose, invoice: inv, pb }) {
 }
 
 // --- Detail ringkas dokumen ---------------------------------------------------------------------------
-export function DetailModal({ opened, onClose, kind, doc, pb }) {
+export function DetailModal({ opened, onClose, kind, doc, pb, onRefund }) {
   if (!doc) return null;
+  const retur = kind === 'returns';
+  const retState = retur ? returnState(doc, pb) : null;
   const po = pb.posById[doc.poId];
   const vendor = pb.vendorsById[doc.vendorId];
   const itemOf = (id) => po?.items.find((i) => i.id === id);
@@ -2371,8 +2468,27 @@ export function DetailModal({ opened, onClose, kind, doc, pb }) {
   const showLines = kind !== 'prs';
   const t = kind === 'invoices' ? invTotals(doc, pb.calc) : null;
   return (
-    <FormModal opened={opened} onClose={onClose} size={680} icon={ClipboardText} title={titles[kind]} subtitle={doc.number} footer={<Button radius="md" variant="default" onClick={onClose}>Tutup</Button>}>
+    <FormModal
+      opened={opened}
+      onClose={onClose}
+      size={680}
+      icon={ClipboardText}
+      title={titles[kind]}
+      subtitle={doc.number}
+      footer={
+        <>
+          <Button radius="md" variant="default" onClick={onClose}>Tutup</Button>
+          {retState === 'menunggu_refund' && onRefund && <Button radius="md" onClick={onRefund}>Catat refund diterima</Button>}
+        </>
+      }
+    >
+      {retState === 'menunggu_refund' && (
+        <Callout tone="warn" title="Menunggu refund dari vendor">
+          Nilai retur dicatat sebagai tagihan ke vendor (Piutang Lainnya). Catat refund setelah uangnya masuk ke rekening.
+        </Callout>
+      )}
       <SimpleGrid cols={{ base: 2, sm: 3 }}>
+        {retur && <Field label="Status"><StatusPill map={RETURN_STATUS} status={retState} /></Field>}
         <Field label="Vendor">{vendor?.name}</Field>
         <Field label="Tanggal">{formatDate(doc.date)}</Field>
         {po && <Field label={poDocLabel(po)}>{po.number}</Field>}
@@ -2380,7 +2496,10 @@ export function DetailModal({ opened, onClose, kind, doc, pb }) {
         {doc.vendorNo && <Field label="No. invoice vendor" placeholder="Contoh: INV-2026-0123">{doc.vendorNo}</Field>}
         {doc.dueDate && <Field label="Jatuh tempo">{formatDate(doc.dueDate)}</Field>}
         {doc.reason && <Field label="Alasan">{doc.reason}</Field>}
-        {doc.settlement && <Field label="Penyelesaian">{{ potong: 'Potong hutang', kredit: 'Kredit vendor', refund: 'Refund' }[doc.settlement]}</Field>}
+        {doc.settlement && <Field label="Penyelesaian">{SETTLEMENT_LABEL[doc.settlement]}</Field>}
+        {retur && <Field label="Nilai retur">{rupiah(returnGross(doc, pb.invoices))}</Field>}
+        {retur && doc.settlement === 'kredit' && <Field label="Sisa kredit vendor">{rupiah(returnCreditLeft(doc, pb))}</Field>}
+        {retur && doc.refund && <Field label="Refund diterima">{`${formatDate(doc.refund.date)} · ${doc.refund.source ?? ''}`}</Field>}
         {kind === 'prs' && <Field label="Nominal">{rupiah(doc.amount)}</Field>}
         {kind === 'prs' && <Field label="Jenis">{doc.kind === 'dp' ? 'DP / CBD' : 'Pelunasan'}</Field>}
       </SimpleGrid>

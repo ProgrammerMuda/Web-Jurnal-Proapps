@@ -14,7 +14,7 @@ import {
   Package,
 } from '@/components/Icon.jsx';
 import { PageIntro, ReferencePicker } from './components.jsx';
-import { CreditModal, DetailModal, DpInvoiceModal, PayModal, ReasonModal, RetentionReleaseModal, ReturnModal, ReceiptModal, VoucherModal } from './Dialogs.jsx';
+import { CreditModal, DetailModal, DpInvoiceModal, PayModal, ReasonModal, RefundModal, RetentionReleaseModal, ReturnModal, ReceiptModal, VoucherModal } from './Dialogs.jsx';
 import FppbjDetail from './FppbjDetail.jsx';
 import FppbjForm from './FppbjForm.jsx';
 import LaporanHutang from './LaporanHutang.jsx';
@@ -313,7 +313,17 @@ export default function Pembelian() {
       )}
       {d?.type === 'return' && <ReturnModal opened onClose={close} invoice={pb.invoicesById[d.invoiceId]} pb={pb} />}
       {d?.type === 'credit' && <CreditModal opened onClose={close} invoice={pb.invoicesById[d.invoiceId]} pb={pb} />}
-      {d?.type === 'detail' && <DetailModal opened onClose={close} kind={d.kind} doc={pb[d.kind].find((x) => x.id === d.id)} pb={pb} />}
+      {d?.type === 'detail' && (
+        <DetailModal
+          opened
+          onClose={close}
+          kind={d.kind}
+          doc={pb[d.kind].find((x) => x.id === d.id)}
+          pb={pb}
+          onRefund={canCreate(pb.role, 'pv') ? () => setDialog({ type: 'refund', id: d.id }) : undefined}
+        />
+      )}
+      {d?.type === 'refund' && pb.returns.some((x) => x.id === d.id) && <RefundModal opened onClose={close} ret={pb.returns.find((x) => x.id === d.id)} pb={pb} />}
       <ConfirmHost />
     </>
   );

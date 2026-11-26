@@ -15,6 +15,7 @@
 // persediaan di Gudang dan di Pembelian tidak pernah berbeda angka.
 import { accounts } from '@/pages/DaftarAkun/accounts.js';
 import { AKUN as GUDANG, moveJournal } from '@/pages/Gudang/journal.js';
+import { listMoves } from '@/pages/Gudang/stock.js';
 import {
   dpAmortization,
   invDpDeduct,
@@ -26,6 +27,7 @@ import {
   lineRate,
   poDocLabel,
   pvPaid,
+  returnGross,
   rupiah,
   retentionDocName,
 } from './utils.js';
@@ -151,6 +153,14 @@ export function receiptJournal(receipt, pb, ctx = {}) {
 // --- Faktur pembelian ---------------------------------------------------------------------------
 export function invoiceJournal(inv, pb, ctx = {}) {
   if (!inv) return [];
+  // Faktur batal tetap punya jurnal aslinya (dibalik di tanggal pembatalan, lihat
+  // invoiceReversal). Hitungannya memakai faktur itu seolah masih hidup — invTotals menolkan
+  // faktur batal, dan potongan uang muka hanya membaca faktur yang hidup.
+  if (inv.cancelled) {
+    const live = { ...inv, cancelled: false };
+    const invoices = (pb.invoices ?? []).map((i) => (i.id === inv.id ? live : i));
+    return invoiceJournal(live, { ...pb, invoices, invoicesById: { ...pb.invoicesById, [inv.id]: live } }, ctx);
+  }
   const vendor = pb.vendorsById?.[inv.vendorId]?.name ?? 'vendor';
 
   // Faktur uang muka: hak tagih ke vendor lahir, hutangnya juga. Kas belum keluar.
@@ -256,6 +266,81 @@ export function invoiceJournal(inv, pb, ctx = {}) {
   if (credit) lines.push(cr(AKUN.uangMuka, credit, 'Alokasi kredit vendor'));
   lines.push(cr(AKUN.hutangUsaha, dpp + ppn - pph - dp - credit - retensi, `Hutang ke ${vendor}`));
   return finish(lines);
+}
+
+// Jurnal pembalik faktur yang dibatalkan: baris jurnal aslinya dengan debit dan kredit ditukar,
+// dibukukan di tanggal pembatalan. Periode sebelum pembatalan tetap memperlihatkan fakturnya.
+export const invoiceReversal = (inv, pb, ctx = {}) =>
+  invoiceJournal(inv, pb, ctx).map((l) => ({ ...l, debit: l.credit, credit: l.debit, memo: `Pembatalan · ${l.memo ?? ''}`.replace(/ · $/, '') }));
+
+// --- Retur pembelian ------------------------------------------------------------------------------
+// Satu jurnal per dokumen retur. Sisi tagihan mengikuti penyelesaiannya dan nilainya sama dengan
+// yang dipakai sub-buku hutang (invReturns / returnGross): harga faktur + PPN faktur, ditambah
+// ongkir bila vendor ikut mengembalikannya.
+//   potong : Dr Hutang Usaha       kredit : Dr Uang Muka Pembelian (kredit vendor)
+//   refund : Dr Piutang Lainnya (uang yang ditunggu dari vendor)
+// Barang yang dilacak stoknya: sisi persediaannya dari mutasi retur di Gudang (harga perolehan
+// FPB asalnya). Barang yang tidak dilacak tidak punya mutasi, jadi akun pembeliannya dikredit langsung.
+const returnAccountOf = (ret) => ({ kredit: AKUN.uangMuka, refund: GUDANG.piutangLain }[ret?.settlement] ?? AKUN.hutangUsaha);
+
+function returnLineFacts(ret, line, pb) {
+  const inv = pb.invoicesById?.[ret.invoiceId] ?? (pb.invoices ?? []).find((i) => i.id === ret.invoiceId);
+  const il = inv?.lines.find((x) => x.itemId === line.itemId && (!line.receiptId || x.receiptId === line.receiptId))
+    ?? inv?.lines.find((x) => x.itemId === line.itemId);
+  const dpp = line.qty * line.price;
+  const ppn = r(dpp * lineRate(il));
+  const ongkir = ret.freightRefunded ? line.qty * (line.freight ?? 0) : 0;
+  return { inv, dpp, ppn, billed: r(dpp) + ppn + r(ongkir) };
+}
+
+// Mutasi retur di Gudang dilengkapi nilai tagihan dari dokumen returnya (lihat Gudang/journal.js),
+// supaya jurnal mutasi dan jurnal retur di Pembelian selalu satu angka.
+export function returnMoveFacts(move, pb, products) {
+  if (move?.type !== 'purchase_return') return move;
+  const ret = (pb?.returns ?? []).find((x) => x.id === move.sourceId);
+  if (!ret) return move;
+  const inv = (pb.invoices ?? []).find((i) => i.id === ret.invoiceId);
+  const po = (pb.pos ?? []).find((p) => p.id === inv?.poId);
+  const kandidat = ret.lines.filter((l) => productOfItem(products, po?.items.find((i) => i.id === l.itemId))?.id === move.productId);
+  const line = kandidat.find((l) => l.qty === move.qtyOut) ?? kandidat[0];
+  if (!line) return move;
+  const f = returnLineFacts(ret, { ...line, qty: move.qtyOut || line.qty }, pb);
+  return { ...move, billedValue: f.billed, billedPpn: f.ppn, settlement: ret.settlement ?? 'potong', freightRefunded: !!ret.freightRefunded };
+}
+
+export function returnJournal(ret, pb, ctx = {}) {
+  if (!ret) return [];
+  const inv = pb.invoicesById?.[ret.invoiceId];
+  const po = pb.posById?.[inv?.poId];
+  const moves = ctx.pricedMoves ?? listMoves(ctx.stockMoves ?? []);
+  const akun = returnAccountOf(ret);
+  const used = new Set();
+  const lines = ret.lines.flatMap((l) => {
+    if (!(l.qty > 0)) return [];
+    const item = po?.items.find((i) => i.id === l.itemId);
+    const product = productOfItem(ctx.products, item);
+    const memo = `Retur ${item?.desc ?? 'barang'} · ${l.qty} ${item?.unit ?? ''}`.trim();
+    const move = product && moves.find((m) => m.type === 'purchase_return' && m.sourceId === ret.id && m.productId === product.id && !used.has(m.id) && m.qtyOut === l.qty)
+      || (product && moves.find((m) => m.type === 'purchase_return' && m.sourceId === ret.id && m.productId === product.id && !used.has(m.id)));
+    if (move) {
+      used.add(move.id);
+      return moveJournal(returnMoveFacts(move, pb, ctx.products), product, move.amount ?? move.qtyOut * (move.unitCost ?? 0), { residual: move.residual })
+        .map((x) => ({ ...x, memo }));
+    }
+    const f = returnLineFacts(ret, l, pb);
+    const keluar = item?.kind === 'jasa' || !product?.tracked ? expenseOf(product) : AKUN.persediaan;
+    return [dr(akun, f.billed, memo), cr(keluar, f.billed - f.ppn, memo), ...(f.ppn ? [cr(AKUN.ppnMasukan, f.ppn, 'PPN atas retur')] : [])];
+  });
+  return finish(lines);
+}
+
+// Refund retur yang diterima dari vendor: uangnya masuk ke rekening yang dipilih, menutup
+// Piutang Lainnya yang dibentuk jurnal returnya. Sebelum dicatat, tidak ada jurnal.
+export function refundJournal(ret, pb) {
+  if (ret?.settlement !== 'refund' || !ret.refund) return [];
+  const nilai = returnGross(ret, pb.invoices ?? []);
+  const memo = `Refund ${ret.number}`;
+  return finish([dr(ret.refund.account || AKUN.kas, nilai, memo), cr(GUDANG.piutangLain, nilai, memo)]);
 }
 
 // --- Payment Voucher ------------------------------------------------------------------------------
