@@ -225,6 +225,15 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const pc = po.priceChange;
   const pcPending = priceChangePending(po);
   const canDecidePrice = pcPending && isApproverTurn(role, pc, 'priceChange');
+  // Qty yang belum difaktur per item: hanya itu yang terkena harga baru.
+  const pcOpenQty = (itemId) => {
+    const it = po.items.find((i) => i.id === itemId);
+    const billed = pakaiTerima
+      ? receipts.reduce((n, r) => n + invoicedQty(r.id, itemId, pb.invoices), 0)
+      : invoicedQtyOfPo(po.id, itemId, pb.invoices);
+    return Math.max((it?.qty ?? 0) - billed, 0);
+  };
+  const pcImpact = pc ? pc.items.reduce((n, c) => n + (c.price - c.oldPrice) * pcOpenQty(c.itemId), 0) : 0;
   const [pcReject, setPcReject] = useState(false);
   const approvePrice = () => {
     const final = approvalState(pc, 'priceChange').done.length + 1 >= approvalState(pc, 'priceChange').total;
@@ -458,7 +467,50 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
       />
       {pcPending && (
         <Callout tone="wait" title={`Ubah harga menunggu approval ${roleLabel(approvalState(pc, 'priceChange').next)} · faktur ditahan`}>
-          {pc.items.length} item diajukan berubah harga{pc.invoiceNo ? ` sesuai invoice vendor ${pc.invoiceNo}` : ''}, oleh {pc.by}. Alasan: {pc.reason || '—'}
+          <Stack gap={8}>
+            <Text fz="xs">
+              Diajukan oleh {pc.by}{pc.invoiceNo ? ` sesuai invoice vendor ${pc.invoiceNo}` : ''}. Alasan: {pc.reason || '—'}
+            </Text>
+            {/* Approver memutuskan dari angka ini: harga lama, harga baru, dan dampaknya ke sisa pesanan. */}
+            {!noPrice && (
+              <Box style={{ overflowX: 'auto', background: 'var(--mantine-color-white)', border: '1px solid var(--mantine-color-gray-3)', borderRadius: 'var(--mantine-radius-md)' }}>
+                <Table verticalSpacing={6} horizontalSpacing="sm" miw={640} fz="xs" styles={{ th: { whiteSpace: 'nowrap' }, td: { whiteSpace: 'nowrap' } }}>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Item</Table.Th>
+                      <Table.Th ta="right">Harga PO</Table.Th>
+                      <Table.Th ta="right">Diajukan</Table.Th>
+                      <Table.Th ta="right">Per unit</Table.Th>
+                      <Table.Th ta="right">Belum difaktur</Table.Th>
+                      <Table.Th ta="right">Dampak</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {pc.items.map((c) => {
+                      const it = po.items.find((i) => i.id === c.itemId);
+                      const d = c.price - c.oldPrice;
+                      const open = pcOpenQty(c.itemId);
+                      return (
+                        <Table.Tr key={c.itemId}>
+                          <Table.Td fw={600}>{it?.desc ?? c.itemId}</Table.Td>
+                          <Table.Td ta="right">{rupiah(c.oldPrice)}</Table.Td>
+                          <Table.Td ta="right" fw={700}>{rupiah(c.price)}</Table.Td>
+                          <Table.Td ta="right" fw={600} c={d > 0 ? 'red.7' : 'green.8'} style={{ whiteSpace: 'nowrap' }}>{d > 0 ? 'naik' : 'turun'} {rupiah(Math.abs(d))}</Table.Td>
+                          <Table.Td ta="right">{open} {it?.unit}</Table.Td>
+                          <Table.Td ta="right" fw={600} c={d > 0 ? 'red.7' : 'green.8'} style={{ whiteSpace: 'nowrap' }}>{d > 0 ? '+' : '−'}{rupiah(Math.abs(d * open))}</Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </Box>
+            )}
+            {!noPrice && (
+              <Text fz="xs" fw={600}>
+                Total dampak ke sisa {label}: {pcImpact > 0 ? 'naik' : pcImpact < 0 ? 'turun' : 'tetap'} {rupiah(Math.abs(pcImpact))} sebelum pajak
+              </Text>
+            )}
+          </Stack>
         </Callout>
       )}
       {pc?.status === 'ditolak' && (
