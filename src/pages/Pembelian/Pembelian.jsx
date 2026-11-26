@@ -19,6 +19,7 @@ import FppbjDetail from './FppbjDetail.jsx';
 import FppbjForm from './FppbjForm.jsx';
 import LaporanHutang from './LaporanHutang.jsx';
 import ListTab from './Lists.jsx';
+import ListStats from './ListStats.jsx';
 import Overview from './Overview.jsx';
 import PoDetail from './PoDetail.jsx';
 import ReorderModal from './ReorderModal.jsx';
@@ -453,9 +454,12 @@ export default function Pembelian() {
           {tab === 'overview' ? (
             <Overview pb={pb} go={go} openDialog={setDialog} />
           ) : (
-            <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
-              <ListTab key={tab} tab={tab} pb={pb} go={go} openDialog={setDialog} />
-            </Card>
+            <>
+              <ListStats tab={tab} pb={pb} />
+              <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
+                <ListTab key={tab} tab={tab} pb={pb} go={go} openDialog={setDialog} />
+              </Card>
+            </>
           )}
         </>
       )}

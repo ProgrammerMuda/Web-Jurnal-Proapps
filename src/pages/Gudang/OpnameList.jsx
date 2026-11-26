@@ -5,7 +5,6 @@ import {
   Box,
   Button,
   Card,
-  Grid,
   Group,
   Progress,
   Select,
@@ -15,6 +14,7 @@ import {
   TextInput,
 } from '@mantine/core';
 import { PageIntro } from '@/components/common.jsx';
+import StatCards from '@/components/StatCards.jsx';
 import DateField from '@/components/DateField.jsx';
 import {
   ClipboardText,
@@ -28,7 +28,6 @@ import {
   DataTable,
   DocNumber,
   EmptyState,
-  StatCell,
   StatusPill,
 } from '@/pages/Pembelian/components.jsx';
 import { formatDate } from '@/pages/Pembelian/utils.js';
@@ -67,9 +66,9 @@ export default function OpnameList({ data, opnames, showValue, onOpen, onNew }) 
     .reduce((n, o) => n + opnameSummary(o).netValue, 0);
 
   const stats = [
-    ['Sedang berjalan', `${number.format(berjalan.length)} opname`, ListChecks],
-    ['Menunggu persetujuan', `${number.format(menunggu.length)} opname`, Warning],
-    showValue && ['Selisih bulan ini', rupiah(Math.round(netBulanIni)), Package],
+    { label: 'Sedang berjalan', value: number.format(berjalan.length), hint: 'Dalam hitungan atau menunggu persetujuan', icon: ListChecks, color: 'blue' },
+    { label: 'Menunggu persetujuan', value: number.format(menunggu.length), hint: 'Opname yang perlu disetujui', icon: Warning, color: 'orange' },
+    showValue && { label: 'Selisih bulan ini', value: rupiah(Math.round(netBulanIni)), hint: 'Selisih bersih opname yang diposting', icon: Package, color: 'indigo' },
   ].filter(Boolean);
 
   return (
@@ -85,21 +84,7 @@ export default function OpnameList({ data, opnames, showValue, onOpen, onNew }) 
         }
       />
 
-      <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
-        <Grid gutter={0}>
-          {stats.map(([label, value, Icon], i) => (
-            <Grid.Col
-              key={label}
-              span={{ base: 12, sm: 6, lg: showValue ? 4 : 6 }}
-              style={i > 0 ? { borderLeft: '1px solid var(--mantine-color-gray-3)' } : undefined}
-            >
-              <StatCell icon={Icon} label={label}>
-                {value}
-              </StatCell>
-            </Grid.Col>
-          ))}
-        </Grid>
-      </Card>
+      <StatCards items={stats} />
 
       <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
         <Group

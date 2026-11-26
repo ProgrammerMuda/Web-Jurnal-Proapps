@@ -52,8 +52,9 @@ function Stat({ label, value, hint, icon: Icon, color, highlight }) {
           </Text>
         </Box>
         <ThemeIcon
-          variant={highlight ? 'filled' : 'light'}
-          color={highlight ? 'orange' : 'slate'}
+          variant="light"
+          bg="secondary.0"
+          c="secondary.7"
           size={32}
           radius="md"
         >

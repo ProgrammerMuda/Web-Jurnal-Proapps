@@ -141,7 +141,7 @@ export function Section({ title, description, icon: Icon, right, divided, flush,
 export function StatCell({ icon: Icon, label, children }) {
   return (
     <Group gap="sm" wrap="nowrap" px="lg" py="md" style={{ minWidth: 0 }}>
-      <ThemeIcon variant="light" size={40} radius="md"><Icon size={20} /></ThemeIcon>
+      <ThemeIcon variant="light" bg="secondary.0" c="secondary.7" size={40} radius="md"><Icon size={20} /></ThemeIcon>
       <Box style={{ minWidth: 0 }}>
         <Text fz={11} fw={600} c="slate.6">{label}</Text>
         <Text fz="sm" fw={700} c="slate.9" truncate>{children}</Text>

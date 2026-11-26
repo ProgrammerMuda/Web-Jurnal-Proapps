@@ -5,151 +5,47 @@ import {
   Card,
   Grid,
   Group,
-  Progress,
-  RingProgress,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
-import { Package } from '@/components/Icon.jsx';
+import { Invoice, Package, ShoppingCart, Warehouse } from '@/components/Icon.jsx';
+import { CompositionCard, QueueCard } from '@/components/overview.jsx';
 import { baseUnitOf, unitName } from './catalog.js';
 
 const number = new Intl.NumberFormat('id-ID');
 
-// --- Kartu statistik di atas tabel ------------------------------------------
-
-function StatCard({ label, value, hint, right }) {
-  return (
-    <Card withBorder radius="lg" padding="lg" bg="white" h="100%">
-      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm" h="100%">
-        <Box style={{ minWidth: 0 }}>
-          <Text fz={11} c="slate.7" fw={600}>
-            {label}
-          </Text>
-          <Text fz={32} fw={700} c="slate.9" lh={1.2}>
-            {value}
-          </Text>
-          <Text fz={11} c="slate.6">
-            {hint}
-          </Text>
-        </Box>
-        {right}
-      </Group>
-    </Card>
-  );
-}
-
-// Batang kecil per kategori — meniru sparkline pada kartu "Total produk".
-function CategoryBars({ products, categories }) {
-  const counts = categories
-    .map((c) => products.filter((p) => p.categoryId === c.id).length)
-    .filter((n) => n > 0);
-  const max = Math.max(1, ...counts);
-  const shown = counts.length ? counts : [0];
-  return (
-    <Group gap={4} align="flex-end" h={48} wrap="nowrap">
-      {shown.slice(0, 8).map((n, i) => (
-        <Box
-          key={i}
-          w={6}
-          h={Math.max(4, Math.round((n / max) * 48))}
-          bg={n === max ? 'primary.9' : 'slate.2'}
-          style={{ borderRadius: 3 }}
-        />
-      ))}
-    </Group>
-  );
-}
-
-export function ProductStats({ products, categories, units }) {
+export function ProductStats({ products, categories, units, onFilter }) {
   const total = products.length;
-  const dijual = products.filter((p) => p.sellable).length;
-  const dibeli = products.filter((p) => p.purchasable).length;
-  const dilacak = products.filter((p) => p.tracked).length;
-  const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
+  const sold = products.filter((product) => product.sellable).length;
+  const purchased = products.filter((product) => product.purchasable).length;
+  const tracked = products.filter((product) => product.tracked).length;
+  const parts = [
+    { key: 'tracked', label: 'Stok dilacak', value: tracked, color: 'primary.9' },
+    { key: 'untracked', label: 'Non-stok', value: total - tracked, color: 'slate.3' },
+  ].map((part) => ({
+    ...part,
+    display: number.format(part.value),
+    hint: total ? `${Math.round(part.value / total * 100)}% dari katalog` : '',
+  }));
+  const shortcuts = [
+    { key: 'dijual', label: 'Bisa dijual', hint: 'Tersedia untuk transaksi penjualan', value: sold, icon: Invoice, tone: 'blue' },
+    { key: 'dibeli', label: 'Bisa dibeli', hint: 'Tersedia untuk transaksi pembelian', value: purchased, icon: ShoppingCart, tone: 'teal' },
+    { key: 'dilacak', label: 'Stok dilacak', hint: 'Jumlah persediaan dicatat per gudang', value: tracked, icon: Warehouse, tone: 'gray' },
+  ].map((item) => ({ ...item, value: number.format(item.value), onClick: () => onFilter(item.key) }));
 
   return (
-    <Grid gutter="md">
-      <Grid.Col span={{ base: 12, sm: 6, lg: 3 }}>
-        <StatCard
-          label="Total produk"
-          value={number.format(total)}
-          hint={`${categories.length} kategori · ${units.length} satuan`}
-          right={<CategoryBars products={products} categories={categories} />}
+    <Grid component="section" aria-label="Ringkasan produk dan jasa" gutter="lg" align="stretch">
+      <Grid.Col span={{ base: 12, lg: 7 }}>
+        <CompositionCard
+          title="Total produk & jasa"
+          text={total ? `${number.format(categories.length)} kategori · ${number.format(units.length)} satuan` : 'Katalog masih kosong'}
+          figure={number.format(total)}
+          parts={parts}
         />
       </Grid.Col>
-      <Grid.Col span={{ base: 12, sm: 6, lg: 3 }}>
-        <StatCard
-          label="Dijual"
-          value={number.format(dijual)}
-          hint="Muncul di penjualan"
-          right={
-            <RingProgress
-              size={64}
-              thickness={7}
-              roundCaps
-              sections={[{ value: pct(dijual), color: 'primary.9' }]}
-              label={
-                <Text ta="center" fz={11} fw={700} c="primary.9">
-                  {pct(dijual)}%
-                </Text>
-              }
-            />
-          }
-        />
-      </Grid.Col>
-      <Grid.Col span={{ base: 12, sm: 6, lg: 3 }}>
-        <StatCard
-          label="Dibeli"
-          value={number.format(dibeli)}
-          hint="Muncul di pembelian"
-          right={
-            <Box w={110}>
-              <Text fz={11} fw={700} c="slate.9" ta="right">
-                {pct(dibeli)}%
-              </Text>
-              <Progress value={pct(dibeli)} size="sm" radius="xl" color="primary.9" mt={6} />
-            </Box>
-          }
-        />
-      </Grid.Col>
-      <Grid.Col span={{ base: 12, sm: 6, lg: 3 }}>
-        <StatCard
-          label="Stok dilacak"
-          value={number.format(dilacak)}
-          hint="Stok dihitung"
-          right={
-            <Box w={120}>
-              <Progress.Root size={8} radius="xl">
-                <Tooltip label={`Dilacak: ${dilacak}`} withArrow fz="xs">
-                  <Progress.Section value={pct(dilacak)} color="primary.9" />
-                </Tooltip>
-                <Tooltip label={`Non-stok: ${total - dilacak}`} withArrow fz="xs">
-                  <Progress.Section value={100 - pct(dilacak)} color="slate.2" />
-                </Tooltip>
-              </Progress.Root>
-              <Group gap={6} justify="flex-end" mt={8} wrap="nowrap">
-                <Box w={8} h={8} bg="primary.9" style={{ borderRadius: '50%' }} />
-                <Text fz={10} c="slate.6">
-                  Dilacak
-                </Text>
-                <Text fz={10} fw={700} c="slate.9">
-                  {dilacak}
-                </Text>
-              </Group>
-              <Group gap={6} justify="flex-end" mt={2} wrap="nowrap">
-                <Box w={8} h={8} bg="slate.3" style={{ borderRadius: '50%' }} />
-                <Text fz={10} c="slate.6">
-                  Non-stok
-                </Text>
-                <Text fz={10} fw={700} c="slate.9">
-                  {total - dilacak}
-                </Text>
-              </Group>
-            </Box>
-          }
-        />
+      <Grid.Col span={{ base: 12, lg: 5 }}>
+        <QueueCard items={shortcuts} secondaryIcons />
       </Grid.Col>
     </Grid>
   );

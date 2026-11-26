@@ -1,21 +1,19 @@
 import {
   ActionIcon,
   Badge,
-  Box,
   Button,
   Card,
   Group,
   Menu,
   Select,
-  SimpleGrid,
   Stack,
   Table,
   Text,
-  ThemeIcon,
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import { useEffect, useMemo, useState } from 'react';
+import StatCards from '@/components/StatCards.jsx';
 import { notifications } from '@mantine/notifications';
 import {
   ArrowCounterClockwise,
@@ -139,29 +137,6 @@ const toast = (title, message, color = 'green') =>
     withBorder: true,
     radius: 'md',
   });
-
-function StatCard({ label, value, hint, icon: Icon, color }) {
-  return (
-    <Card withBorder radius="md" padding="md" bg="white">
-      <Group justify="space-between" align="flex-start" wrap="nowrap">
-        <Box>
-          <Text fz={11} fw={600} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }}>
-            {label}
-          </Text>
-          <Text fz={22} fw={700} c="slate.9" lh={1.3}>
-            {value}
-          </Text>
-          <Text fz={11} c="slate.6">
-            {hint}
-          </Text>
-        </Box>
-        <ThemeIcon variant="light" color={color} size={36} radius="md">
-          <Icon size={18} />
-        </ThemeIcon>
-      </Group>
-    </Card>
-  );
-}
 
 function SaleRow({ sale, onOpen, onPay, onCreateLink, actions }) {
   const t = computeTotals(sale);
@@ -764,11 +739,7 @@ export default function Invoices({ params }) {
         }
       />
 
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-        {stats.map((s) => (
-          <StatCard key={s.label} {...s} />
-        ))}
-      </SimpleGrid>
+      <StatCards items={stats} />
 
       <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
         <TabBar

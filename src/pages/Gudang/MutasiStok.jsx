@@ -2,7 +2,8 @@
 // mutasi (pergerakan). Halaman ini terutama untuk dibaca; satu-satunya dokumen
 // yang dibuat dari sini adalah Pindah Barang.
 import { useMemo, useState } from 'react';
-import { Box, Button, Card, Grid, Group, Stack, Table, Text } from '@mantine/core';
+import { Box, Button, Card, Group, Stack, Table, Text } from '@mantine/core';
+import StatCards from '@/components/StatCards.jsx';
 import { PageIntro } from '@/components/common.jsx';
 import {
   ArrowsLeftRight,
@@ -17,7 +18,6 @@ import {
   DataTable,
   DocNumber,
   EmptyState,
-  StatCell,
   StatusPill,
   TabBar,
 } from '@/pages/Pembelian/components.jsx';
@@ -246,28 +246,12 @@ export default function MutasiStok({
 
       {tab === 'saldo' && (
         <>
-          <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
-            <Grid gutter={0}>
-              {[
-                showValue && ['Nilai persediaan', rupiah(Math.round(nilai)), Package],
-                ['Produk dilacak', `${number.format(distinctItemCount(rows))} produk`, Package],
-                ['Di bawah minimum', `${number.format(alerts.below)} produk`, Warning],
-                ['Habis', `${number.format(alerts.habis)} produk`, Prohibit],
-              ]
-                .filter(Boolean)
-                .map(([label, value, Icon], i) => (
-                  <Grid.Col
-                    key={label}
-                    span={{ base: 12, sm: 6, lg: showValue ? 3 : 4 }}
-                    style={i > 0 ? { borderLeft: '1px solid var(--mantine-color-gray-3)' } : undefined}
-                  >
-                    <StatCell icon={Icon} label={label}>
-                      {value}
-                    </StatCell>
-                  </Grid.Col>
-                ))}
-            </Grid>
-          </Card>
+          <StatCards items={[
+            showValue && { label: 'Nilai persediaan', value: rupiah(Math.round(nilai)), hint: `Saldo per ${formatDate(asOf)}`, icon: Package, color: 'indigo' },
+            { label: 'Produk dilacak', value: number.format(distinctItemCount(rows)), hint: 'Produk berbeda dalam saldo stok', icon: Package, color: 'blue' },
+            { label: 'Di bawah minimum', value: number.format(alerts.below), hint: 'Dihitung per produk per gudang', icon: Warning, color: 'orange' },
+            { label: 'Habis', value: number.format(alerts.habis), hint: 'Saldo nol dengan batas minimum', icon: Prohibit, color: 'red' },
+          ].filter(Boolean)} />
 
           {showValue && scope.warehouseId === 'all' && (
             <Callout

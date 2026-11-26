@@ -207,7 +207,18 @@ function ProductList({ products, categories, units, qtyOf, onView, onEdit, onDel
         }
       />
 
-      <ProductStats products={products} categories={categories} units={units} />
+      <ProductStats
+        products={products}
+        categories={categories}
+        units={units}
+        onFilter={(nextMode) => {
+          setQuery('');
+          setCategory(null);
+          setMode(nextMode);
+          setPage(1);
+          document.getElementById('filter-produk')?.focus();
+        }}
+      />
 
       <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
         <Group
@@ -243,6 +254,7 @@ function ProductList({ products, categories, units, qtyOf, onView, onEdit, onDel
             w={170}
             clearable
             placeholder="Semua produk"
+            id="filter-produk"
             data={[
               { value: 'dijual', label: 'Dijual' },
               { value: 'dibeli', label: 'Dibeli' },

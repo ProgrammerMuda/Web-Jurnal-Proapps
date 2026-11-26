@@ -8,7 +8,6 @@ import {
   Badge,
   Button,
   Card,
-  Grid,
   Group,
   Select,
   Stack,
@@ -17,6 +16,7 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { PageIntro } from '@/components/common.jsx';
+import StatCards from '@/components/StatCards.jsx';
 import {
   ArrowsClockwise,
   CheckCircle,
@@ -34,7 +34,6 @@ import {
   EmptyState,
   ListShell,
   RowMenu,
-  StatCell,
   StatusPill,
 } from '@/pages/Pembelian/components.jsx';
 import { rupiah } from '@/pages/Penjualan/utils.js';
@@ -287,33 +286,11 @@ function WarehouseList({
         }
       />
 
-      <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
-        <Grid gutter={0}>
-          <Grid.Col span={{ base: 12, sm: showValue ? 4 : 6 }}>
-            <StatCell icon={Warehouse} label="Gudang aktif">
-              {number.format(aktif.length)} dari {number.format(warehouses.length)} gudang
-            </StatCell>
-          </Grid.Col>
-          <Grid.Col
-            span={{ base: 12, sm: showValue ? 4 : 6 }}
-            style={{ borderLeft: '1px solid var(--mantine-color-gray-3)' }}
-          >
-            <StatCell icon={Package} label="Total item">
-              {number.format(totalItems)} produk
-            </StatCell>
-          </Grid.Col>
-          {showValue && (
-            <Grid.Col
-              span={{ base: 12, sm: 4 }}
-              style={{ borderLeft: '1px solid var(--mantine-color-gray-3)' }}
-            >
-              <StatCell icon={ListChecks} label="Nilai persediaan">
-                {rupiah(totalValue)}
-              </StatCell>
-            </Grid.Col>
-          )}
-        </Grid>
-      </Card>
+      <StatCards items={[
+        { label: 'Gudang aktif', value: number.format(aktif.length), hint: `Dari ${number.format(warehouses.length)} gudang terdaftar`, icon: Warehouse, color: 'blue' },
+        { label: 'Total item', value: number.format(totalItems), hint: 'Produk berbeda dalam saldo stok', icon: Package, color: 'teal' },
+        showValue && { label: 'Nilai persediaan', value: rupiah(totalValue), hint: 'Total di gudang aktif', icon: ListChecks, color: 'indigo' },
+      ].filter(Boolean)} />
 
       <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
         <ListShell

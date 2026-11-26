@@ -96,7 +96,7 @@ export function CompositionCard({ title, text, action, figure, parts }) {
 }
 
 // Daftar antrean: baris yang bisa diklik ke daftarnya. items: [{ key, label, hint, value, icon, tone, alert, onClick }].
-export function QueueCard({ items }) {
+export function QueueCard({ items, secondaryIcons = false }) {
   return (
     <Card withBorder radius="lg" padding={6} bg="white" h="100%">
       <Stack gap={0} h="100%">
@@ -110,7 +110,7 @@ export function QueueCard({ items }) {
             style={{ flex: 1, display: 'flex', alignItems: 'center', borderTop: i ? '1px solid var(--mantine-color-gray-1)' : undefined, borderRadius: i ? 0 : undefined }}
           >
             <Group wrap="nowrap" gap="md" w="100%">
-              <ThemeIcon variant="light" color={a.tone ?? 'gray'} size={36} radius="md">
+              <ThemeIcon variant="light" color={a.tone ?? 'gray'} bg={secondaryIcons ? 'secondary.0' : undefined} c={secondaryIcons ? 'secondary.7' : undefined} size={36} radius="md">
                 <a.icon size={18} />
               </ThemeIcon>
               <Box style={{ minWidth: 0, flex: 1 }}>

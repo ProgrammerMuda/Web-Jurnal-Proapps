@@ -16,10 +16,10 @@ import {
   Table,
   Text,
   TextInput,
-  ThemeIcon,
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { StatCard } from '@/components/StatCards.jsx';
 import { useMemo, useState } from 'react';
 import {
   ArrowsClockwise,
@@ -64,28 +64,6 @@ const goTo = (v) => {
   window.scrollTo({ top: 0 });
 };
 
-function StatCard({ label, value, hint, icon: Icon, color }) {
-  return (
-    <Card withBorder radius="md" padding="md" bg="white">
-      <Group justify="space-between" align="flex-start" wrap="nowrap">
-        <Box>
-          <Text fz={11} fw={600} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }}>
-            {label}
-          </Text>
-          <Text fz={22} fw={700} c="slate.9" lh={1.3}>
-            {value}
-          </Text>
-          <Text fz={11} c="slate.6">
-            {hint}
-          </Text>
-        </Box>
-        <ThemeIcon variant="light" color={color} size={36} radius="md">
-          <Icon size={18} />
-        </ThemeIcon>
-      </Group>
-    </Card>
-  );
-}
 
 function PaymentRow({ payment, onJournal, onVoid }) {
   const customer = useCustomer(payment.customerId);

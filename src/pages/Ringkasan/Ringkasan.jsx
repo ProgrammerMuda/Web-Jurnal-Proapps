@@ -94,7 +94,9 @@ function KpiCard({ kpi }) {
         <Text fz="xs" c="slate.7" fw={500}>
           {kpi.label}
         </Text>
-        <ArrowUpRight size={14} color="var(--mantine-color-slate-5)" />
+        <ThemeIcon variant="light" bg="secondary.0" c="secondary.7" size={24} radius="md">
+          <ArrowUpRight size={14} />
+        </ThemeIcon>
       </Group>
       <Group justify="space-between" align="flex-end" mt="sm" wrap="nowrap">
         <Box>
@@ -309,7 +311,7 @@ function InvoiceRow({ row }) {
   return (
     <Group justify="space-between" wrap="nowrap">
       <Group gap="sm" wrap="nowrap">
-        <ThemeIcon variant="light" color="slate" size={36} radius="md">
+        <ThemeIcon variant="light" bg="secondary.0" c="secondary.7" size={36} radius="md">
           <Bank size={18} />
         </ThemeIcon>
         <Box>
@@ -429,7 +431,7 @@ function CashDistributionCard({ cashAccounts }) {
             <Box key={a.code}>
               <Group justify="space-between" wrap="nowrap">
                 <Group gap="sm" wrap="nowrap">
-                  <ThemeIcon variant="light" color="primary" size={28} radius="md">
+                  <ThemeIcon variant="light" bg="secondary.0" c="secondary.7" size={28} radius="md">
                     <Bank size={16} />
                   </ThemeIcon>
                   <Box>
