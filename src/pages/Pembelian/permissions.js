@@ -47,6 +47,9 @@ const APPROVE = {
   // Pesan ulang dengan harga lebih tinggi dari pesanan sebelumnya: keputusan belanja baru,
   // jadi rantainya sama dengan approval pengadaan.
   reorder: ['cfo', 'bm'],
+  // Ubah harga PO karena invoice vendor berbeda, naik maupun turun: harga yang disepakati
+  // berubah, jadi rantainya sama dengan pesan ulang.
+  priceChange: ['cfo', 'bm'],
   fpb: ['cfo', 'bm'], // penerimaan barang
   bapp: ['cfo', 'bm'], // serah terima jasa
   pr: ['cfo', 'bm'], // PR DP, pelunasan, retensi

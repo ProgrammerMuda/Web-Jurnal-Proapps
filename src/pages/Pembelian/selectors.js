@@ -25,6 +25,7 @@ import {
   rupiahShort,
   poPending,
   reorderBlock,
+  priceChangePending,
   receiptConfirmed,
   liveInvoices,
   isRetentionRelease,
@@ -261,6 +262,12 @@ export function actionsFor(role, pb) {
     pb.pos
       .filter((p) => poPending(p) && isApproverTurn(role, p.reorder, 'reorder'))
       .forEach((p) => add({ id: `ro-${p.id}`, title: `${p.reorder.increased === false ? 'Setujui pesan ulang' : 'Setujui pesan ulang, harga naik'} (${approvalState(p.reorder, 'reorder').done.length + 1}/${approvalState(p.reorder, 'reorder').total})`, sub: p.number, cta: 'Tinjau', to: { name: 'po', id: p.id }, since: p.date, limit: SLA.bapp }));
+  }
+  // Ubah harga PO dari invoice vendor yang beda harga: fakturnya ditahan sampai diputuskan.
+  if (canApprove(role, 'priceChange')) {
+    pb.pos
+      .filter((p) => priceChangePending(p) && isApproverTurn(role, p.priceChange, 'priceChange'))
+      .forEach((p) => add({ id: `pc-${p.id}`, title: `Setujui ubah harga (${approvalState(p.priceChange, 'priceChange').done.length + 1}/${approvalState(p.priceChange, 'priceChange').total})`, sub: p.number, cta: 'Tinjau', to: { name: 'po', id: p.id }, since: p.priceChange.at, limit: SLA.bapp }));
   }
   // FPB/BAPP yang ditolak kembali ke pencatatnya untuk diajukan ulang atau dibatalkan.
   pb.receipts

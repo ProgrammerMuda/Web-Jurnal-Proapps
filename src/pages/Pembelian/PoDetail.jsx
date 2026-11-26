@@ -61,6 +61,9 @@ import {
   PR_ACTIVE,
   prCancelledPo,
   poPending,
+  applyPriceChange,
+  priceChangeOf,
+  priceChangePending,
   reorderBlock,
   reordersOf,
   poOriginFppbj,
@@ -218,6 +221,38 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
     setRoReject(false);
     toast(`${po.number} ditolak dan tidak berlaku.`);
   };
+  // Ubah harga dari form faktur (invoice vendor beda harga). Naik maupun turun perlu approval.
+  const pc = po.priceChange;
+  const pcPending = priceChangePending(po);
+  const canDecidePrice = pcPending && isApproverTurn(role, pc, 'priceChange');
+  const [pcReject, setPcReject] = useState(false);
+  const approvePrice = () => {
+    const final = approvalState(pc, 'priceChange').done.length + 1 >= approvalState(pc, 'priceChange').total;
+    if (final) {
+      // Penerimaan yang sudah tercatat dikunci di harga lama: jurnalnya tidak berubah ke belakang.
+      const oldPrice = Object.fromEntries(pc.items.map((c) => [c.itemId, c.oldPrice]));
+      receipts.filter((r) => r.lines.some((l) => oldPrice[l.itemId] != null && l.price == null)).forEach((r) => {
+        pb.update('receipts', r.id, (d) => ({
+          ...d,
+          lines: d.lines.map((l) => (oldPrice[l.itemId] != null && l.price == null ? { ...l, price: oldPrice[l.itemId] } : l)),
+        }));
+      });
+    }
+    pb.update('pos', po.id, (d) => {
+      const { doc, complete } = signApproval(d.priceChange, 'priceChange', role);
+      if (!complete) return { ...d, priceChange: doc };
+      return applyPriceChange({ ...d, priceChange: { ...doc, status: 'disetujui', approvedAt: TODAY } });
+    });
+    toast(final ? `Harga ${po.number} diperbarui. Fakturnya sekarang bisa dicatat dengan harga baru.` : 'Approval dicatat. Menunggu Building Manager.');
+  };
+  const rejectPrice = (note) => {
+    pb.update('pos', po.id, (d) => ({
+      ...d,
+      priceChange: { ...d.priceChange, status: 'ditolak', rejectNote: note, log: [...(d.priceChange.log ?? []), logEntry(role, 'tolak', { step: approvalState(d.priceChange, 'priceChange').next, note })] },
+    }));
+    setPcReject(false);
+    toast(`Ubah harga ${po.number} ditolak. Harga PO tetap.`);
+  };
   const stopBlock = closed ? null : poStopBlock(po, pb.calc);
   const canClose = !closed && canCreate(role, 'po');
   const [closing, setClosing] = useState(null);
@@ -313,11 +348,11 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               <Button radius="md" leftSection={<Truck size={16} />} onClick={() => openDialog({ type: 'receipt', poId: po.id })}>{poAllJasa(po) ? 'Catat BAPP' : 'Catat penerimaan'}</Button>
             )}
             {!inactive && openLines.length > 0 && canCreate(role, 'invoice') && (
-              <Tooltip label={dpBlockReason(dp)} disabled={!dpBlocks(dp)} withArrow fz="xs" multiline w={260}>
+              <Tooltip label={pcPending ? 'Ubah harga masih menunggu approval. Faktur bisa dicatat setelah diputuskan.' : dpBlockReason(dp)} disabled={!pcPending && !dpBlocks(dp)} withArrow fz="xs" multiline w={260}>
               <Button
                 radius="md"
                 leftSection={<Receipt size={16} />}
-                disabled={dpBlocks(dp)}
+                disabled={pcPending || dpBlocks(dp)}
                 onClick={() => (pakaiTerima
                   ? go({ name: 'invoice-new', receiptIds: receipts.filter((r) => uninvoicedLines(r, pb.invoices).length).map((r) => r.id) })
                   : go({ name: 'invoice-new', poId: po.id }))}
@@ -340,6 +375,23 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                   })}
                 >
                   Setujui ({approvalState(ro, 'reorder').done.length + 1}/{approvalState(ro, 'reorder').total})
+                </Button>
+              </>
+            )}
+            {canDecidePrice && (
+              <>
+                <Button radius="md" variant="default" color="red" leftSection={<X size={16} />} onClick={() => setPcReject(true)}>Tolak ubah harga</Button>
+                <Button
+                  radius="md"
+                  leftSection={<Check size={16} />}
+                  onClick={() => askConfirm({
+                    title: `Setujui ubah harga ${po.number}?`,
+                    message: approvalMessage(approvalState(pc, 'priceChange'), { final: `Ini approval terakhir: harga ${po.number} langsung berubah untuk qty yang belum difaktur.` }),
+                    confirmLabel: 'Ya, setujui',
+                    onConfirm: approvePrice,
+                  })}
+                >
+                  Setujui ubah harga ({approvalState(pc, 'priceChange').done.length + 1}/{approvalState(pc, 'priceChange').total})
                 </Button>
               </>
             )}
@@ -401,6 +453,24 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
         label="Alasan penolakan. Pesanan ini tidak akan berlaku."
         confirmLabel="Tolak"
         onConfirm={rejectReorder}
+      />
+      {pcPending && (
+        <Callout tone="wait" title={`Ubah harga menunggu approval ${roleLabel(approvalState(pc, 'priceChange').next)} · faktur ditahan`}>
+          {pc.items.length} item diajukan berubah harga{pc.invoiceNo ? ` sesuai invoice vendor ${pc.invoiceNo}` : ''}, oleh {pc.by}. Alasan: {pc.reason || '—'}
+        </Callout>
+      )}
+      {pc?.status === 'ditolak' && (
+        <Callout tone="stop" title="Ubah harga ditolak · harga PO tetap">
+          {pc.rejectNote} Minta vendor merevisi invoice sesuai harga PO.
+        </Callout>
+      )}
+      <ReasonModal
+        opened={pcReject}
+        onClose={() => setPcReject(false)}
+        title={`Tolak ubah harga ${po.number}`}
+        label="Alasan penolakan. Harga PO tetap dan vendor perlu merevisi invoice-nya."
+        confirmLabel="Tolak"
+        onConfirm={rejectPrice}
       />
       {dp && !inactive && <DpStatusStrip dp={dp} po={po} go={go} />}
       <ReasonModal
@@ -581,6 +651,15 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                                 {roChange(i.id).price > roChange(i.id).oldPrice ? 'Naik' : 'Turun'} {rupiah(Math.abs(roChange(i.id).price - roChange(i.id).oldPrice))} dari {roFrom?.number ?? 'pesanan lama'}
                               </Text>
                             )}
+                            {priceChangeOf(po, i.id) && pc.status !== 'ditolak' && (() => {
+                              const c = priceChangeOf(po, i.id);
+                              const up = c.price > c.oldPrice;
+                              return pc.status === 'diajukan' ? (
+                                <Text fz={11} fw={600} c="orange.8">Diajukan jadi {rupiah(c.price)}</Text>
+                              ) : (
+                                <Text fz={11} fw={600} c={up ? 'red.7' : 'green.8'}>{up ? 'Naik' : 'Turun'} dari {rupiah(c.oldPrice)} (ubah harga)</Text>
+                              );
+                            })()}
                             {ongkirPerUnit(i) > 0 && (
                               <Text fz={11} c="slate.6" fw={400}>
                                 Termasuk ongkir {rupiah(Math.round(ongkirPerUnit(i)))}/{i.unit}
@@ -779,6 +858,13 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                 log={ro.log ?? []}
               />
             ) : null}
+            {pc && (
+              <ApprovalLog
+                title="Log ubah harga"
+                steps={chainSteps(pc, 'priceChange', { rejected: pc.status === 'ditolak', active: pc.status === 'diajukan' })}
+                log={pc.log ?? []}
+              />
+            )}
             {/* Pembatalan uang muka; kartunya muncul begitu diajukan. */}
             {po.dpWaiver && (
               <ApprovalLog

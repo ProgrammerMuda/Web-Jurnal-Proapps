@@ -73,6 +73,7 @@ import {
   poTotal,
   ppnLabel,
   receiptDue,
+  priceChangePending,
   rupiah,
   termKey,
   dpBlockReason,
@@ -84,6 +85,7 @@ import {
   poPending,
 } from './utils.js';
 import { toast } from './usePb.js';
+import PriceChangeModal from './PriceChangeModal.jsx';
 
 // Urutan langkah: sumber dulu, lalu data faktur dari vendor, baru rinciannya.
 // Nomor, tanggal, dan berkas disalin dari lembar invoice yang ada di tangan, jadi lebih
@@ -618,6 +620,11 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   // Total yang tertulis di invoice vendor, untuk dicocokkan dengan hitungan aplikasi.
   const [vendorTotal, setVendorTotal] = useState(null);
   const selisihVendor = vendorTotal > 0 ? vendorTotal - total : 0;
+  const [priceOpen, setPriceOpen] = useState(false);
+  // Pesanan yang harganya sedang diajukan berubah: fakturnya ditahan sampai diputuskan,
+  // supaya tidak tercatat dengan harga yang mungkin segera diganti.
+  const pricePending = manual || isDp ? [] : [...new Set(activeLines.map((l) => l.poId))].map((id) => pb.posById[id]).filter(priceChangePending);
+  const canAskPrice = !manual && !isDp && activeLines.length > 0 && !pricePending.length;
 
   // --- isian wajib per langkah ---
   const required = {
@@ -631,6 +638,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
       qty: !activeLines.length && 'Isi minimal satu qty',
       desc: manual && manualLines.some((l) => l.qty > 0 && !l.productId) && 'Pilih barang atau jasa untuk setiap baris',
       price: manual && manualLines.some((l) => l.qty > 0 && !(l.price > 0)) && 'Isi harga untuk setiap baris',
+      pricePending: pricePending.length > 0 && `Ubah harga ${pricePending.map((p) => p.number).join(', ')} masih menunggu approval. Faktur bisa dicatat setelah diputuskan.`,
     },
     invoice: {
       no: !vendorNo.trim() && 'No. invoice vendor wajib diisi',
@@ -817,7 +825,15 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
         </Box>
 
         <Box p="lg">
-          {sub && stepError && (
+          {pricePending.length > 0 && step.value !== 'source' && (
+            <Box mb="md">
+              <Callout tone="wait" title={`Ubah harga ${pricePending.map((p) => p.number).join(', ')} menunggu approval`}>
+                Faktur ini belum bisa disimpan. Setelah Chief Finance dan Building Manager menyetujui, buka lagi
+                form faktur: harganya otomatis memakai harga baru. Kalau ditolak, minta vendor merevisi invoice sesuai harga PO.
+              </Callout>
+            </Box>
+          )}
+          {sub && stepError && !(pricePending.length && step.value !== 'source') && (
             <Alert variant="light" color="red" radius="md" icon={<Warning size={16} />} mb="md">
               <Text fz="xs">{stepError}</Text>
             </Alert>
@@ -1066,7 +1082,15 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
                     <Callout tone="ok" title="Cocok dengan invoice vendor">Hutang ke vendor {rupiah(total)}.</Callout>
                   ) : (
                     <Callout tone="warn" title={`Selisih ${rupiah(Math.abs(selisihVendor))}`}>
-                      Invoice vendor {selisihVendor > 0 ? 'lebih besar' : 'lebih kecil'} dari hitungan aplikasi ({rupiah(total)}). Cek potongan uang muka, retensi, dan PPh-nya.
+                      <Stack gap={8} align="flex-start">
+                        <Text fz="xs">
+                          Invoice vendor {selisihVendor > 0 ? 'lebih besar' : 'lebih kecil'} dari hitungan aplikasi ({rupiah(total)}). Cek dulu qty,
+                          potongan uang muka, retensi, dan PPh-nya. Kalau harga satuannya yang beda, ajukan ubah harga PO.
+                        </Text>
+                        {canAskPrice && (
+                          <Button size="xs" radius="md" variant="default" onClick={() => setPriceOpen(true)}>Ajukan ubah harga PO</Button>
+                        )}
+                      </Stack>
                     </Callout>
                   )}
                 </Box>
@@ -1099,6 +1123,19 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
           </Group>
         </Group>
       </Card>
+
+      {priceOpen && (
+        <PriceChangeModal
+          opened
+          onClose={() => setPriceOpen(false)}
+          pb={pb}
+          lines={activeLines}
+          vendorNo={vendorNo}
+          file={inv}
+          vendorGap={selisihVendor}
+          onSent={() => setPriceOpen(false)}
+        />
+      )}
 
       <SourceListModal
         opened={listOpen}

@@ -138,10 +138,13 @@ function receiptLineEntry(receipt, line, po, ctx) {
     };
   }
   // Jasa, atau barang yang tidak dilacak stoknya: langsung jadi beban sebesar DPP PO.
-  const nilai = line.qty * (item.price ?? 0);
+  // Harga yang dikunci di baris penerimaan (`line.price`, diisi saat harga PO diubah) menang,
+  // supaya penerimaan lama tidak ikut berubah nilainya.
+  const unit = line.price ?? item.price ?? 0;
+  const nilai = line.qty * unit;
   const akun = item.kind === 'jasa' || !product?.tracked ? expenseOf(product) : AKUN.persediaan;
   const memo = `${item.desc} · ${line.qty} ${item.unit ?? ''}`.trim();
-  return { lines: [dr(akun, nilai, memo), cr(AKUN.belumDitagih, nilai, memo)], unitCredit: item.price ?? 0, vatCapitalized: false };
+  return { lines: [dr(akun, nilai, memo), cr(AKUN.belumDitagih, nilai, memo)], unitCredit: unit, vatCapitalized: false };
 }
 
 export function receiptJournal(receipt, pb, ctx = {}) {

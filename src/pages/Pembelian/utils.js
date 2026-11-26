@@ -1270,6 +1270,37 @@ export function poStopBlock(po, { receipts, invoices, prs }) {
 // baru, jadi PO-nya selalu menunggu approval (rantai `reorder`) sebelum bisa dikirim, diterima,
 // atau ditagih. Bedanya hanya alasan: wajib bila harga atau total naik. Kontrak bertermin tidak didukung: baris terminnya terikat tanggal kontrak lama.
 export const poPending = (po) => po?.reorder?.status === 'diajukan';
+
+// --- Ubah harga PO ------------------------------------------------------------------------------
+// Diajukan dari form faktur saat harga di invoice vendor berbeda dari harga PO. Selama
+// menunggu approval (Chief Finance lalu Building Manager), sisa pesanan belum bisa difaktur.
+// Disetujui: harga item PO diganti dan berlaku untuk qty yang belum difaktur; faktur yang
+// sudah ada tidak berubah. Selisih terhadap nilai penerimaan dibukukan jurnal faktur ke
+// akun selisih (lihat invoiceJournal).
+export const priceChangePending = (po) => po?.priceChange?.status === 'diajukan';
+export const priceChangeOf = (po, itemId) => po?.priceChange?.items?.find((c) => c.itemId === itemId);
+export function buildPriceChange(po, prices, { reason, invoiceNo, file, by }) {
+  return {
+    status: 'diajukan',
+    items: po.items
+      .filter((i) => prices[i.id] != null && prices[i.id] !== i.price)
+      .map((i) => ({ itemId: i.id, oldPrice: i.price, price: prices[i.id] })),
+    reason,
+    invoiceNo,
+    file,
+    by,
+    at: TODAY,
+  };
+}
+// Harga disetujui: item PO memakai harga baru. Penerimaan yang sudah tercatat dikunci di harga
+// lama oleh pemanggilnya (PoDetail) supaya jurnalnya tidak ikut berubah ke belakang.
+export const applyPriceChange = (po) => ({
+  ...po,
+  items: po.items.map((i) => {
+    const c = priceChangeOf(po, i.id);
+    return c ? { ...i, price: c.price } : i;
+  }),
+});
 export const reorderBlock = (po) => (po.items.some((i) => i.slot)
   ? 'Kontrak bertermin atau berkala dipesan ulang lewat permintaan baru.'
   : null);
