@@ -221,8 +221,9 @@ export const invoicedQtyOfPo = (poId, itemId, invoices) =>
 // Baris PO/SPK yang masih bisa ditagih langsung, tanpa lewat FPB/BAPP. Dipakai untuk pesanan
 // yang memang tidak melewati gudang: dibayar di muka (CBD), jasa yang ditagih per termin
 // tanpa berita acara, atau pesanan lama yang penerimaannya tidak pernah dicatat.
+// Pesanan yang dibatalkan atau ditutup tidak menyisakan apa pun untuk ditagih.
 export const uninvoicedPoLines = (po, invoices) =>
-  !po || poHasReceipt(po)
+  !po || po.closedAs || poHasReceipt(po)
     ? []
     : po.items
       .map((it) => ({ ...it, open: it.qty - invoicedQtyOfPo(po.id, it.id, invoices) }))
@@ -1204,9 +1205,40 @@ export const PROC_STATUS = {
   ditolak: { label: 'Ditolak', color: 'red' },
 };
 
+// Kenapa pesanan tidak bisa dihentikan (dibatalkan/ditutup), atau null bila boleh.
+// Sesudah ada penerimaan, tagihan, atau pembayaran yang sedang berjalan, menghentikan
+// pesanan akan meninggalkan dokumen turunan yang menggantung (faktur atas pesanan batal,
+// PR yang tetap bisa dibayar). Dokumen itu harus dibereskan dulu.
+export const PR_ACTIVE = ['diajukan', 'disetujui', 'diproses'];
+export function poStopBlock(po, { receipts, invoices, prs }) {
+  if (receiptsOf(po, receipts).some(receiptLive)) return 'Sudah ada penerimaan (FPB/BAPP) yang dicatat.';
+  const invs = liveInvoices(invoices).filter((i) => i.poId === po.id || i.lines.some((l) => l.poId === po.id));
+  if (invs.length) return `Sudah ada ${invs.length} faktur. Batalkan fakturnya dulu.`;
+  const invIds = new Set(invs.map((i) => i.id));
+  const aktif = prs.filter((p) => PR_ACTIVE.includes(p.status) && (p.poId === po.id || (p.invoiceIds ?? []).some((id) => invIds.has(id))));
+  if (aktif.length) return `Payment Request ${aktif[0].number} masih berjalan.`;
+  return null;
+}
+// PO batal di balik sebuah Payment Request (langsung untuk DP, atau lewat fakturnya).
+// Pembatalan PO sudah dicegah selama ada PR berjalan (poStopBlock); ini menjaga data lama
+// supaya PR atas pesanan yang batal tidak bisa disetujui atau dibayar.
+export const prCancelledPo = (pr, { pos, invoices }) => {
+  const ids = new Set([pr.poId, ...invoices.filter((i) => (pr.invoiceIds ?? []).includes(i.id)).map((i) => i.poId)]);
+  return pos.find((p) => ids.has(p.id) && p.closedAs === 'dibatalkan') ?? null;
+};
+// PO turunan permintaan yang masih dihitung: yang dibatalkan tidak, karena barangnya
+// memang tidak jadi dipesan dan permintaannya harus bisa dipesan ulang.
+export const activePosOf = (f, pos) => pos.filter((p) => p.fppbjId === f.id && p.closedAs !== 'dibatalkan');
+
 // Buat PO (draf) dari pengadaan yang disetujui: satu PO per vendor.
+// Vendor yang PO-nya masih berjalan dilewati, jadi fungsi ini juga dipakai untuk memesan
+// ulang setelah PO dibatalkan.
+export const pendingPOs = (f, pb) => {
+  const aktif = activePosOf(f, pb.pos);
+  return buildPOs(f, pb.pos, pb.vendors).filter((b) => !aktif.some((p) => p.vendorId === b.vendorId));
+};
 export function createPOs(f, pb) {
-  const built = buildPOs(f, pb.pos, pb.vendors);
+  const built = pendingPOs(f, pb);
   const created = [];
   let list = pb.pos;
   built.forEach((b) => {

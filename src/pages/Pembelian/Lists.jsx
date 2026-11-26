@@ -32,7 +32,9 @@ import {
   PO_STATUS,
   poStatus,
   poTotal,
+  PR_ACTIVE,
   PR_STATUS,
+  prCancelledPo,
   returnValue,
   RECEIPT_STATUS,
   receiptConfirmed,
@@ -289,7 +291,9 @@ export default function ListTab({ tab, pb, go, openDialog }) {
           const pvs = pb.vouchersOfPr(p.id);
           const pv = pvs[0];
           const vids = vendorsOf(p);
-          const unpaid = pvs.filter((x) => !pvPaid(x));
+          // PR atas pesanan yang dibatalkan tidak boleh diproses lagi (lihat prCancelledPo).
+          const stopped = PR_ACTIVE.includes(p.status) && !!prCancelledPo(p, pb.calc);
+          const unpaid = stopped ? [] : pvs.filter((x) => !pvPaid(x));
           return (
           <Table.Tr key={p.id}>
             <Table.Td>
@@ -334,9 +338,9 @@ export default function ListTab({ tab, pb, go, openDialog }) {
             <Table.Td ta="right">
               <RowMenu label={p.number} items={[
                 { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'pr', id: p.id }) },
-                p.status === 'diajukan' && isApproverTurn(role, p, 'pr') && !prBlockedBySoD(role, p) && { label: `Setujui (${approvalState(p, 'pr').done.length + 1}/${approvalState(p, 'pr').total})`, icon: Check, onClick: () => askConfirm({ title: `Setujui ${p.number}?`, message: approvalMessage(approvalState(p, 'pr')), confirmLabel: 'Ya, setujui', onConfirm: () => { pb.update('prs', p.id, (d) => { const { doc, complete } = signApproval(d, 'pr', role); return complete ? { ...doc, status: 'disetujui', approvedAt: TODAY } : doc; }); toast('Approval dicatat.'); } }) },
-                p.status === 'diajukan' && isApproverTurn(role, p, 'pr') && !prBlockedBySoD(role, p) && { label: 'Tolak', icon: X, color: 'red', onClick: () => openDialog({ type: 'pr-reject', prId: p.id }) },
-                p.status === 'disetujui' && canCreate(role, 'pv') && { label: 'Terbitkan Payment Voucher', icon: CurrencyCircleDollar, onClick: () => openDialog({ type: 'pv', prId: p.id }) },
+                !stopped && p.status === 'diajukan' && isApproverTurn(role, p, 'pr') && !prBlockedBySoD(role, p) && { label: `Setujui (${approvalState(p, 'pr').done.length + 1}/${approvalState(p, 'pr').total})`, icon: Check, onClick: () => askConfirm({ title: `Setujui ${p.number}?`, message: approvalMessage(approvalState(p, 'pr')), confirmLabel: 'Ya, setujui', onConfirm: () => { pb.update('prs', p.id, (d) => { const { doc, complete } = signApproval(d, 'pr', role); return complete ? { ...doc, status: 'disetujui', approvedAt: TODAY } : doc; }); toast('Approval dicatat.'); } }) },
+                !stopped && p.status === 'diajukan' && isApproverTurn(role, p, 'pr') && !prBlockedBySoD(role, p) && { label: 'Tolak', icon: X, color: 'red', onClick: () => openDialog({ type: 'pr-reject', prId: p.id }) },
+                !stopped && p.status === 'disetujui' && canCreate(role, 'pv') && { label: 'Terbitkan Payment Voucher', icon: CurrencyCircleDollar, onClick: () => openDialog({ type: 'pv', prId: p.id }) },
                 ...(canCreate(role, 'pv') ? unpaid.map((x) => ({ label: pvs.length > 1 ? `Catat pembayaran ${x.number} (${vendor(x.vendorId)})` : 'Catat pembayaran', icon: CurrencyCircleDollar, onClick: () => openDialog({ type: 'pay', voucherId: x.id }) })) : []),
                 ...pvs.map((x) => ({ label: pvs.length > 1 ? `Lihat ${x.number}` : 'Lihat Payment Voucher', icon: CurrencyCircleDollar, onClick: () => go({ name: 'voucher', id: x.id }) })),
               ]} />

@@ -6,7 +6,7 @@ import AttachmentList from './Attachments.jsx';
 import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section, StatusPill } from './components.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
 import { TODAY } from './data.js';
-import { advancePct, bankLine, formatDate, INV_STATUS, invStatus, invTotals, poDpAmount, poDocLabel, poTotal, PR_STATUS, proofFiles, pvPaid, pvStatus, PV_STATUS, rupiah, termText } from './utils.js';
+import { advancePct, bankLine, formatDate, INV_STATUS, invStatus, invTotals, poDpAmount, poDocLabel, poTotal, PR_ACTIVE, PR_STATUS, prCancelledPo, proofFiles, pvPaid, pvStatus, PV_STATUS, rupiah, termText } from './utils.js';
 import { approvalState, canCreate, isApproverTurn, prBlockedBySoD, signApproval } from './permissions.js';
 import ApprovalLog, { chainSteps, legacyLog } from './ApprovalLog.jsx';
 import { toast } from './usePb.js';
@@ -17,6 +17,7 @@ export default function PrDetail({ pr, pb, onBack, go, openDialog }) {
   // Satu PR bisa menerbitkan beberapa PV bila fakturnya dari vendor berbeda.
   const vouchers = pb.vouchers.filter((v) => v.prIds?.includes(pr.id));
   const po = pb.posById[pr.poId];
+  const cancelledPo = PR_ACTIVE.includes(pr.status) ? prCancelledPo(pr, pb.calc) : null;
   const isDp = pr.kind === 'dp';
   const invoices = (pr.invoiceIds ?? []).map((id) => pb.invoicesById[id]).filter(Boolean);
   // Payment Voucher terbit saat Finance membayar; bukti transfernya menempel di sana.
@@ -78,7 +79,7 @@ export default function PrDetail({ pr, pb, onBack, go, openDialog }) {
             </Box>
           </Group>
           <Group gap="xs">
-            {pr.status === 'diajukan' && (isApproverTurn(role, pr, 'pr') && !prBlockedBySoD(role, pr) ? (
+            {!cancelledPo && pr.status === 'diajukan' && (isApproverTurn(role, pr, 'pr') && !prBlockedBySoD(role, pr) ? (
               <>
                 <Button radius="md" variant="default" color="red" leftSection={<X size={16} />} onClick={() => openDialog({ type: 'pr-reject', prId: pr.id })}>Tolak</Button>
                 <Button
@@ -101,12 +102,18 @@ export default function PrDetail({ pr, pb, onBack, go, openDialog }) {
                 </Button>
               </>
             ) : <Group gap={6}><Text fz="xs" c="slate.7">Menunggu</Text><RoleChip role={ap.next ?? 'cfo'} /></Group>)}
-            {pr.status === 'disetujui' && (canCreate(role, 'pv') ? (
+            {!cancelledPo && pr.status === 'disetujui' && (canCreate(role, 'pv') ? (
               <Button radius="md" leftSection={<CurrencyCircleDollar size={16} />} onClick={() => openDialog({ type: 'pv', prId: pr.id })}>Terbitkan Payment Voucher</Button>
             ) : <Group gap={6}><Text fz="xs" c="slate.7">PV diterbitkan oleh</Text><RoleChip role="kasir" /></Group>)}
           </Group>
         </Group>
       </Card>
+
+      {cancelledPo && (
+        <Callout tone="stop" title={`${poDocLabel(cancelledPo)} ${cancelledPo.number} dibatalkan`}>
+          Payment Request ini tidak bisa disetujui, diterbitkan PV, atau dibayar karena pesanannya sudah dibatalkan.
+        </Callout>
+      )}
 
       {pr.status === 'diproses' && vouchers.length > 0 && (() => {
         const belum = vouchers.filter((x) => !pvPaid(x));

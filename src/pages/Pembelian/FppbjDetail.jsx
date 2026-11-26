@@ -31,8 +31,9 @@ import { warehouseText } from '@/pages/Gudang/data.js';
 import { canCreate, canVerify, logEntry, roleLabel, verifierRole, withLog } from './permissions.js';
 import ApprovalLog, { chainSteps, legacyLog } from './ApprovalLog.jsx';
 import {
-  buildPOs,
+  activePosOf,
   createPOs,
+  pendingPOs,
   formatDate,
   FPPBJ_STATUS,
   iomFiles,
@@ -67,7 +68,10 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
   const patch = (fn) => pb.update('fppbj', f.id, fn);
   const proc = f.procurement;
   const vendor = (id) => pb.vendorsById[id]?.name ?? '—';
-  const allPoDone = pos.length > 0 && pos.every((p) => poStatus(p, pb.calc) === 'selesai');
+  // PO yang dibatalkan tidak dihitung: permintaannya boleh dipesan ulang atau dibatalkan,
+  // dan tidak tertahan di "Dalam pengadaan" hanya karena satu PO batal.
+  const activePos = activePosOf(f, pb.pos);
+  const allPoDone = activePos.length > 0 && activePos.every((p) => ['selesai', 'ditutup'].includes(poStatus(p, pb.calc)));
   const statusKey = allPoDone ? 'selesai' : f.status;
 
   // --- aksi ---
@@ -82,17 +86,20 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
     setReason(null);
     toast('Permintaan dibatalkan.');
   };
-  const canCancel = (canCreate(role, 'fppbj') || canCreate(role, 'po')) && !['dibatalkan', 'selesai'].includes(f.status) && pos.length === 0;
+  const canCancel = (canCreate(role, 'fppbj') || canCreate(role, 'po')) && !['dibatalkan', 'selesai'].includes(f.status) && activePos.length === 0;
   const sendBack = (note) => {
     patch((d) => withLog({ ...d, status: 'dikembalikan', returnNote: note, returnedAt: TODAY }, logEntry(role, 'kembalikan', { step: 'accounting', note })));
     setReason(null);
   };
+  const pending = proc?.status === 'disetujui' ? pendingPOs(f, pb) : [];
+  // Pesan ulang: ada PO yang dibatalkan dan vendornya belum punya PO pengganti.
+  const reorder = pending.length > 0 && pos.some((p) => p.closedAs === 'dibatalkan');
   const makePOs = () => {
     const n = createPOs(f, pb).length;
-    toast(`${n} pesanan dibuat sebagai draf. Kirim ke vendor dari halaman detailnya.`);
+    toast(reorder ? `${n} pesanan pengganti dibuat.` : `${n} pesanan dibuat sebagai draf. Kirim ke vendor dari halaman detailnya.`);
   };
 
-  const canGeneratePO = proc?.status === 'disetujui' && pos.length === 0;
+  const canGeneratePO = pending.length > 0;
 
   // Log approval: verifikasi Accounting, lalu approval pengadaan berjenjang.
   const verified = !['draft', 'diajukan', 'dikembalikan', 'dibatalkan'].includes(f.status) || !!f.verifiedAt;
@@ -216,10 +223,10 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
             <ProcurementPanel f={f} pb={pb} role={role} go={go} />
 
             {canGeneratePO && (
-              <Section divided icon={ShoppingCart} title="Buat pesanan" description="Satu dokumen per vendor: PO untuk barang, SPK kalau isinya jasa semua. Harga dan termin diambil dari pengadaan yang disetujui.">
+              <Section divided icon={ShoppingCart} title={reorder ? 'Pesan ulang' : 'Buat pesanan'} description={reorder ? 'Pesanan sebelumnya dibatalkan. Buat pesanan pengganti dengan vendor, harga, dan termin dari pengadaan yang disetujui.' : 'Satu dokumen per vendor: PO untuk barang, SPK kalau isinya jasa semua. Harga dan termin diambil dari pengadaan yang disetujui.'}>
                 {canCreate(role, 'po') ? (
                   <Stack gap="sm">
-                    {buildPOs(f, pb.pos, pb.vendors).map((b, i) => (
+                    {pending.map((b, i) => (
                       <Group key={i} justify="space-between" p="sm" style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 'var(--mantine-radius-md)' }}>
                         <Box>
                           <Text fz="sm" fw={700}>{poDocLabel({ items: b.items })} · {vendor(b.vendorId)}</Text>
@@ -228,7 +235,7 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
                         <Text fz="sm" fw={700}>{rupiah(b.items.reduce((n, x) => n + x.qty * x.price, 0))}</Text>
                       </Group>
                     ))}
-                    <Group><Button radius="md" leftSection={<ShoppingCart size={16} />} onClick={makePOs}>Buat pesanan</Button></Group>
+                    <Group><Button radius="md" leftSection={<ShoppingCart size={16} />} onClick={makePOs}>{reorder ? 'Pesan ulang' : 'Buat pesanan'}</Button></Group>
                   </Stack>
                 ) : (
                   <Hint role="accounting" />

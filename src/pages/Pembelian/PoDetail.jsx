@@ -57,6 +57,9 @@ import {
   poRetention,
   retentionDocName,
   poStatusMap,
+  poStopBlock,
+  PR_ACTIVE,
+  prCancelledPo,
 } from './utils.js';
 import { downloadPo } from './poPdf.js';
 import { toast } from './usePb.js';
@@ -66,6 +69,7 @@ const th = { th: { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 600, col
 // Tombol aksi Payment Request sesuai peran: Approver setujui/tolak, Finance bayar.
 export function PrActions({ pr, pb, openDialog }) {
   const role = pb.role;
+  if (PR_ACTIVE.includes(pr.status) && prCancelledPo(pr, pb.calc)) return <Text fz="xs" c="slate.6">Pesanan dibatalkan</Text>;
   if (pr.status === 'diajukan') {
     // Approval PR berjenjang dua: Chief Finance lalu Building Manager.
     const ap = approvalState(pr, 'pr');
@@ -171,9 +175,12 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const openLines = pakaiTerima
     ? receipts.flatMap((r) => uninvoicedLines(r, pb.invoices))
     : uninvoicedPoLines(po, pb.invoices);
-  // Batalkan / tutup pesanan hanya selama belum ada penerimaan yang dicatat.
+  // Batalkan / tutup pesanan hanya selama belum ada penerimaan, faktur, atau Payment Request
+  // yang berjalan. Menunya tetap tampil dengan alasannya supaya orang tahu apa yang harus
+  // dibereskan dulu.
   const closed = !!po.closedAs;
-  const canClose = !closed && receipts.length === 0 && canCreate(role, 'po');
+  const stopBlock = closed ? null : poStopBlock(po, pb.calc);
+  const canClose = !closed && canCreate(role, 'po');
   const [closing, setClosing] = useState(null);
   const [sendOpen, setSendOpen] = useState(false);
   // Kirim ke vendor = dokumen lepas ke luar, jadi dikonfirmasi dulu lewat modal.
@@ -266,7 +273,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
             {!closed && pakaiTerima && anyRemaining && canCreate(role, receiptDoc(isJasa)) && (
               <Button radius="md" leftSection={<Truck size={16} />} onClick={() => openDialog({ type: 'receipt', poId: po.id })}>{poAllJasa(po) ? 'Catat BAPP' : 'Catat penerimaan'}</Button>
             )}
-            {openLines.length > 0 && canCreate(role, 'invoice') && (
+            {!closed && openLines.length > 0 && canCreate(role, 'invoice') && (
               <Tooltip label={dpBlockReason(dp)} disabled={!dpBlocks(dp)} withArrow fz="xs" multiline w={260}>
               <Button
                 radius="md"
@@ -299,8 +306,9 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                     {canClose && (
                       <>
                         <Menu.Label>Hentikan pesanan</Menu.Label>
-                        <Menu.Item leftSection={<Prohibit size={16} />} onClick={() => setClosing('ditutup')}>Tutup pesanan</Menu.Item>
-                        <Menu.Item color="red" leftSection={<X size={16} />} onClick={() => setClosing('dibatalkan')}>Batalkan pesanan</Menu.Item>
+                        <Menu.Item disabled={!!stopBlock} leftSection={<Prohibit size={16} />} onClick={() => setClosing('ditutup')}>Tutup pesanan</Menu.Item>
+                        <Menu.Item disabled={!!stopBlock} color="red" leftSection={<X size={16} />} onClick={() => setClosing('dibatalkan')}>Batalkan pesanan</Menu.Item>
+                        {stopBlock && <Text fz="xs" c="slate.6" px="sm" pb={6}>{stopBlock}</Text>}
                       </>
                     )}
                   </Menu.Dropdown>

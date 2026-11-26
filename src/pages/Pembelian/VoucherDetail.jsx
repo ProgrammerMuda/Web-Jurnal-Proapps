@@ -4,7 +4,7 @@ import { CurrencyCircleDollar, Info, Money, Paperclip, Receipt } from '@/compone
 import AttachmentList from './Attachments.jsx';
 import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, Section } from './components.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
-import { bankLine, formatDate, poRetention, poStatus, PR_STATUS, proofFiles, PV_STATUS, pvPaid, pvStatus, retentionDocName, rupiah } from './utils.js';
+import { bankLine, formatDate, poRetention, poStatus, PR_STATUS, proofFiles, PV_STATUS, prCancelledPo, pvPaid, pvStatus, retentionDocName, rupiah } from './utils.js';
 import { voucherJournal } from './journal.js';
 import JournalCard from './JournalCard.jsx';
 import { canCreate } from './permissions.js';
@@ -18,6 +18,8 @@ export default function VoucherDetail({ voucher: v, pb, onBack, go, openDialog }
   const jurnal = voucherJournal(v, pb);
   const vendor = pb.vendorsById[v.vendorId];
   const prs = (v.prIds ?? []).map((id) => pb.prsById[id]).filter(Boolean);
+  // PV atas pesanan yang dibatalkan tidak boleh dibayar (lihat prCancelledPo).
+  const stopped = !paid && prs.some((p) => prCancelledPo(p, pb.calc));
   const proofs = proofFiles(v);
   // Pembayaran ini melunasi termin terakhir, tapi retensinya masih ditahan: beri tahu saat itu
   // juga, supaya accounting tahu ada sisa hutang yang baru cair setelah masa pemeliharaan.
@@ -56,7 +58,8 @@ export default function VoucherDetail({ voucher: v, pb, onBack, go, openDialog }
             </Box>
           </Group>
           <Group gap="md" wrap="nowrap">
-            {!paid && canCreate(role, 'pv') && (
+            {stopped && <Text fz="xs" c="slate.6">Pesanan dibatalkan, PV ini tidak bisa dibayar</Text>}
+            {!paid && !stopped && canCreate(role, 'pv') && (
               <Button radius="md" leftSection={<Money size={16} />} onClick={() => openDialog({ type: 'pay', voucherId: v.id })}>Catat pembayaran</Button>
             )}
           </Group>
