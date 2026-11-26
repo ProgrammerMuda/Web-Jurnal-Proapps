@@ -36,6 +36,7 @@ import {
   pendingPOs,
   formatDate,
   FPPBJ_STATUS,
+  fppbjStatus,
   iomFiles,
   requesterOf,
   routeLabel,
@@ -71,8 +72,9 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
   // PO yang dibatalkan tidak dihitung: permintaannya boleh dipesan ulang atau dibatalkan,
   // dan tidak tertahan di "Dalam pengadaan" hanya karena satu PO batal.
   const activePos = activePosOf(f, pb.pos);
-  const allPoDone = activePos.length > 0 && activePos.every((p) => ['selesai', 'ditutup'].includes(poStatus(p, pb.calc)));
-  const statusKey = allPoDone ? 'selesai' : f.status;
+  // Permintaan yang sudah selesai bisa "hidup" lagi lewat pesan ulang: selama PO barunya
+  // berjalan, statusnya kembali Dalam pengadaan.
+  const statusKey = fppbjStatus(f, { ...pb.calc, pos: pb.pos });
 
   // --- aksi ---
   // Verifikasi hanya memeriksa kelayakan permintaan. Jalur pengadaannya ditentukan sesudah ini,
@@ -248,7 +250,10 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
                 <DataTable head={[{ label: 'Nomor' }, { label: 'Vendor' }, { label: 'Status' }, { label: 'Nilai (DPP)', align: 'right' }]} minWidth={560}>
                   {pos.map((p) => (
                     <Table.Tr key={p.id}>
-                      <Table.Td><DocNumber onClick={() => go({ name: 'po', id: p.id })}>{p.number}</DocNumber></Table.Td>
+                      <Table.Td>
+                        <DocNumber onClick={() => go({ name: 'po', id: p.id })}>{p.number}</DocNumber>
+                        {p.reorderOf && <Text fz={11} c="slate.6">Pesan ulang dari {pb.posById[p.reorderOf]?.number ?? '—'}</Text>}
+                      </Table.Td>
                       <Table.Td fz="sm">{vendor(p.vendorId)}</Table.Td>
                       <Table.Td><StatusPill map={poStatusMap(p)} status={poStatus(p, pb.calc)} size="xs" /></Table.Td>
                       <Table.Td ta="right" fz="sm" fw={700}>{rupiah(poSubtotal(p))}</Table.Td>

@@ -223,7 +223,7 @@ export const invoicedQtyOfPo = (poId, itemId, invoices) =>
 // tanpa berita acara, atau pesanan lama yang penerimaannya tidak pernah dicatat.
 // Pesanan yang dibatalkan atau ditutup tidak menyisakan apa pun untuk ditagih.
 export const uninvoicedPoLines = (po, invoices) =>
-  !po || po.closedAs || poHasReceipt(po)
+  !po || po.closedAs || poPending(po) || poHasReceipt(po)
     ? []
     : po.items
       .map((it) => ({ ...it, open: it.qty - invoicedQtyOfPo(po.id, it.id, invoices) }))
@@ -557,6 +557,7 @@ export const returnedQty = (invId, itemId, returns) =>
 export function poStatus(po, { receipts, invoices, prs, pos, returns }) {
   // PO yang dibatalkan atau ditutup berhenti di situ; sisa qty-nya tidak lagi ditunggu.
   if (po.closedAs) return po.closedAs;
+  if (poPending(po)) return 'menunggu_approval';
   // PO/SPK berlaku sejak dibuat (dari pengadaan yang sudah disetujui). Mengirim dokumennya
   // ke vendor opsional, jadi bukan bagian dari status: tidak ada lagi "draft"/"dikirim".
   const invs = liveInvoices(invoices).filter((i) => i.poId === po.id);
@@ -602,11 +603,12 @@ export function fppbjStep(f, ctx) {
   if (f.status === 'dibatalkan') return -1;
   if (['draft', 'dikembalikan', 'diajukan'].includes(f.status)) return 0;
   if (f.status === 'diverifikasi') return 1;
-  const pos = ctx.pos.filter((p) => p.fppbjId === f.id);
+  // Pesan ulang yang ditolak tidak pernah berlaku, jadi tidak ikut menentukan tahap.
+  const pos = ctx.pos.filter((p) => p.fppbjId === f.id && p.closedAs !== 'ditolak');
   if (!pos.length) return f.procurement?.status === 'disetujui' ? 2 : 1;
   const st = pos.map((p) => poStatus(p, ctx));
   if (st.every((s) => s === 'selesai')) return 6;
-  if (st.includes('menunggu_dp')) return 2;
+  if (st.includes('menunggu_dp') || st.includes('menunggu_approval')) return 2;
   if (st.some((s) => ['menunggu', 'sebagian'].includes(s))) return 3;
   if (st.includes('menunggu_tagihan')) return 4;
   const allInv = pos.every((p) =>
@@ -1125,6 +1127,8 @@ export const FPPBJ_STATUS = {
   selesai: { label: 'Selesai', color: 'green' },
 };
 export const PO_STATUS = {
+  // Pesan ulang dengan harga naik: belum berlaku sampai approval genap (lihat reorder).
+  menunggu_approval: { label: 'Menunggu approval', color: 'orange', pending: true },
   menunggu_dp: { label: 'Menunggu uang muka', color: 'orange' }, // DP belum dicatat/dibayar, belum ada penerimaan/tagihan
   menunggu: { label: 'Menunggu penerimaan', color: 'blue' }, // PO berlaku, vendor belum mengirim
   menunggu_tagihan: { label: 'Menunggu tagihan', color: 'blue' }, // tanpa FPB/BAPP: vendor belum menagih
@@ -1134,6 +1138,8 @@ export const PO_STATUS = {
   pemeliharaan: { label: 'Masa pemeliharaan', color: 'violet' }, // termin lunas, retensi masih ditahan
   selesai: { label: 'Selesai', color: 'green' },
   dibatalkan: { label: 'Dibatalkan', color: 'red' },
+  // Pesan ulang yang tidak disetujui: PO tidak pernah berlaku.
+  ditolak: { label: 'Ditolak', color: 'red' },
   ditutup: { label: 'Ditutup', color: 'slate' },
 };
 // SPK jasa: yang diterima adalah pekerjaan, jadi "Diterima" diganti bahasa pekerjaan.
@@ -1219,6 +1225,61 @@ export function poStopBlock(po, { receipts, invoices, prs }) {
   if (aktif.length) return `Payment Request ${aktif[0].number} masih berjalan.`;
   return null;
 }
+// --- Pesan ulang (repeat order) -------------------------------------------------------------------
+// Barang/jasa yang sama dipesan lagi dari PO/SPK yang sudah Selesai, memakai permintaan yang sama
+// tanpa FPPBJ baru. Harga dan jumlah boleh disesuaikan. Setiap pesan ulang adalah uang keluar
+// baru, jadi PO-nya selalu menunggu approval (rantai `reorder`) sebelum bisa dikirim, diterima,
+// atau ditagih. Bedanya hanya alasan: wajib bila harga atau total naik. Kontrak bertermin tidak didukung: baris terminnya terikat tanggal kontrak lama.
+export const poPending = (po) => po?.reorder?.status === 'diajukan';
+export const reorderBlock = (po) => (po.items.some((i) => i.slot)
+  ? 'Kontrak bertermin atau berkala dipesan ulang lewat permintaan baru.'
+  : null);
+// Harga satuan naik, atau total pesanan baru melebihi pesanan lama (qty ditambah): keduanya
+// mengeluarkan uang lebih dari yang dulu disetujui, jadi alasannya wajib dan ditandai.
+export const reorderPriceUp = (changes) => changes.some((c) => c.price > c.oldPrice);
+export const reorderIncreased = (po, draft) =>
+  reorderPriceUp(draft.reorder.changes) || poTotal(draft) > poTotal(po);
+// Permintaan asal sebuah PO. PO pesan ulang menumpang permintaan PO lamanya; kalau dirinya
+// tidak menyimpan fppbjId (data lama), rantai reorderOf ditelusuri sampai ketemu.
+export function poOriginFppbj(po, posById, fppbjById) {
+  const seen = new Set();
+  for (let p = po; p && !seen.has(p.id); p = posById[p.reorderOf]) {
+    seen.add(p.id);
+    if (p.fppbjId && fppbjById[p.fppbjId]) return fppbjById[p.fppbjId];
+  }
+  return null;
+}
+// Pesanan yang lahir dari PO ini lewat pesan ulang (yang ditolak tidak dihitung).
+export const reordersOf = (po, pos) => pos.filter((p) => p.reorderOf === po.id && p.closedAs !== 'ditolak');
+// lines: { [itemId]: { qty, price } }. Item yang tidak ada di lines (tidak dicentang) atau
+// qty-nya 0 tidak ikut dipesan. Vendor, termin, gudang, dan item lain tidak bisa diubah.
+export function buildReorder(po, lines, pos, { reason = '', by } = {}) {
+  // Jejak pengiriman, penutupan, dan approval milik PO lama tidak ikut terbawa.
+  const DROP = ['id', 'number', 'date', 'sent', 'sentAt', 'sentBy', 'sentCc', 'sentNote', 'resentAt', 'resentBy',
+    'closedAs', 'closeNote', 'closedBy', 'dpWaiver', 'reorder', 'reorderOf', 'note', 'expectedAt'];
+  const keep = Object.fromEntries(Object.entries(po).filter(([k]) => !DROP.includes(k)));
+  const lead = Math.max(0, Math.round((Date.parse(po.expectedAt) - Date.parse(po.date)) / 864e5)) || 0;
+  const picked = po.items.filter((it) => (lines[it.id]?.qty ?? 0) > 0);
+  const changes = picked.map((it) => ({
+    itemId: it.id, desc: it.desc, unit: it.unit,
+    oldQty: it.qty, qty: lines[it.id].qty, oldPrice: it.price, price: lines[it.id].price,
+  }));
+  const draft = {
+    ...keep,
+    id: uid('po'),
+    number: nextNumber(poAllJasa(po) ? 'SPK' : 'PO', pos),
+    date: TODAY,
+    sent: false,
+    expectedAt: new Date(Date.parse(TODAY) + lead * 864e5).toISOString().slice(0, 10),
+    items: picked.map((it) => ({ ...it, qty: lines[it.id].qty, price: lines[it.id].price })),
+    note: '',
+    reorderOf: po.id,
+    reorder: { status: 'diajukan', fromId: po.id, changes, reason, by, at: TODAY },
+  };
+  draft.reorder.increased = reorderIncreased(po, draft);
+  return draft;
+}
+
 // PO batal di balik sebuah Payment Request (langsung untuk DP, atau lewat fakturnya).
 // Pembatalan PO sudah dicegah selama ada PR berjalan (poStopBlock); ini menjaga data lama
 // supaya PR atas pesanan yang batal tidak bisa disetujui atau dibayar.
@@ -1228,7 +1289,16 @@ export const prCancelledPo = (pr, { pos, invoices }) => {
 };
 // PO turunan permintaan yang masih dihitung: yang dibatalkan tidak, karena barangnya
 // memang tidak jadi dipesan dan permintaannya harus bisa dipesan ulang.
-export const activePosOf = (f, pos) => pos.filter((p) => p.fppbjId === f.id && p.closedAs !== 'dibatalkan');
+export const activePosOf = (f, pos) => pos.filter((p) => p.fppbjId === f.id && !['dibatalkan', 'ditolak'].includes(p.closedAs));
+
+// Status permintaan untuk tampilan (daftar dan detail sama): Selesai bila semua pesanannya
+// selesai/ditutup; permintaan yang sudah selesai tapi dipesan ulang kembali Dalam pengadaan
+// selama PO barunya berjalan.
+export function fppbjStatus(f, ctx) {
+  const aktif = activePosOf(f, ctx.pos);
+  if (aktif.length && aktif.every((p) => ['selesai', 'ditutup'].includes(poStatus(p, ctx)))) return 'selesai';
+  return f.status === 'selesai' ? 'dalam_pengadaan' : f.status;
+}
 
 // Buat PO (draf) dari pengadaan yang disetujui: satu PO per vendor.
 // Vendor yang PO-nya masih berjalan dilewati, jadi fungsi ini juga dipakai untuk memesan

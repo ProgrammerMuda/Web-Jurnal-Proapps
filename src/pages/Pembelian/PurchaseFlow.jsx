@@ -28,7 +28,10 @@ import {
   routeLabel,
   rupiah,
   retentionDocName,
+  poOriginFppbj,
+  poPending,
 } from './utils.js';
+import { approvalState, roleLabel } from './permissions.js';
 
 // Satu langkah: titik status + judul (+ status di kanan) + isi.
 export function FlowStep({ index, current, last, title, meta, right, children, mark, state }) {
@@ -119,7 +122,8 @@ export function resolveChain(current, pb) {
     }
     const po = poId ? pb.posById[poId] : null;
     pos = po ? [po] : [];
-    fppbj = po?.fppbjId ? pb.fppbjById[po.fppbjId] : null;
+    // PO pesan ulang menumpang permintaan PO lamanya.
+    fppbj = po ? poOriginFppbj(po, pb.posById, pb.fppbjById) : null;
   }
 
   const poIds = pos.map((p) => p.id);
@@ -161,6 +165,13 @@ export function resolveChain(current, pb) {
 export default function PurchaseFlow({ pb, go, current, description = 'Dokumen yang saling terkait' }) {
   const { fppbj, pos, receipts, dpInvoices, billInvoices, dps, pays, dpVouchers, payVouchers, releases, retPrs, retVouchers } = resolveChain(current, pb);
   const proc = fppbj?.procurement;
+  // Pesan ulang tidak melewati pengadaan lagi: vendor dan harganya dari PO lama, dan yang
+  // ditinjau adalah approval pesan ulang (Chief Finance lalu Building Manager).
+  const ro = pos.length === 1 && pos[0].reorderOf ? pos[0] : null;
+  const roFrom = ro ? pb.posById[ro.reorderOf] : null;
+  const roPending = ro ? poPending(ro) : false;
+  const roRejected = ro?.reorder?.status === 'ditolak';
+  const roAp = ro?.reorder ? approvalState(ro.reorder, 'reorder') : null;
 
   const here = (kind, id) => current.kind === kind && current.id === id;
 
@@ -212,8 +223,10 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
   // --- Keadaan tiap langkah -------------------------------------------------------------------
   const steps = [
     { key: 'fppbj', done: !!fppbj && (pos.length > 0 || fppbj.status === 'selesai'), skipped: !fppbj },
-    { key: 'proc', done: !!fppbj && (proc?.status === 'disetujui' || pos.length > 0), skipped: !fppbj },
-    { key: 'po', done: pos.length > 0 },
+    ro
+      ? { key: 'reorder', done: !roPending && !roRejected }
+      : { key: 'proc', done: !!fppbj && (proc?.status === 'disetujui' || pos.length > 0), skipped: !fppbj },
+    { key: 'po', done: pos.length > 0 && !roPending && !roRejected },
     showDp && { key: 'dp', done: dp.state === 'lunas' || dp.state === 'dibatalkan' },
     { key: 'receipt', done: receipts.length > 0 },
     { key: 'invoice', done: billInvoices.length > 0 },
@@ -240,7 +253,29 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
         {step('fppbj', { title: 'Permintaan Pembelian' },
           fppbj ? docRow('fppbj', fppbj.id, fppbj.number) : <Empty>Tanpa permintaan (PO langsung)</Empty>)}
 
-        {step('proc', { title: 'Pengadaan' },
+        {ro && step('reorder', {
+          title: 'Approval pesan ulang',
+          right: roRejected
+            ? <Pill label="Ditolak" color="red" />
+            : roPending
+              ? <Pill label={`${roAp.done.length}/${roAp.total}`} color="orange" />
+              : <Pill label="Disetujui" color="green" />,
+        },
+        <Stack gap={2}>
+          <Group gap={4} wrap="wrap">
+            <Text fz="xs" c="slate.6">Pesan ulang dari</Text>
+            {roFrom ? docRow('po', roFrom.id, roFrom.number) : <Empty>—</Empty>}
+          </Group>
+          <Text fz={11} c="slate.6">
+            {roRejected
+              ? 'Ditolak, pesanan tidak berlaku'
+              : roPending
+                ? `Menunggu ${roleLabel(roAp.next)}`
+                : ro.reorder?.approvals ? 'Chief Finance dan Building Manager menyetujui' : 'Tanpa approval (data lama)'}
+          </Text>
+        </Stack>)}
+
+        {!ro && step('proc', { title: 'Pengadaan' },
           fppbj?.route ? (
             <Text fz="xs" c="slate.6">
               {routeLabel(fppbj)}{proc?.status ? ` · ${PROC_STATUS[proc.status]?.label ?? proc.status}` : ''}

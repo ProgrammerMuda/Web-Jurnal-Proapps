@@ -82,6 +82,7 @@ import {
   uid,
   uninvoicedLines,
   uninvoicedPoLines,
+  poPending,
 } from './utils.js';
 import { toast } from './usePb.js';
 
@@ -450,7 +451,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   const readyPos = pb.pos.filter((p) => uninvoicedPoLines(p, pb.invoices).length > 0);
   // Pesanan yang menunggu faktur uang muka: masih berjalan (tidak harus sudah dikirim),
   // terminnya ber-DP, belum ada faktur DP-nya, dan tidak sedang diajukan pembatalan uang muka.
-  const readyDpPos = pb.pos.filter((p) => !p.closedAs
+  const readyDpPos = pb.pos.filter((p) => !p.closedAs && !poPending(p)
     && dpState(p, pb.calc)?.state === 'belum_faktur'
     && p.dpWaiver?.status !== 'diajukan');
   // Pilihan awal dari alamat halaman disaring: vendor dan termin harus sama dengan

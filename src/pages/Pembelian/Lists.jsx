@@ -14,6 +14,7 @@ import {
   Truck,
   Wallet,
   X,
+  ArrowsClockwise,
 } from '@/components/Icon.jsx';
 import { DocNumber, EmptyState, ListShell, RowMenu, StatusPill } from './components.jsx';
 import { TODAY } from './data.js';
@@ -49,6 +50,8 @@ import {
   dpState,
   invoicedQtyOfPo,
   poStatusMap,
+  reorderBlock,
+  fppbjStatus,
 } from './utils.js';
 import { approvalState, canCreate, hidesPrices, isApproverTurn, prBlockedBySoD, receiptDoc, receiptKind, receiptName, signApproval } from './permissions.js';
 import { toast } from './usePb.js';
@@ -92,7 +95,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
   );
 
   if (tab === 'fppbj') {
-    const rows = pb.fppbj.filter((f) => match(q, f.number, f.purpose, f.dept, requesterOf(f)) && (!status || f.status === status));
+    const rows = pb.fppbj.filter((f) => match(q, f.number, f.purpose, f.dept, requesterOf(f)) && (!status || fppbjStatus(f, pb.calc) === status));
     return (
       <ListShell
         {...shell}
@@ -114,7 +117,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
             </Table.Td>
             <Table.Td fz="sm">{f.dept}</Table.Td>
             <Table.Td>{f.route ? <RouteBadge f={f} /> : <Text fz="xs" c="slate.6">Belum dipilih</Text>}</Table.Td>
-            <Table.Td><StatusPill map={FPPBJ_STATUS} status={f.status} size="xs" /></Table.Td>
+            <Table.Td><StatusPill map={FPPBJ_STATUS} status={fppbjStatus(f, pb.calc)} size="xs" /></Table.Td>
             <Table.Td ta="right">
               <RowMenu label={f.number} items={[
                 { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'fppbj', id: f.id }) },
@@ -164,6 +167,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
               <Table.Td>
                 <DocNumber onClick={() => go({ name: 'po', id: p.id })}>{p.number}</DocNumber>
                 <Sub>{poDocLabel(p)} · {formatDate(p.date)}</Sub>
+                {p.reorderOf && <Sub>Pesan ulang dari {pb.posById[p.reorderOf]?.number ?? '—'}</Sub>}
               </Table.Td>
               <Table.Td fz="sm" fw={600} c="slate.9">{vendor(p.vendorId)}</Table.Td>
               <Table.Td fz="sm">{formatDate(p.expectedAt)}</Table.Td>
@@ -178,6 +182,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
                 <RowMenu label={p.number} items={[
                   { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'po', id: p.id }) },
                   canCreate(role, receiptDoc(poAllJasa(p))) && ['menunggu_dp', 'menunggu', 'sebagian'].includes(st) && { label: poAllJasa(p) ? 'Catat BAPP' : 'Catat Penerimaan', icon: Truck, onClick: () => openDialog({ type: 'receipt', poId: p.id }) },
+                  canCreate(role, 'po') && st === 'selesai' && !reorderBlock(p) && { label: 'Pesan ulang', icon: ArrowsClockwise, onClick: () => openDialog({ type: 'reorder', poId: p.id }) },
                 ]} />
               </Table.Td>
             </Table.Tr>

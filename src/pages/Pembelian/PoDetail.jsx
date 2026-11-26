@@ -2,11 +2,11 @@
 import { approvalMessage, askConfirm } from './confirm.jsx';
 import { useState } from 'react';
 import { ActionIcon, Badge, Box, Button, Card, Divider, Grid, Group, Menu, Select, SimpleGrid, Stack, Table, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
-import { ArrowCounterClockwise, Calculator, Check, ClipboardText, CurrencyCircleDollar, DotsThreeVertical, DownloadSimple, Info, Money, Package, PaperPlaneTilt, Prohibit, Receipt, ShoppingCart, Truck, X } from '@/components/Icon.jsx';
+import { ArrowCounterClockwise, ArrowsClockwise, Calculator, Check, ClipboardText, CurrencyCircleDollar, DotsThreeVertical, DownloadSimple, Info, Money, Package, PaperPlaneTilt, Prohibit, Receipt, ShoppingCart, Truck, X } from '@/components/Icon.jsx';
 import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section, StatusPill } from './components.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
 import TermBreakdown from './TermBreakdown.jsx';
-import ApprovalLog from './ApprovalLog.jsx';
+import ApprovalLog, { chainSteps } from './ApprovalLog.jsx';
 import SpkScope from './SpkScope.jsx';
 import { ReasonModal, SendPoModal } from './Dialogs.jsx';
 import { personLabel, TODAY } from './data.js';
@@ -14,7 +14,7 @@ import { freightShare } from './landedCost.js';
 import { freightCapitalized } from '@/pages/Pengaturan/settings.js';
 import { useData } from '@/lib/store.jsx';
 import { picName, warehouseById, warehouseOptions } from '@/pages/Gudang/data.js';
-import { approvalState, isApproverTurn, signApproval, canApprove, canCreate, hidesPrices, prBlockedBySoD, receiptDoc, receiptKind, logEntry } from './permissions.js';
+import { roleLabel, approvalState, isApproverTurn, signApproval, canApprove, canCreate, hidesPrices, prBlockedBySoD, receiptDoc, receiptKind, logEntry } from './permissions.js';
 import {
   formatDate,
   INV_STATUS,
@@ -60,6 +60,10 @@ import {
   poStopBlock,
   PR_ACTIVE,
   prCancelledPo,
+  poPending,
+  reorderBlock,
+  reordersOf,
+  poOriginFppbj,
 } from './utils.js';
 import { downloadPo } from './poPdf.js';
 import { toast } from './usePb.js';
@@ -119,7 +123,8 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   // tercetak di dokumen vendor) dan belum ada barang yang diterima ke gudang itu. Pesanan
   // lama yang gudangnya masih kosong tetap bisa dilengkapi.
   const anyReceived = pb.receipts.some((r) => r.poId === po.id && receiptLive(r));
-  const canSetWarehouse = canCreate(role, 'po') && ((!po.sent && !anyReceived) || !po.warehouseId);
+  // Pesan ulang mengikuti gudang pesanan lamanya: terkunci, kecuali memang kosong.
+  const canSetWarehouse = canCreate(role, 'po') && ((!po.sent && !anyReceived && !po.reorderOf) || !po.warehouseId);
   const label = poDocLabel(po);
   const isJasa = poAllJasa(po);
   // Spesifikasi 2.1: Gudang melihat pesanan dan tanggal kirim, tanpa harga.
@@ -134,7 +139,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const pphCut = Math.round(po.items.reduce((n, i) => n + i.qty * i.price * (i.pphRate ?? 0), 0));
   const vendor = pb.vendorsById[po.vendorId];
   const status = poStatus(po, pb.calc);
-  const fppbj = pb.fppbjById[po.fppbjId];
+  const fppbj = poOriginFppbj(po, pb.posById, pb.fppbjById);
   const receipts = receiptsOf(po, pb.receipts);
   const invoices = pb.invoices.filter((i) => i.poId === po.id || i.lines.some((l) => l.poId === po.id));
   const retensi = poRetention(po, pb.invoices);
@@ -179,6 +184,36 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   // yang berjalan. Menunya tetap tampil dengan alasannya supaya orang tahu apa yang harus
   // dibereskan dulu.
   const closed = !!po.closedAs;
+  // Pesan ulang yang menunggu approval belum berlaku: belum bisa dikirim,
+  // diterima, atau ditagih. Tombol-tombol itu disembunyikan, bukan dinonaktifkan.
+  const pending = poPending(po);
+  const inactive = closed || pending;
+  const ro = po.reorder;
+  const roFrom = po.reorderOf ? pb.posById[po.reorderOf] : null;
+  const roChildren = reordersOf(po, pb.pos);
+  const roChange = (itemId) => ro?.changes?.find((c) => c.itemId === itemId);
+  const canDecideReorder = pending && isApproverTurn(role, ro, 'reorder');
+  const [roReject, setRoReject] = useState(false);
+  const canReorder = status === 'selesai' && canCreate(role, 'po');
+  const roBlock = canReorder ? reorderBlock(po) : null;
+  const approveReorder = () => {
+    pb.update('pos', po.id, (d) => {
+      const { doc, complete } = signApproval(d.reorder, 'reorder', role);
+      return { ...d, reorder: complete ? { ...doc, status: 'disetujui', approvedAt: TODAY } : doc };
+    });
+    toast(approvalState(ro, 'reorder').done.length + 1 >= approvalState(ro, 'reorder').total ? `${po.number} disetujui dan mulai berlaku.` : 'Approval dicatat. Menunggu Building Manager.');
+  };
+  const rejectReorder = (note) => {
+    pb.update('pos', po.id, (d) => ({
+      ...d,
+      closedAs: 'ditolak',
+      closeNote: note,
+      closedBy: personLabel(role),
+      reorder: { ...d.reorder, status: 'ditolak', log: [...(d.reorder.log ?? []), logEntry(role, 'tolak', { step: approvalState(d.reorder, 'reorder').next, note })] },
+    }));
+    setRoReject(false);
+    toast(`${po.number} ditolak dan tidak berlaku.`);
+  };
   const stopBlock = closed ? null : poStopBlock(po, pb.calc);
   const canClose = !closed && canCreate(role, 'po');
   const [closing, setClosing] = useState(null);
@@ -244,7 +279,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
             >
               Unduh PDF
             </Button>
-            {!closed && (canCreate(role, 'po') ? (
+            {!inactive && (canCreate(role, 'po') ? (
               <Button
                 radius="md"
                 variant="default"
@@ -256,7 +291,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
             ) : !po.sent && <RoleChip role="accounting" />)}
             {/* Faktur uang muka tidak menunggu PO/SPK terkirim: tagihan DP vendor sering terbit
                 begitu pesanan disepakati. Ia jadi aksi utama di sebelah tombol kirim. */}
-            {!closed && dp?.state === 'belum_faktur' && !waiverPending && canCreate(role, 'invoice') && (
+            {!inactive && dp?.state === 'belum_faktur' && !waiverPending && canCreate(role, 'invoice') && (
               <Button radius="md" leftSection={<Receipt size={16} />} onClick={() => go({ name: 'invoice-new', dpPoId: po.id })}>Catat faktur {advanceLabel(po.term) === 'DP' ? 'uang muka' : 'bayar di muka'}</Button>
             )}
             {canDecideWaiver && (
@@ -265,15 +300,15 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                 <Button radius="md" leftSection={<Check size={16} />} onClick={() => askConfirm({ title: 'Setujui pembatalan uang muka?', message: `${po.number} tidak lagi menagih uang muka; seluruh nilainya ditagih di faktur pelunasan. Keputusan ini tercatat di log approval dan tidak bisa dibatalkan.`, confirmLabel: 'Ya, setujui', onConfirm: () => decideWaiver(true) })}>Setujui pembatalan DP</Button>
               </>
             )}
-            {!closed && dp?.state === 'belum_bayar' && !dpPr && dpInv && canCreate(role, 'pr') && (
+            {!inactive && dp?.state === 'belum_bayar' && !dpPr && dpInv && canCreate(role, 'pr') && (
               <Button radius="md" variant="light" leftSection={<Money size={16} />} onClick={() => go({ name: 'pr-new', invoiceIds: [dpInv.id] })}>Buat Payment Request {advanceLabel(po.term)}</Button>
             )}
             {/* Tidak menunggu dokumen terkirim: barang sering datang duluan dan pekerjaan
                 sering sudah jalan sebelum PO/SPK-nya sempat dikirim. */}
-            {!closed && pakaiTerima && anyRemaining && canCreate(role, receiptDoc(isJasa)) && (
+            {!inactive && pakaiTerima && anyRemaining && canCreate(role, receiptDoc(isJasa)) && (
               <Button radius="md" leftSection={<Truck size={16} />} onClick={() => openDialog({ type: 'receipt', poId: po.id })}>{poAllJasa(po) ? 'Catat BAPP' : 'Catat penerimaan'}</Button>
             )}
-            {!closed && openLines.length > 0 && canCreate(role, 'invoice') && (
+            {!inactive && openLines.length > 0 && canCreate(role, 'invoice') && (
               <Tooltip label={dpBlockReason(dp)} disabled={!dpBlocks(dp)} withArrow fz="xs" multiline w={260}>
               <Button
                 radius="md"
@@ -285,6 +320,28 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               >
                 Catat faktur
               </Button>
+              </Tooltip>
+            )}
+            {canDecideReorder && (
+              <>
+                <Button radius="md" variant="default" color="red" leftSection={<X size={16} />} onClick={() => setRoReject(true)}>Tolak</Button>
+                <Button
+                  radius="md"
+                  leftSection={<Check size={16} />}
+                  onClick={() => askConfirm({
+                    title: `Setujui ${po.number}?`,
+                    message: approvalMessage(approvalState(ro, 'reorder'), { final: `Ini approval terakhir: ${po.number} langsung berlaku dengan harga baru.` }),
+                    confirmLabel: 'Ya, setujui',
+                    onConfirm: approveReorder,
+                  })}
+                >
+                  Setujui ({approvalState(ro, 'reorder').done.length + 1}/{approvalState(ro, 'reorder').total})
+                </Button>
+              </>
+            )}
+            {canReorder && (
+              <Tooltip label={roBlock} disabled={!roBlock} withArrow fz="xs" multiline w={260}>
+                <Button radius="md" leftSection={<ArrowsClockwise size={16} />} disabled={!!roBlock} onClick={() => openDialog({ type: 'reorder', poId: po.id })}>Pesan ulang</Button>
               </Tooltip>
             )}
             {(canClose || canWaive) && (
@@ -320,13 +377,28 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
       </Card>
 
       {closed && (
-        <Callout tone="stop" title={po.closedAs === 'dibatalkan' ? `${label} dibatalkan` : `${label} ditutup`}>
+        <Callout tone="stop" title={{ dibatalkan: `${label} dibatalkan`, ditolak: `Pesan ulang ditolak · ${label} tidak berlaku` }[po.closedAs] ?? `${label} ditutup`}>
           {po.closeNote}
           {po.closedBy && <> — {po.closedBy}</>}
         </Callout>
       )}
 
-      {dp && !closed && <DpStatusStrip dp={dp} po={po} go={go} />}
+      {pending && (
+        <Callout tone="wait" title={`Menunggu approval ${roleLabel(approvalState(ro, 'reorder').next)} · ${label} belum berlaku`}>
+          {ro.increased === false
+            ? `Pesan ulang dari ${roFrom?.number ?? 'pesanan sebelumnya'}, harga tidak naik.${ro.reason ? ` Catatan: ${ro.reason}` : ''}`
+            : `Harga atau total lebih tinggi dari ${roFrom?.number ?? 'pesanan sebelumnya'}. Alasan: ${ro.reason || '—'}`}
+        </Callout>
+      )}
+      <ReasonModal
+        opened={roReject}
+        onClose={() => setRoReject(false)}
+        title={`Tolak ${po.number}`}
+        label="Alasan penolakan. Pesanan ini tidak akan berlaku."
+        confirmLabel="Tolak"
+        onConfirm={rejectReorder}
+      />
+      {dp && !inactive && <DpStatusStrip dp={dp} po={po} go={go} />}
       <ReasonModal
         opened={waiverOpen}
         onClose={() => setWaiverOpen(false)}
@@ -402,36 +474,53 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                         />
                       ),
                     ],
-                  ['Dari permintaan', fppbj ? <DocNumber onClick={() => go({ name: 'fppbj', id: fppbj.id })}>{fppbj.number}</DocNumber> : '—'],
-                  ['Termin bayar', <TermBreakdown key="term" po={po} noPrice={noPrice} />],
-                  // Mengirim ke vendor opsional: belum terkirim hanya keterangan, bukan peringatan.
-                  [
-                    'Dikirim ke vendor',
-                    po.sent ? (
+                  // PO pesan ulang tidak punya permintaan sendiri: satu baris "Asal pesanan" menyebut
+                  // PO yang diulang sekaligus permintaan awal yang ditumpanginya.
+                  roFrom
+                    ? ['Asal pesanan', (
                       <>
-                        {vendorEmail(vendor) || '—'}
-                        <Text fz={11} fw={400} c="slate.6">
-                          {[po.sentAt && formatDate(po.sentAt), po.sentBy].filter(Boolean).join(' · ') || 'Tanggal tidak tercatat'}
-                          {po.sentCc ? ` · cc ${po.sentCc}` : ''}
+                        <Group gap={6} wrap="wrap">
+                          <span>Pesan ulang dari</span>
+                          <DocNumber onClick={() => go({ name: 'po', id: roFrom.id })}>{roFrom.number}</DocNumber>
+                        </Group>
+                        <Text fz={11} fw={400} c="slate.6" component="div">
+                          Permintaan awal:{' '}
+                          {fppbj ? (
+                            <>
+                              <Text span fz={11} fw={600} c="primary.9" style={{ cursor: 'pointer' }} onClick={() => go({ name: 'fppbj', id: fppbj.id })}>{fppbj.number}</Text>
+                              {fppbj.purpose ? ` · ${fppbj.purpose}` : ''}
+                            </>
+                          ) : 'tidak tercatat (data lama)'}
                         </Text>
-                        {po.resentAt && (
-                          <Text fz={11} fw={400} c="slate.6">
-                            Dikirim ulang {formatDate(po.resentAt)}{po.resentBy ? ` · ${po.resentBy}` : ''}
-                          </Text>
-                        )}
                       </>
-                    ) : (
-                      <Group gap={6} wrap="wrap">
-                        <Text fz="sm" c="slate.6" component="span">Belum dikirim</Text>
-                        {!closed && canCreate(role, 'po') && (
-                          <Button variant="subtle" size="compact-xs" radius="md" leftSection={<PaperPlaneTilt size={12} />} onClick={() => setSendOpen(true)}>
-                            Kirim ke vendor
-                          </Button>
-                        )}
-                      </Group>
-                    ),
+                    )]
+                    : ['Dari permintaan', fppbj ? (
+                      <>
+                        <DocNumber onClick={() => go({ name: 'fppbj', id: fppbj.id })}>{fppbj.number}</DocNumber>
+                        {fppbj.purpose && <Text fz={11} fw={400} c="slate.6">{fppbj.purpose}</Text>}
+                      </>
+                    ) : <Text span fz="sm" fw={400} c="slate.6">Tanpa permintaan (data lama)</Text>],
+                  ro?.reason && [ro.increased === false ? 'Catatan pesan ulang' : 'Alasan kenaikan harga', ro.reason],
+                  roChildren.length > 0 && ['Dipesan ulang di', <Group key="rc" gap={8}>{roChildren.map((c) => <DocNumber key={c.id} onClick={() => go({ name: 'po', id: c.id })}>{c.number}</DocNumber>)}</Group>],
+                  ['Termin bayar', <TermBreakdown key="term" po={po} noPrice={noPrice} />],
+                  // Mengirim ke vendor opsional: barisnya hanya muncul setelah terkirim. Selama belum,
+                  // tidak ada yang perlu dibaca di sini; tombol Kirim ke vendor ada di kepala halaman.
+                  po.sent && [
+                    'Dikirim ke vendor',
+                    <>
+                      {vendorEmail(vendor) || '—'}
+                      <Text fz={11} fw={400} c="slate.6">
+                        {[po.sentAt && formatDate(po.sentAt), po.sentBy].filter(Boolean).join(' · ') || 'Tanggal tidak tercatat'}
+                        {po.sentCc ? ` · cc ${po.sentCc}` : ''}
+                      </Text>
+                      {po.resentAt && (
+                        <Text fz={11} fw={400} c="slate.6">
+                          Dikirim ulang {formatDate(po.resentAt)}{po.resentBy ? ` · ${po.resentBy}` : ''}
+                        </Text>
+                      )}
+                    </>,
                   ],
-                ].map(([k, v], i, all) => (
+                ].filter(Boolean).map(([k, v], i, all) => (
                   <Box
                     key={k}
                     px="lg"
@@ -483,6 +572,11 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                         {!noPrice && (
                           <Table.Td ta="right" fz="sm">
                             {rupiah(i.price)}
+                            {roChange(i.id) && roChange(i.id).price !== roChange(i.id).oldPrice && (
+                              <Text fz={11} fw={600} c={roChange(i.id).price > roChange(i.id).oldPrice ? 'red.7' : 'green.8'}>
+                                {roChange(i.id).price > roChange(i.id).oldPrice ? 'Naik' : 'Turun'} {rupiah(Math.abs(roChange(i.id).price - roChange(i.id).oldPrice))} dari {roFrom?.number ?? 'pesanan lama'}
+                              </Text>
+                            )}
                             {ongkirPerUnit(i) > 0 && (
                               <Text fz={11} c="slate.6" fw={400}>
                                 Termasuk ongkir {rupiah(Math.round(ongkirPerUnit(i)))}/{i.unit}
@@ -672,7 +766,15 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               </Group>
             </Card>
             )}
-            {/* Pembatalan uang muka satu-satunya approval di PO/SPK; kartunya muncul begitu diajukan. */}
+            {/* Approval pesan ulang. Data lama tanpa approval (status disetujui langsung) tidak menampilkannya. */}
+            {ro && (ro.status !== 'disetujui' || ro.approvals) ? (
+              <ApprovalLog
+                title="Log approval pesan ulang"
+                steps={chainSteps(ro, 'reorder', { rejected: ro.status === 'ditolak', active: ro.status !== 'disetujui' })}
+                log={ro.log ?? []}
+              />
+            ) : null}
+            {/* Pembatalan uang muka; kartunya muncul begitu diajukan. */}
             {po.dpWaiver && (
               <ApprovalLog
                 title="Log pembatalan uang muka"

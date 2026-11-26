@@ -123,12 +123,24 @@ function mergeVendors(saved) {
   return [...merged, ...vendorsSeed.filter((v) => !ids.has(v.id))];
 }
 
+// PO riwayat contoh dulu tidak punya permintaan. Data tersimpan dilengkapi: FPPBJ contoh yang
+// belum ada ditambahkan, dan PO contoh yang permintaannya kosong diisi dari seed. Dokumen
+// buatan pengguna tidak disentuh.
+function mergeSeedOrigins(raw) {
+  const seedPo = Object.fromEntries(posSeed.map((p) => [p.id, p]));
+  const pos = raw.pos.map((p) => (!p.fppbjId && seedPo[p.id]?.fppbjId ? { ...p, fppbjId: seedPo[p.id].fppbjId } : p));
+  const have = new Set(raw.fppbj.map((f) => f.id));
+  const needed = new Set(pos.map((p) => p.fppbjId));
+  const fppbj = [...raw.fppbj, ...fppbjSeed.filter((f) => !have.has(f.id) && needed.has(f.id))];
+  return { pos, fppbj };
+}
+
 function loadPb() {
   try {
     const raw = JSON.parse(localStorage.getItem(PB_KEY));
     // Gabung dengan seed supaya data lama yang belum punya koleksi baru tetap bisa dibuka.
     if (raw?.fppbj && raw?.pos)
-      return { ...pbSeed, ...raw, vendors: mergeVendors(raw.vendors), paymentTerms: raw.paymentTerms ?? paymentTermsSeed };
+      return { ...pbSeed, ...raw, ...mergeSeedOrigins(raw), vendors: mergeVendors(raw.vendors), paymentTerms: raw.paymentTerms ?? paymentTermsSeed };
   } catch {
     /* abaikan: pakai data contoh */
   }

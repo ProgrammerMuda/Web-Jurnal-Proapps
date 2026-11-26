@@ -23,6 +23,8 @@ import {
   addDays,
   retentionDocName,
   rupiahShort,
+  poPending,
+  reorderBlock,
 } from './utils.js';
 
 export function readiness(pb) {
@@ -30,7 +32,8 @@ export function readiness(pb) {
   // Penerimaan dan faktur uang muka tidak menunggu dokumen terkirim: barang bisa datang
   // lebih dulu, dan tagihan DP vendor sering terbit begitu pesanan disepakati, sebelum
   // PO/SPK-nya sempat dikirim resmi.
-  const livePos = pb.pos.filter((p) => !p.closedAs);
+  // PO pesan ulang yang menunggu approval harga belum berlaku: belum bisa diterima atau ditagih.
+  const livePos = pb.pos.filter((p) => !p.closedAs && !poPending(p));
   const r = {
     // Penawaran: permintaan terverifikasi / dalam pengadaan jalur bidding yang belum disetujui.
     quotes: pb.fppbj.filter(
@@ -64,6 +67,13 @@ export function readiness(pb) {
   };
   // Payment Request gabungan DP/CBD + pelunasan.
   r.pr = [...r.prDp, ...r.prPay];
+  // Pesan ulang: PO/SPK yang sudah Selesai, terbaru di atas. `reorderAll` ikut memuat kontrak
+  // bertermin supaya tetap terlihat di daftar (nonaktif, dengan alasannya); angka di menu
+  // hanya menghitung yang memang bisa dipesan ulang.
+  r.reorderAll = pb.pos
+    .filter((p) => poStatus(p, c) === 'selesai')
+    .sort((a, b) => b.date.localeCompare(a.date));
+  r.reorder = r.reorderAll.filter((p) => !reorderBlock(p));
   // Retensi yang masih ditahan setelah semua termin difaktur, urut dari yang paling dulu
   // selesai masa pemeliharaannya. `due`: yang sudah boleh dilepas hari ini.
   r.retention = pb.pos
@@ -238,6 +248,12 @@ export function actionsFor(role, pb) {
     pb.receipts
       .filter((x) => receiptPending(x) && canApprove(role, receiptKind(x)) && isApproverTurn(role, x, receiptKind(x)))
       .forEach((x) => add({ id: `ba-${x.id}`, title: `Setujui ${receiptName(x)} (${approvalState(x, receiptKind(x)).done.length + 1}/${approvalState(x, receiptKind(x)).total})`, sub: `${x.number}`, cta: 'Tinjau', to: { name: 'receipt', id: x.id }, since: x.date, limit: SLA.bapp }));
+  }
+  // Pesan ulang dengan harga naik menunggu approval berjenjang sebelum PO-nya berlaku.
+  if (canApprove(role, 'reorder')) {
+    pb.pos
+      .filter((p) => poPending(p) && isApproverTurn(role, p.reorder, 'reorder'))
+      .forEach((p) => add({ id: `ro-${p.id}`, title: `${p.reorder.increased === false ? 'Setujui pesan ulang' : 'Setujui pesan ulang, harga naik'} (${approvalState(p.reorder, 'reorder').done.length + 1}/${approvalState(p.reorder, 'reorder').total})`, sub: p.number, cta: 'Tinjau', to: { name: 'po', id: p.id }, since: p.date, limit: SLA.bapp }));
   }
   // FPB/BAPP yang ditolak kembali ke pencatatnya untuk diajukan ulang atau dibatalkan.
   pb.receipts

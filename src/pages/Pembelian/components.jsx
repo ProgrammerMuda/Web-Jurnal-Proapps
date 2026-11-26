@@ -286,11 +286,13 @@ export function ReferencePicker({
   emptyActions,
   onPick,
   icon,
+  subtitle,
+  placeholder = 'Cari nomor dokumen atau vendor…',
 }) {
   const [q, setQ] = useState('');
   const [sel, setSel] = useState([]);
   const filtered = rows.filter((r) =>
-    [r.number, r.vendor, r.hint].some((v) => v?.toLowerCase().includes(q.trim().toLowerCase())),
+    [r.number, r.vendor, r.hint, r.search].some((v) => v?.toLowerCase().includes(q.trim().toLowerCase())),
   );
   const vendorOfSel = rows.find((r) => r.id === sel[0])?.vendorId;
   const close = () => {
@@ -299,6 +301,7 @@ export function ReferencePicker({
     onClose();
   };
   const toggle = (r) => {
+    if (r.disabled) return;
     if (!multi || r.solo) return onPick([r.id]);
     setSel((s) =>
       s.includes(r.id) ? s.filter((x) => x !== r.id) : r.vendorId === (vendorOfSel ?? r.vendorId) ? [...s, r.id] : s,
@@ -311,7 +314,7 @@ export function ReferencePicker({
       size={640}
       icon={icon}
       title={title}
-      subtitle={multi ? 'Pilih satu atau beberapa dokumen dari vendor yang sama.' : 'Pilih dokumen yang akan dilanjutkan.'}
+      subtitle={subtitle ?? (multi ? 'Pilih satu atau beberapa dokumen dari vendor yang sama.' : 'Pilih dokumen yang akan dilanjutkan.')}
       footer={
         multi && rows.length > 0 ? (
           <>
@@ -337,7 +340,8 @@ export function ReferencePicker({
       ) : (
         <>
           <TextInput
-            placeholder="Cari nomor dokumen atau vendor..."
+            data-autofocus
+            placeholder={placeholder}
             size="sm"
             radius="md"
             leftSection={<MagnifyingGlass size={14} />}
@@ -347,7 +351,7 @@ export function ReferencePicker({
           <Stack gap={6}>
             {filtered.map((r, idx) => {
               const on = sel.includes(r.id);
-              const blocked = multi && vendorOfSel && (r.solo || r.vendorId !== vendorOfSel);
+              const blocked = r.disabled || (multi && vendorOfSel && (r.solo || r.vendorId !== vendorOfSel));
               return (
                 <Fragment key={r.id}>
                 {r.group && r.group !== filtered[idx - 1]?.group && (
@@ -375,6 +379,11 @@ export function ReferencePicker({
                       {r.hint && (
                         <Text fz={11} c="slate.6">
                           {r.hint}
+                        </Text>
+                      )}
+                      {r.disabled && r.disabledNote && (
+                        <Text fz={11} fw={600} c="slate.7">
+                          {r.disabledNote}
                         </Text>
                       )}
                     </Box>

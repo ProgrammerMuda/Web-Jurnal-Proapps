@@ -171,7 +171,7 @@ const poOld = {
   id: 'po-0031',
   number: 'PO/2026/09/0031',
   date: '2026-09-14',
-  fppbjId: null,
+  fppbjId: 'fppbj-po-0031',
   vendorId: 'v-alfa',
   kind: 'barang',
   sent: true,
@@ -671,7 +671,7 @@ const spkLift = {
   id: 'po-0036',
   number: 'SPK/2026/10/0036',
   date: '2026-10-01',
-  fppbjId: null,
+  fppbjId: 'fppbj-po-0036',
   vendorId: 'v-mitra',
   sent: true,
   term: TERM.postpaid(30),
@@ -688,7 +688,8 @@ const histPo = (id, number, date, vendorId, items, term = TERM.cad()) => ({
   id,
   number,
   date,
-  fppbjId: null,
+  // Diisi histFppbj di bawah: setiap PO lahir dari permintaan, termasuk PO riwayat.
+  fppbjId: `fppbj-${id}`,
   vendorId,
   sent: true,
   term,
@@ -837,6 +838,61 @@ const histPrs = histDocs.map(({ po, inv, pr }) => {
 });
 
 
+
+// --- Permintaan di balik PO riwayat ---------------------------------------------------------
+// Pesanan lama yang sudah selesai juga berasal dari FPPBJ (jalur vendor tunggal, pengadaan
+// disetujui). Tanpanya detail PO dan pesan ulang tidak punya "Asal pesanan" untuk ditunjuk.
+const histFppbj = (po, { seq, purpose, dept, requester }) => {
+  const d = (n) => new Date(Date.parse(po.date) - n * 864e5).toISOString().slice(0, 10);
+  const isJasa = po.items.every((i) => i.kind === 'jasa');
+  return {
+    id: po.fppbjId,
+    number: `FPPBJ/${po.date.slice(0, 4)}/${po.date.slice(5, 7)}/${seq}`,
+    date: d(6),
+    neededBy: d(-14),
+    dept,
+    purpose,
+    iom: { no: '', date: '', files: [] },
+    warehouseId: isJasa ? null : po.warehouseId,
+    items: po.items.map(({ price, ...it }) => (void price, it)),
+    // Semua pesanannya sudah tuntas.
+    status: 'selesai',
+    note: '',
+    returnNote: '',
+    submittedAt: d(6),
+    verifiedAt: d(5),
+    routedAt: d(5),
+    route: 'bidding',
+    single: { on: true, reason: 'Vendor langganan, harga sesuai kontrak tahunan.' },
+    quotes: [{
+      id: `q-${po.id}`,
+      vendorId: po.vendorId,
+      no: `QT-${po.number.split('/').pop()}`,
+      validUntil: d(-30),
+      desc: '',
+      file: `penawaran-${po.id}.pdf`,
+      term: po.term,
+      lead: 0,
+      warranty: isJasa ? '6 bulan' : '12 bulan',
+      lines: po.items.map((it) => ({ itemId: it.id, price: it.price, spec: it.spec || '-', taxes: it.ppnRate ? ['ppn'] : [] })),
+    }],
+    procurement: { kind: 'bidding', status: 'disetujui', note: '', reason: '', negotiation: '', winners: {}, finals: {} },
+    requester,
+  };
+};
+const histFppbjs = [
+  histFppbj(poBintang1, { seq: '0009', purpose: 'Meja lipat dan lemari arsip ruang rapat', dept: 'Umum', requester: 'Andi Wijaya · Staff Housekeeping' }),
+  histFppbj(poAlfa1, { seq: '0011', purpose: 'ATK bulanan Juli', dept: 'Keuangan', requester: 'Maya Sari · Staff Keuangan' }),
+  histFppbj(poAlfa2, { seq: '0014', purpose: 'ATK bulanan Agustus', dept: 'Keuangan', requester: 'Maya Sari · Staff Keuangan' }),
+  histFppbj(poMitra1, { seq: '0015', purpose: 'Servis AC berkala semester II', dept: 'Engineering', requester: 'Budi Santoso · Teknisi' }),
+  histFppbj(poAlfaStaged, { seq: '0019', purpose: 'Stok kertas dan map kuartal IV', dept: 'Umum', requester: 'Andi Wijaya · Staff Housekeeping' }),
+  histFppbj(poBintangStaged, { seq: '0016', purpose: 'Kursi kantor ruang kerja baru', dept: 'Umum', requester: 'Andi Wijaya · Staff Housekeeping' }),
+  histFppbj(poOld, { seq: '0017', purpose: 'ATK bulanan September', dept: 'Keuangan', requester: 'Maya Sari · Staff Keuangan' }),
+  histFppbj(spkLift, { seq: '0018', purpose: 'Servis berkala lift gedung A', dept: 'Engineering', requester: 'Budi Santoso · Teknisi' }),
+  histFppbj(poOngkir, { seq: '0021', purpose: 'Map plastik dan kertas ruang arsip', dept: 'Umum', requester: 'Andi Wijaya · Staff Housekeeping' }),
+];
+// fppbjSeed didefinisikan di atas PO riwayat, jadi permintaannya ditambahkan di sini.
+fppbjSeed.push(...histFppbjs);
 
 export const posSeed = [...uji.map((u) => u.po), poOngkir, poOld, poChair, spkLift, poAlfaStaged, poBintangStaged, poAlfa2, poAlfa1, poBintang1, poMitra1];
 

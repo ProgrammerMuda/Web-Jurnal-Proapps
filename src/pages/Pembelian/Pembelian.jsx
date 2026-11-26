@@ -21,6 +21,7 @@ import LaporanHutang from './LaporanHutang.jsx';
 import ListTab from './Lists.jsx';
 import Overview from './Overview.jsx';
 import PoDetail from './PoDetail.jsx';
+import ReorderModal from './ReorderModal.jsx';
 import ReceiptDetail from './ReceiptDetail.jsx';
 import InvoiceDetail from './InvoiceDetail.jsx';
 import InvoiceForm from './InvoiceForm.jsx';
@@ -31,7 +32,7 @@ import VoucherDetail from './VoucherDetail.jsx';
 import { formatHash, parseHash } from './routes.js';
 import { readiness } from './selectors.js';
 import { approvalState, canCreate, logEntry, nowStamp, receiptKind, receiptName } from './permissions.js';
-import { formatDate, invTotals, poTotal, routeLabel, rupiah, sum, remainingQty } from './utils.js';
+import { formatDate, invTotals, poTotal, reorderBlock, routeLabel, rupiah, sum, remainingQty } from './utils.js';
 import { toast, usePb } from './usePb.js';
 import { legacyLog } from './ApprovalLog.jsx';
 import { ConfirmHost } from './confirm.jsx';
@@ -42,6 +43,7 @@ const actions = {
   // Dokumen apa saja yang boleh dibuat tiap peran: lihat permissions.js (spesifikasi 2.2).
   fppbj: { label: 'Buat Permintaan', doc: 'fppbj' },
   po: { label: 'Buat Pesanan', doc: 'po', count: 'po' },
+  reorder: { label: 'Pesan ulang', doc: 'po', count: 'reorder' },
   receipt: { label: 'Buat Penerimaan', doc: 'receipt', count: 'receipt' },
   invoice: { label: 'Buat Tagihan Vendor', doc: 'invoice', count: 'invoice' },
   retention: { label: 'Lepas Retensi', doc: 'invoice', count: 'retentionDue' },
@@ -50,7 +52,7 @@ const actions = {
 };
 // Satu tombol per tab: dokumen yang dibuat di tab itu. Ringkasan memakai dropdown "Buat baru".
 const tabAction = { fppbj: 'fppbj', orders: 'po', receipts: 'receipt', bills: 'invoice', payments: 'pr', returns: 'return' };
-const buatBaruOrder = ['fppbj', 'po', 'receipt', 'invoice', 'retention', 'pr', 'return'];
+const buatBaruOrder = ['fppbj', 'po', 'reorder', 'receipt', 'invoice', 'retention', 'pr', 'return'];
 
 // Judul & deskripsi halaman per menu sidebar.
 const pageIntros = {
@@ -106,6 +108,30 @@ export default function Pembelian() {
       emptyText: 'PO dibuat dari pengadaan yang sudah disetujui approver.',
       pick: ([id]) => { close(); go({ name: 'fppbj', id }); },
     },
+    reorder: {
+      title: 'Pesan ulang · pilih PO/SPK yang selesai',
+      subtitle: 'Vendor, item, termin, dan gudang mengikuti pesanan lama. Qty dan harga bisa disesuaikan.',
+      placeholder: 'Cari barang, jasa, atau vendor…',
+      icon: ArrowsClockwise,
+      rows: rd.reorderAll.map((p) => {
+        const names = p.items.map((i) => i.desc);
+        const block = reorderBlock(p);
+        return {
+          id: p.id,
+          number: p.number,
+          vendor: vendorName(p.vendorId),
+          hint: names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2} lainnya` : names.join(', '),
+          search: names.join(' '),
+          value: rupiah(poTotal(p)),
+          remain: formatDate(p.date),
+          disabled: !!block,
+          disabledNote: block && 'Kontrak bertermin · pesan lewat permintaan baru',
+        };
+      }),
+      emptyTitle: 'Belum ada PO/SPK yang selesai',
+      emptyText: 'Pesan ulang memakai pesanan yang sudah selesai: diterima, ditagih, dan lunas.',
+      pick: ([id]) => setDialog({ type: 'reorder', poId: id }),
+    },
     receipt: {
       title: 'Penerimaan · pilih PO',
       icon: Truck,
@@ -153,9 +179,41 @@ export default function Pembelian() {
       ? canCreate(pb.role, 'fpb') || canCreate(pb.role, 'bapp')
       : canCreate(pb.role, actions[key].doc);
 
+  // Tab Pesanan: pesanan baru (dari pengadaan yang disetujui) atau pesan ulang (dari PO/SPK
+  // selesai). Pilihan yang kosong tetap tampil, nonaktif, dengan alasannya.
+  const orderChoices = [
+    { key: 'po', label: 'Pesanan baru', desc: 'Dari permintaan yang pengadaannya sudah disetujui', none: 'Belum ada pengadaan yang disetujui' },
+    { key: 'reorder', label: 'Pesan ulang', desc: 'Item yang sama dari PO/SPK yang sudah selesai', none: 'Belum ada PO/SPK yang selesai' },
+  ];
+  const orderMenu = (
+    <Menu position="bottom-end" width={300} shadow="md" withinPortal>
+      <Menu.Target>
+        <Button radius="md" leftSection={<Plus size={16} />} rightSection={<CaretDown size={14} />}>
+          Buat Pesanan
+        </Button>
+      </Menu.Target>
+      <Menu.Dropdown>
+        {orderChoices.map((o) => {
+          const n = rd[o.key].length;
+          return (
+            <Menu.Item
+              key={o.key}
+              disabled={!n}
+              onClick={() => onBuat(o.key)}
+              rightSection={n ? <Badge size="sm" circle variant="light" color="primary" tt="none">{n}</Badge> : null}
+            >
+              <Text fz="sm" fw={600}>{o.label}</Text>
+              <Text fz={11} c="slate.6">{n ? o.desc : o.none}</Text>
+            </Menu.Item>
+          );
+        })}
+      </Menu.Dropdown>
+    </Menu>
+  );
+
   // Tombol tunggal untuk tab dokumen.
   const createButton = (key) =>
-    allowed(key) ? (
+    key === 'po' && allowed(key) ? orderMenu : allowed(key) ? (
       <Button radius="md" leftSection={<Plus size={16} />} onClick={() => onBuat(key)}>
         {actions[key].label}
       </Button>
@@ -174,7 +232,7 @@ export default function Pembelian() {
         {keys.map((key) => {
           const n = actions[key].count ? rd[actions[key].count].length : null;
           return (
-            <Menu.Item key={key} fz="xs" onClick={() => onBuat(key)} rightSection={n ? <Badge size="sm" circle variant="light" color="primary" tt="none">{n}</Badge> : null}>
+            <Menu.Item key={key} fz="xs" disabled={key === 'reorder' && !n} onClick={() => onBuat(key)} rightSection={n ? <Badge size="sm" circle variant="light" color="primary" tt="none">{n}</Badge> : null}>
               {actions[key].label}
             </Menu.Item>
           );
@@ -196,6 +254,8 @@ export default function Pembelian() {
           onClose={close}
           title={refs[d.kind].title}
           icon={refs[d.kind].icon}
+          subtitle={refs[d.kind].subtitle}
+          placeholder={refs[d.kind].placeholder}
           rows={refs[d.kind].rows}
           multi={refs[d.kind].multi}
           emptyTitle={refs[d.kind].emptyTitle}
@@ -203,6 +263,9 @@ export default function Pembelian() {
           emptyActions={refs[d.kind].emptyActions}
           onPick={refs[d.kind].pick}
         />
+      )}
+      {d?.type === 'reorder' && pb.posById[d.poId] && (
+        <ReorderModal opened onClose={close} po={pb.posById[d.poId]} pb={pb} onSaved={(id) => { close(); go({ name: 'po', id }); }} />
       )}
       {d?.type === 'receipt' && <ReceiptModal opened onClose={close} po={pb.posById[d.poId]} pb={pb} editing={d.receiptId ? pb.receiptsById[d.receiptId] : null} />}
       {d?.type === 'receipt-reject' && pb.receiptsById[d.receiptId] && (
