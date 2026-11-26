@@ -74,6 +74,7 @@ import {
   ppnLabel,
   receiptDue,
   priceChangePending,
+  receiptPriceAdj,
   rupiah,
   termKey,
   dpBlockReason,
@@ -558,6 +559,9 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
         ppnRate: it.ppnRate,
         pphRate: it.pphRate ?? 0,
         open: l.open,
+        // Penyesuaian harga yang sudah dijurnal untuk penerimaan ini (ubah harga PO sesudah
+        // BAPP/FPB), per unit. Ikut disimpan di baris faktur untuk jurnal penutupnya.
+        priceAdj: receiptPriceAdj(l),
       };
     });
   });
@@ -712,7 +716,7 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
       // jadi tidak mengurangi sisa FPB/BAPP dan tidak ikut pencocokan 3 arah.
       lines: lines.filter((l) => l.qty > 0).map((l) => (manual
         ? { productId: l.productId, kind: l.kind, desc: l.desc.trim(), spec: l.spec.trim(), unit: l.unit, qty: l.qty, price: l.price, ppnRate: l.ppnRate, received: !!l.received }
-        : { ...(l.receiptId ? { receiptId: l.receiptId } : {}), poId: l.poId, itemId: l.itemId, qty: l.qty, price: l.price, ppnRate: l.ppnRate })),
+        : { ...(l.receiptId ? { receiptId: l.receiptId } : {}), poId: l.poId, itemId: l.itemId, qty: l.qty, price: l.price, ppnRate: l.ppnRate, ...(l.priceAdj ? { priceAdj: l.priceAdj } : {}) })),
       pphPct: pph || 0,
       ...(vendorTotal > 0 && { vendorTotal }),
       files: [inv, tax],

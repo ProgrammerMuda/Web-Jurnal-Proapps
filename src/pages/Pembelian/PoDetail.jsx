@@ -64,6 +64,7 @@ import {
   applyPriceChange,
   priceChangeOf,
   priceChangePending,
+  receiptConfirmed,
   reorderBlock,
   reordersOf,
   poOriginFppbj,
@@ -238,12 +239,24 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   const approvePrice = () => {
     const final = approvalState(pc, 'priceChange').done.length + 1 >= approvalState(pc, 'priceChange').total;
     if (final) {
-      // Penerimaan yang sudah tercatat dikunci di harga lama: jurnalnya tidak berubah ke belakang.
-      const oldPrice = Object.fromEntries(pc.items.map((c) => [c.itemId, c.oldPrice]));
-      receipts.filter((r) => r.lines.some((l) => oldPrice[l.itemId] != null && l.price == null)).forEach((r) => {
+      // Penerimaan yang sudah dijurnal tidak dibatalkan. Nilainya dikunci di harga lama, lalu
+      // qty yang belum difaktur diberi penyesuaian (qty × selisih harga) bertanggal hari ini.
+      // Dari situ terbentuk jurnal penyesuaian (priceAdjustJournal), dan faktur sesudahnya
+      // menutup Barang Diterima Belum Ditagih sebesar nilai yang sudah disesuaikan.
+      // Penerimaan yang belum disetujui belum dijurnal, jadi langsung memakai harga baru.
+      const change = Object.fromEntries(pc.items.map((c) => [c.itemId, c]));
+      receipts.filter((r) => receiptConfirmed(r) && r.lines.some((l) => change[l.itemId])).forEach((r) => {
+        const open = Object.fromEntries(uninvoicedLines(r, pb.invoices).map((l) => [l.itemId, l.open]));
         pb.update('receipts', r.id, (d) => ({
           ...d,
-          lines: d.lines.map((l) => (oldPrice[l.itemId] != null && l.price == null ? { ...l, price: oldPrice[l.itemId] } : l)),
+          lines: d.lines.map((l) => {
+            const c = change[l.itemId];
+            if (!c) return l;
+            const locked = l.price == null ? { ...l, price: c.oldPrice } : l;
+            if (!(open[l.itemId] > 0)) return locked;
+            const adj = { qty: open[l.itemId], from: c.oldPrice, to: c.price, delta: c.price - c.oldPrice, at: TODAY, ref: po.number };
+            return { ...locked, priceAdjs: [...(l.priceAdjs ?? []), adj] };
+          }),
         }));
       });
     }

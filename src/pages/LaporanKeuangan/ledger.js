@@ -8,7 +8,7 @@ import { accounts } from '@/pages/DaftarAkun/accounts.js';
 import { moveJournal } from '@/pages/Gudang/journal.js';
 import { formatHash as gudangHash } from '@/pages/Gudang/routes.js';
 import { listMoves, MOVE_TYPE } from '@/pages/Gudang/stock.js';
-import { invoiceJournal as pbInvoiceJournal, invoiceReversal, receiptJournal, refundJournal, returnJournal, voucherJournal } from '@/pages/Pembelian/journal.js';
+import { invoiceJournal as pbInvoiceJournal, invoiceReversal, priceAdjustJournals, receiptJournal, refundJournal, returnJournal, voucherJournal } from '@/pages/Pembelian/journal.js';
 import { formatHash as pembelianHash } from '@/pages/Pembelian/routes.js';
 import { isDpInvoice, receiptConfirmed } from '@/pages/Pembelian/utils.js';
 import { saleJournals } from '@/pages/Penjualan/journal.js';
@@ -75,6 +75,19 @@ function pembelianEntries(rawPb, ctx) {
       href: pembelianHash({ name: 'receipt', id: r.id }),
       lines: receiptJournal(r, pb, ctx),
     }));
+    // Penyesuaian harga sesudah penerimaan (ubah harga PO disetujui): jurnal terpisah
+    // bertanggal approval, merujuk penerimaannya.
+    priceAdjustJournals(r, pb, ctx).forEach((g, i) => {
+      list.push(entry({
+        id: `pb-adj-${r.id}-${i}`,
+        module: 'Pembelian',
+        date: g.date,
+        title: 'Penyesuaian harga penerimaan',
+        ref: `${r.number} · ${g.ref}`,
+        href: pembelianHash({ name: 'receipt', id: r.id }),
+        lines: g.lines,
+      }));
+    });
   });
   // Faktur yang dibatalkan tetap dijurnal di tanggalnya, lalu dibalik di tanggal pembatalan,
   // supaya laporan periode sebelum pembatalan tidak berubah. Faktur batal lama yang tidak

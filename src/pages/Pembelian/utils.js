@@ -245,6 +245,12 @@ export const uninvoicedLines = (receipt, invoices) =>
       .map((l) => ({ ...l, open: l.qty - invoicedQty(receipt.id, l.itemId, invoices) }))
       .filter((l) => l.open > 0);
 
+// Penyesuaian harga per unit yang sudah dijurnal untuk satu baris penerimaan: harga terakhir
+// hasil ubah harga PO dikurangi harga terkunci di BAPP/FPB. Baris faktur berikutnya membawa angka
+// ini supaya jurnal penutupnya menutup Belum Ditagih pas, tanpa baris selisih.
+export const receiptPriceAdj = (line) =>
+  line?.price != null && line.priceAdjs?.length ? line.priceAdjs.at(-1).to - line.price : 0;
+
 // --- Faktur -----------------------------------------------------------------------------------
 // Faktur manual: ditagih vendor tanpa bersandar pada FPB/BAPP. Barisnya menyimpan deskripsi
 // sendiri (tanpa receiptId / itemId), jadi tidak mengurangi sisa penerimaan mana pun dan tidak

@@ -10,7 +10,7 @@ import { useData } from '@/lib/store.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
 import JournalCard from './JournalCard.jsx';
 import ApprovalLog, { chainSteps, legacyLog } from './ApprovalLog.jsx';
-import { receiptJournal } from './journal.js';
+import { priceAdjustJournals, receiptJournal } from './journal.js';
 import AttachmentList from './Attachments.jsx';
 import { downloadReceipt } from './receiptPdf.js';
 import { toast } from './usePb.js';
@@ -303,6 +303,16 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go, openDialog }
               onDetail={() => go({ name: 'journal', kind: 'receipt', id: r.id })}
               empty={confirmed ? 'Penerimaan ini tidak bernilai, jadi tidak membentuk jurnal.' : `Jurnal terbentuk setelah ${docName} disetujui penuh.`}
             />
+            {/* Ubah harga PO yang disetujui sesudah penerimaan ini: BAPP/FPB tetap, nilainya
+                disesuaikan lewat jurnal terpisah. */}
+            {confirmed && priceAdjustJournals(r, pb, { stockMoves, products }).map((g) => (
+              <JournalCard
+                key={`${g.date}-${g.ref}`}
+                title="Jurnal penyesuaian harga"
+                lines={g.lines}
+                description={g.kind === 'batal' ? `Faktur ${g.ref} dibatalkan ${formatDate(g.date)}, qty-nya ikut harga baru` : `Ubah harga ${g.ref} disetujui ${formatDate(g.date)}`}
+              />
+            ))}
             <PurchaseFlow pb={pb} go={go} current={{ kind: 'receipt', id: r.id }} />
           </Stack>
         </Grid.Col>

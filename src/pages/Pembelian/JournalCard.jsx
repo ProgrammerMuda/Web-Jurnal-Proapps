@@ -6,13 +6,13 @@ import { Section } from './components.jsx';
 import { journalTotals } from './journal.js';
 import { rupiah } from './utils.js';
 
-export default function JournalCard({ lines, description, onDetail, empty }) {
+export default function JournalCard({ lines, description, onDetail, empty, title = 'Jurnal Transaksi' }) {
   return (
     <Section
       divided
       flush
       icon={Calculator}
-      title="Jurnal Transaksi"
+      title={title}
       description={description}
       right={lines?.length > 0 && onDetail ? (
         <Button size="compact-xs" radius="md" variant="light" onClick={onDetail}>Lihat detail</Button>

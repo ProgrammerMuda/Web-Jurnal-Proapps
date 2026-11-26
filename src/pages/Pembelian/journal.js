@@ -147,6 +147,31 @@ function receiptLineEntry(receipt, line, po, ctx) {
   return { lines: [dr(akun, nilai, memo), cr(AKUN.belumDitagih, nilai, memo)], unitCredit: unit, vatCapitalized: false };
 }
 
+// Penyesuaian harga penerimaan: ubah harga PO disetujui sesudah BAPP/FPB dijurnal. BAPP/FPB
+// tidak dibatalkan; qty yang belum difaktur saat approval dinilai ulang dengan jurnal terpisah
+// bertanggal approval. Jasa dan barang yang tidak dilacak stoknya ke akun bebannya; barang
+// stok ke Penyesuaian Persediaan, karena nilai stok di Gudang tidak ikut dinilai ulang.
+// Satu jurnal per penerimaan per pengajuan (tanggal + nomor PO).
+export function priceAdjustJournals(receipt, pb, ctx = {}) {
+  const po = pb.posById?.[receipt.poId];
+  const groups = new Map();
+  for (const l of receipt.lines) {
+    const item = po?.items.find((i) => i.id === l.itemId);
+    const product = productOfItem(ctx.products, item ?? { desc: l.desc });
+    const akun = item?.kind === 'jasa' || !product?.tracked ? expenseOf(product) : AKUN.selisih;
+    for (const a of l.priceAdjs ?? []) {
+      const key = `${a.at}|${a.ref}`;
+      if (!groups.has(key)) groups.set(key, { date: a.at, ref: a.ref, kind: a.kind ?? 'ubah', lines: [] });
+      const v = r(a.qty * a.delta);
+      const memo = `${item?.desc ?? 'Item'} · ${a.qty} ${item?.unit ?? ''} × ${a.delta > 0 ? '+' : '−'}${rupiah(Math.abs(a.delta))}`.replace(/\s+×/, ' ×');
+      const g = groups.get(key);
+      if (v > 0) g.lines.push(dr(akun, v, memo), cr(AKUN.belumDitagih, v, memo));
+      if (v < 0) g.lines.push(dr(AKUN.belumDitagih, -v, memo), cr(akun, -v, memo));
+    }
+  }
+  return [...groups.values()].map((g) => ({ ...g, lines: finish(g.lines, { byMemo: true }) })).filter((g) => g.lines.length);
+}
+
 export function receiptJournal(receipt, pb, ctx = {}) {
   if (!receipt) return [];
   const po = pb.posById?.[receipt.poId];
@@ -207,7 +232,10 @@ export function invoiceJournal(inv, pb, ctx = {}) {
       // Tutup Belum Ditagih sebesar yang dulu dikreditkan penerimaannya untuk qty ini.
       const rl = receipt.lines.find((x) => x.itemId === l.itemId);
       const e = rl ? receiptLineEntry(receipt, rl, po, ctx) : null;
-      const tutup = e ? e.unitCredit * l.qty : dpp;
+      // `priceAdj`: penyesuaian harga per unit yang sudah dijurnal sebelum faktur ini dicatat
+      // (ubah harga PO disetujui sesudah BAPP/FPB). Disimpan di baris faktur saat dibuat, jadi
+      // faktur lama tidak ikut berubah.
+      const tutup = e ? (e.unitCredit + (l.priceAdj ?? 0)) * l.qty : dpp;
       lines.push(dr(AKUN.belumDitagih, tutup, memo));
       didebit += tutup;
       // Harga faktur beda dari nilai penerimaan (mis. ubah harga PO): untuk jasa dan barang yang

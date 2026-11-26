@@ -56,6 +56,25 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
   const credit = cancelled ? 0 : vendorCredit(inv.vendorId, pb) + (inv.credit ?? 0);
   const cancelInvoice = (note) => {
     pb.update('invoices', inv.id, (d) => ({ ...d, cancelled: true, cancelledAt: TODAY, cancelNote: note, cancelledBy: personLabel(role) }));
+    // Qty yang kembali terbuka dicatat di faktur ini dengan harga sebelum ubah harga PO disetujui.
+    // Sekarang qty itu ikut harga baru, jadi nilainya disesuaikan di tanggal pembatalan supaya
+    // faktur ulangnya tetap menutup Belum Ditagih pas.
+    const byReceipt = Object.groupBy(inv.lines.filter((l) => l.receiptId && l.itemId), (l) => l.receiptId);
+    Object.entries(byReceipt).forEach(([rid, lines]) => {
+      const rec = pb.receiptsById[rid];
+      const rpo = rec && pb.posById[rec.poId];
+      if (!rpo) return;
+      pb.update('receipts', rid, (d) => ({ ...d, lines: d.lines.map((rl) => {
+        const it = rpo.items.find((i) => i.id === rl.itemId);
+        const done = lines.filter((l) => l.itemId === rl.itemId);
+        if (rl.price == null || !it || !done.length) return rl;
+        const adjs = done.map((l) => {
+          const paid = rl.price + (l.priceAdj ?? 0);
+          return { qty: l.qty, from: paid, to: it.price, delta: it.price - paid, at: TODAY, ref: inv.number, kind: 'batal' };
+        }).filter((a) => a.delta !== 0);
+        return adjs.length ? { ...rl, priceAdjs: [...(rl.priceAdjs ?? []), ...adjs] } : rl;
+      }) }));
+    });
     setCancelOpen(false);
     toast('Faktur dibatalkan. Qty-nya kembali terbuka untuk difaktur ulang.');
   };
