@@ -36,6 +36,7 @@ import {
   returnValue,
   RECEIPT_STATUS,
   receiptConfirmed,
+  receiptStatus,
   receiptPending,
   pvPaid,
   pvStatus,
@@ -44,6 +45,8 @@ import {
   sum,
   uninvoicedLines,
   dpState,
+  invoicedQtyOfPo,
+  poStatusMap,
 } from './utils.js';
 import { approvalState, canCreate, hidesPrices, isApproverTurn, prBlockedBySoD, receiptDoc, receiptKind, receiptName, signApproval } from './permissions.js';
 import { toast } from './usePb.js';
@@ -130,6 +133,14 @@ export default function ListTab({ tab, pb, go, openDialog }) {
     return 'Catat faktur uang muka';
   };
 
+  // Progres pesanan tanpa FPB/BAPP: tanpa ini kontrak berkala tertahan di "Menunggu tagihan"
+  // berbulan-bulan tanpa terlihat sudah sampai mana.
+  const billProgress = (p) => {
+    const done = p.items.filter((i) => invoicedQtyOfPo(p.id, i.id, pb.invoices) >= i.qty).length;
+    const unit = p.items.some((i) => i.slot) ? 'termin' : 'item';
+    return `${done} dari ${p.items.length} ${unit} ditagih`;
+  };
+
   if (tab === 'orders') {
     // Spesifikasi 2.1: Gudang tidak melihat harga.
     const noPrice = hidesPrices(role);
@@ -155,8 +166,9 @@ export default function ListTab({ tab, pb, go, openDialog }) {
               <Table.Td fz="sm" fw={600} c="slate.9">{vendor(p.vendorId)}</Table.Td>
               <Table.Td fz="sm">{formatDate(p.expectedAt)}</Table.Td>
               <Table.Td>
-                <StatusPill map={PO_STATUS} status={st} size="xs" />
+                <StatusPill map={poStatusMap(p)} status={st} size="xs" />
                 {st === 'menunggu_dp' && <Sub>{dpNextStep(p, dpState(p, pb.calc))}</Sub>}
+                {st === 'menunggu_tagihan' && <Sub>{billProgress(p)}</Sub>}
               </Table.Td>
               {!noPrice && <Table.Td><Money>{rupiah(poTotal(p))}</Money></Table.Td>}
               {!noPrice && <Table.Td><Money c={debt ? 'red.8' : 'slate.6'}>{rupiah(debt)}</Money></Table.Td>}
@@ -174,13 +186,14 @@ export default function ListTab({ tab, pb, go, openDialog }) {
   }
 
   if (tab === 'receipts') {
-    const rows = pb.receipts.filter((r) => match(q, r.number, vendor(r.vendorId), r.doNumber, pb.posById[r.poId]?.number));
+    const rows = pb.receipts.filter((r) => match(q, r.number, vendor(r.vendorId), r.doNumber, pb.posById[r.poId]?.number) && (!status || receiptStatus(r, pb.invoices) === status));
     return (
       <ListShell
         {...shell}
         noun="penerimaan"
         placeholder="Cari nomor, vendor, atau surat jalan..."
-        head={[{ label: 'Penerimaan & Tanggal' }, { label: 'Vendor' }, { label: 'Surat Jalan / BAPP' }, { label: 'Jumlah Diterima', align: 'right' }, { label: 'Faktur' }, { label: 'Aksi', align: 'right', w: 70 }]}
+        filters={statusFilter(RECEIPT_STATUS)}
+        head={[{ label: 'Penerimaan & Tanggal' }, { label: 'Vendor' }, { label: 'Surat Jalan / BAPP' }, { label: 'Jumlah Diterima', align: 'right' }, { label: 'Status' }, { label: 'Aksi', align: 'right', w: 70 }]}
         minWidth={940}
         empty={pb.receipts.length === 0 ? <EmptyState icon={Truck} title="Belum ada penerimaan" text="Penerimaan dicatat dari pesanan yang ada, saat barang sudah sampai atau pekerjaan sudah diserahterimakan." /> : undefined}
         rows={rows.map((r) => {
@@ -194,9 +207,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
               <Table.Td fz="sm" fw={600} c="slate.9">{vendor(r.vendorId)}</Table.Td>
               <Table.Td fz="sm">{r.doNumber}</Table.Td>
               <Table.Td><Money>{r.lines.reduce((n, l) => n + l.qty, 0)}</Money></Table.Td>
-              <Table.Td>{!receiptConfirmed(r)
-                ? <StatusPill map={RECEIPT_STATUS} status={r.status} size="xs" approval={{ doc: r, kind: receiptKind(r) }} />
-                : <Badge size="xs" radius="sm" variant="light" color={open ? 'orange' : 'green'} fw={700} tt="none">{open ? 'Belum difaktur' : 'Sudah difaktur'}</Badge>}</Table.Td>
+              <Table.Td><StatusPill map={RECEIPT_STATUS} status={receiptStatus(r, pb.invoices)} size="xs" approval={{ doc: r, kind: receiptKind(r) }} /></Table.Td>
               <Table.Td ta="right">
                 <RowMenu label={r.number} items={[
                   { label: 'Lihat Rincian', icon: Eye, onClick: () => go({ name: 'receipt', id: r.id }) },

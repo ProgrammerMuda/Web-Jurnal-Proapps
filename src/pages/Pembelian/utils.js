@@ -231,6 +231,12 @@ export const uninvoicedPoLines = (po, invoices) =>
 // Penerimaan baru bisa difaktur setelah terkonfirmasi. Data lama tanpa kolom status
 // dianggap sudah terkonfirmasi.
 export const receiptConfirmed = (r) => (r?.status ?? 'dikonfirmasi') === 'dikonfirmasi';
+// Kunci RECEIPT_STATUS untuk satu penerimaan: status approval selama belum sah,
+// lalu status penagihannya.
+export const receiptStatus = (r, invoices) => {
+  if (!receiptConfirmed(r)) return r.status;
+  return uninvoicedLines(r, invoices).length > 0 ? 'belum_difaktur' : 'sudah_difaktur';
+};
 export const uninvoicedLines = (receipt, invoices) =>
   !receiptConfirmed(receipt)
     ? []
@@ -1171,11 +1177,17 @@ export const INV_STATUS = {
   // ia akan terbaca "Belum dibayar" padahal memang tidak akan pernah dibayar.
   dibatalkan: { label: 'Dibatalkan', color: 'slate' },
 };
+// Status FPB/BAPP yang dilihat orang: satu siklus hidup, bukan status approval mentah.
+// "Dikonfirmasi" sendiri tidak pernah tampil, karena begitu sah pertanyaannya tinggal
+// sudah atau belum ditagih. Urutan kunci = urutan di filter.
 export const RECEIPT_STATUS = {
   draf: { label: 'Menunggu approval', color: 'orange', pending: true },
-  dikonfirmasi: { label: 'Dikonfirmasi', color: 'green' },
-  ditolak: { label: 'Ditolak', color: 'red' },
-  dibatalkan: { label: 'Dibatalkan', color: 'slate' },
+  ditolak: { label: 'Ditolak', color: 'red' }, // sama dengan penolakan approval di Payment Request
+  // Sudah sah, tinggal satu langkah (faktur): cyan, bukan oranye, supaya tidak tertukar
+  // dengan yang masih macet di approval.
+  belum_difaktur: { label: 'Belum difaktur', color: 'cyan' },
+  sudah_difaktur: { label: 'Sudah difaktur', color: 'green' },
+  dibatalkan: { label: 'Dibatalkan', color: 'slate', variant: 'outline' },
 };
 // Menunggu tanda tangan approver (bukan ditolak / dibatalkan).
 export const receiptPending = (r) => r?.status === 'draf';

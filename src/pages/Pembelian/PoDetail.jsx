@@ -19,12 +19,11 @@ import {
   formatDate,
   INV_STATUS,
   RECEIPT_STATUS,
-  receiptConfirmed,
+  receiptStatus,
   invStatus,
   invTotals,
   invoicedQty,
   invoicedQtyOfPo,
-  PO_STATUS,
   canReturn as canReturnInv,
   advancePct,
   advanceLabel,
@@ -57,6 +56,7 @@ import {
   isRetentionRelease,
   poRetention,
   retentionDocName,
+  poStatusMap,
 } from './utils.js';
 import { downloadPo } from './poPdf.js';
 import { toast } from './usePb.js';
@@ -221,7 +221,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               <Group gap="xs" wrap="wrap">
                 <Title order={2} fz={{ base: 20, md: 24 }} c="slate.9">{po.number}</Title>
                 <CopyIcon value={po.number} size={16} />
-                <StatusPill map={PO_STATUS} status={status} />
+                <StatusPill map={poStatusMap(po)} status={status} />
               </Group>
               <Text fz="sm" c="slate.6">{formatDate(po.date)}</Text>
               {po.note && <Text fz={11} c="teal.8" fw={600}>{po.note}</Text>}
@@ -413,7 +413,14 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                         )}
                       </>
                     ) : (
-                      <Text fz="sm" c="slate.6" component="span">Belum dikirim</Text>
+                      <Group gap={6} wrap="wrap">
+                        <Text fz="sm" c="slate.6" component="span">Belum dikirim</Text>
+                        {!closed && canCreate(role, 'po') && (
+                          <Button variant="subtle" size="compact-xs" radius="md" leftSection={<PaperPlaneTilt size={12} />} onClick={() => setSendOpen(true)}>
+                            Kirim ke vendor
+                          </Button>
+                        )}
+                      </Group>
                     ),
                   ],
                 ].map(([k, v], i, all) => (
@@ -493,18 +500,15 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
               {receipts.length === 0 ? (
                 <Text fz="xs" c="slate.6" p="lg">Belum ada penerimaan dicatat untuk {label} ini.</Text>
               ) : (
-                <DataTable bare head={[{ label: 'Nomor' }, { label: 'Tanggal' }, { label: poAllJasa(po) ? 'No. BAPP' : poAllBarang(po) ? 'No. surat jalan' : 'No. surat jalan / BAPP' }, { label: 'Diterima', align: 'right' }, { label: 'Faktur' }]} minWidth={520}>
+                <DataTable bare head={[{ label: 'Nomor' }, { label: 'Tanggal' }, { label: poAllJasa(po) ? 'No. BAPP' : poAllBarang(po) ? 'No. surat jalan' : 'No. surat jalan / BAPP' }, { label: 'Diterima', align: 'right' }, { label: 'Status' }]} minWidth={520}>
                   {receipts.map((r) => {
-                    const open = uninvoicedLines(r, pb.invoices).length > 0;
                     return (
                       <Table.Tr key={r.id}>
                         <Table.Td><DocNumber onClick={() => go({ name: 'receipt', id: r.id })}>{r.number}</DocNumber></Table.Td>
                         <Table.Td fz="sm" style={{ whiteSpace: 'nowrap' }}>{formatDate(r.date)}</Table.Td>
                         <Table.Td fz="sm">{r.doNumber}</Table.Td>
                         <Table.Td ta="right" fz="sm">{r.lines.reduce((n, l) => n + l.qty, 0)}</Table.Td>
-                        <Table.Td>{!receiptConfirmed(r)
-                          ? <StatusPill map={RECEIPT_STATUS} status={r.status} size="xs" approval={{ doc: r, kind: receiptKind(r) }} />
-                          : <Text fz="xs" c={open ? 'orange.8' : 'green.8'} fw={600}>{open ? 'Belum difaktur' : 'Sudah difaktur'}</Text>}</Table.Td>
+                        <Table.Td><StatusPill map={RECEIPT_STATUS} status={receiptStatus(r, pb.invoices)} size="xs" approval={{ doc: r, kind: receiptKind(r) }} /></Table.Td>
                       </Table.Tr>
                     );
                   })}

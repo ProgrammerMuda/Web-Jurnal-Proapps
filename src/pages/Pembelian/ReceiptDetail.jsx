@@ -14,7 +14,7 @@ import { receiptJournal } from './journal.js';
 import AttachmentList from './Attachments.jsx';
 import { downloadReceipt } from './receiptPdf.js';
 import { toast } from './usePb.js';
-import { dpBlockReason, dpState, DP_STATE, formatDate, INV_STATUS, invStatus, invTotals, invoicedQty, RECEIPT_STATUS, receiptConfirmed, rupiah, uninvoicedLines } from './utils.js';
+import { dpBlockReason, dpState, DP_STATE, formatDate, INV_STATUS, invStatus, invTotals, invoicedQty, RECEIPT_STATUS, receiptConfirmed, receiptStatus, rupiah, uninvoicedLines } from './utils.js';
 import { StatusPill } from './components.jsx';
 
 const th = { th: { fontSize: 'var(--mantine-font-size-xs)', fontWeight: 600, color: 'var(--mantine-color-slate-7)', whiteSpace: 'nowrap' } };
@@ -81,9 +81,7 @@ export default function ReceiptDetail({ receipt: r, pb, onBack, go, openDialog }
               <Group gap="xs" wrap="wrap">
                 <Title order={2} fz={{ base: 20, md: 24 }} c="slate.9">{r.number}</Title>
                 <CopyIcon value={r.number} size={16} />
-                {!confirmed
-                  ? <StatusPill map={RECEIPT_STATUS} status={r.status} approval={{ doc: r, kind }} />
-                  : <Badge size="sm" radius="sm" variant="light" color={open ? 'orange' : 'green'} fw={700} tt="none">{open ? 'Belum difaktur' : 'Sudah difaktur'}</Badge>}
+                <StatusPill map={RECEIPT_STATUS} status={receiptStatus(r, pb.invoices)} approval={{ doc: r, kind }} />
               </Group>
               <Text fz="sm" c="slate.6">{formatDate(r.date)}</Text>
             </Box>

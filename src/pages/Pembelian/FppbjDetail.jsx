@@ -38,11 +38,11 @@ import {
   iomFiles,
   requesterOf,
   routeLabel,
-  PO_STATUS,
   poDocLabel,
   poStatus,
   poSubtotal,
   rupiah,
+  poStatusMap,
 } from './utils.js';
 import { toast } from './usePb.js';
 
@@ -243,7 +243,7 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
                     <Table.Tr key={p.id}>
                       <Table.Td><DocNumber onClick={() => go({ name: 'po', id: p.id })}>{p.number}</DocNumber></Table.Td>
                       <Table.Td fz="sm">{vendor(p.vendorId)}</Table.Td>
-                      <Table.Td><StatusPill map={PO_STATUS} status={poStatus(p, pb.calc)} size="xs" /></Table.Td>
+                      <Table.Td><StatusPill map={poStatusMap(p)} status={poStatus(p, pb.calc)} size="xs" /></Table.Td>
                       <Table.Td ta="right" fz="sm" fw={700}>{rupiah(poSubtotal(p))}</Table.Td>
                     </Table.Tr>
                   ))}
