@@ -54,6 +54,7 @@ import {
   invoicedQtyOfPo,
   poStatusMap,
   reorderBlock,
+  priceChangePending,
   fppbjStatus,
 } from './utils.js';
 import { approvalState, canCreate, hidesPrices, isApproverTurn, prBlockedBySoD, receiptDoc, receiptKind, receiptName, signApproval } from './permissions.js';
@@ -151,13 +152,19 @@ export default function ListTab({ tab, pb, go, openDialog }) {
   if (tab === 'orders') {
     // Spesifikasi 2.1: Gudang tidak melihat harga.
     const noPrice = hidesPrices(role);
-    const rows = pb.pos.filter((p) => match(q, p.number, vendor(p.vendorId)) && (!status || poStatus(p, pb.calc) === status));
+    // "Menunggu ubah harga" bukan status PO, tapi ikut di filter supaya PO yang fakturnya
+    // ditahan bisa dicari dari daftar.
+    const statusOk = (p) => !status || (status === 'ubah_harga' ? priceChangePending(p) : poStatus(p, pb.calc) === status);
+    const rows = pb.pos.filter((p) => match(q, p.number, vendor(p.vendorId)) && statusOk(p));
     return (
       <ListShell
         {...shell}
         noun="pesanan"
         placeholder="Cari nomor atau vendor..."
-        filters={statusFilter(PO_STATUS)}
+        filters={
+          <Select size="sm" radius="md" w={220} clearable placeholder="Semua status" value={status} onChange={reset(setStatus)}
+            data={[...statusOptions(PO_STATUS), { value: 'ubah_harga', label: 'Menunggu ubah harga' }]} />
+        }
         head={[{ label: 'Nomor & Tanggal' }, { label: 'Vendor' }, { label: 'Perkiraan Tiba' }, { label: 'Status' }, ...(noPrice ? [] : [{ label: 'Nilai', align: 'right' }, { label: 'Hutang ke Vendor', align: 'right' }]), { label: 'Aksi', align: 'right', w: 70 }]}
         minWidth={1000}
         empty={pb.pos.length === 0 ? <EmptyState icon={ShoppingCart} title="Belum ada pesanan" text="PO (barang) dan SPK (jasa) dibuat dari permintaan yang pengadaannya sudah disetujui." /> : undefined}
@@ -174,7 +181,10 @@ export default function ListTab({ tab, pb, go, openDialog }) {
               <Table.Td fz="sm" fw={600} c="slate.9">{vendor(p.vendorId)}</Table.Td>
               <Table.Td fz="sm">{formatDate(p.expectedAt)}</Table.Td>
               <Table.Td>
-                <StatusPill map={poStatusMap(p)} status={st} size="xs" />
+                <Group gap={4} wrap="wrap">
+                  <StatusPill map={poStatusMap(p)} status={st} size="xs" />
+                  {priceChangePending(p) && <Badge size="xs" radius="sm" variant="light" color="orange" fw={700} tt="none">Ubah harga diajukan</Badge>}
+                </Group>
                 {st === 'menunggu_dp' && <Sub>{dpNextStep(p, dpState(p, pb.calc))}</Sub>}
                 {st === 'menunggu_tagihan' && <Sub>{billProgress(p)}</Sub>}
               </Table.Td>

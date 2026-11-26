@@ -303,6 +303,8 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                 <Title order={2} fz={{ base: 20, md: 24 }} c="slate.9">{po.number}</Title>
                 <CopyIcon value={po.number} size={16} />
                 <StatusPill map={poStatusMap(po)} status={status} />
+                {/* Status utama tetap posisi barangnya; ubah harga yang menahan faktur ditandai terpisah. */}
+                {pcPending && <Badge size="sm" radius="sm" variant="light" color="orange" fw={700} tt="none">Ubah harga diajukan</Badge>}
               </Group>
               <Text fz="sm" c="slate.6">{formatDate(po.date)}</Text>
               {po.note && <Text fz={11} c="teal.8" fw={600}>{po.note}</Text>}

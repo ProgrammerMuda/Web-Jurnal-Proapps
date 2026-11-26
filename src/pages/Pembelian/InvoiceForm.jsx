@@ -610,6 +610,15 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
   // Satu sumber angka dengan detail faktur dan jurnalnya: potongan DP, PPN atas sisa,
   // retensi, dan PPh atas nilai yang dibayar dihitung oleh invTotals.
   const draftTotals = invTotals({ ...draft }, { pos: pb.pos, prs: pb.prs, returns: [], invoices: pb.invoices });
+  // Total yang dibandingkan dengan invoice vendor bila sebagian harga diganti (modal ubah harga).
+  // Rumusnya sama dengan total di atas: potongan DP, PPN, retensi, dan PPh ikut dihitung.
+  const totalWith = (priceByKey) => invTotals({
+    ...draft,
+    lines: draft.lines.map((l) => {
+      const p = priceByKey[`${l.poId}:${l.itemId}`];
+      return p != null ? { ...l, price: p } : l;
+    }),
+  }, { pos: pb.pos, prs: pb.prs, returns: [], invoices: pb.invoices }).total;
   const dpp = draftTotals.dpp;
   const ppn = draftTotals.ppn;
   const retensi = draftTotals.retensi;
@@ -1132,7 +1141,8 @@ export default function InvoiceForm({ pb, initialReceiptIds = [], initialPoId = 
           lines={activeLines}
           vendorNo={vendorNo}
           file={inv}
-          vendorGap={selisihVendor}
+          vendorTotal={vendorTotal}
+          totalWith={totalWith}
           onSent={() => setPriceOpen(false)}
         />
       )}
