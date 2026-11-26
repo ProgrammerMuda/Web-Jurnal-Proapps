@@ -1,7 +1,7 @@
 // Potongan kartu halaman Ringkasan (Pembelian dan Penjualan), supaya kedua modul terbaca dan
 // terasa sama. Angka diberikan sudah berformat oleh pemanggil; komponen ini hanya menata.
-import { Avatar, Box, Button, Card, Group, Progress, SimpleGrid, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
-import { ArrowRight, CaretRight } from '@/components/Icon.jsx';
+import { Box, Button, Card, Group, Progress, SimpleGrid, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
+import { ArrowRight, CaretRight, User } from '@/components/Icon.jsx';
 import classes from './overview.module.css';
 
 const tabular = { fontVariantNumeric: 'tabular-nums' };
@@ -150,7 +150,8 @@ export function FlowCard({ title, text, steps }) {
 }
 
 // Porsi per pihak (vendor / pelanggan) dengan bar. rows: [{ id, name, value, display, sub }].
-export function ShareList({ rows, total, onClick, limit = 5 }) {
+// icon: ikon pihak (default orang/pelanggan).
+export function ShareList({ rows, total, onClick, limit = 5, icon: Icon = User }) {
   return (
     <Stack gap={4} mt="sm">
       {rows.slice(0, limit).map((v) => {
@@ -158,7 +159,9 @@ export function ShareList({ rows, total, onClick, limit = 5 }) {
         return (
           <UnstyledButton key={v.id} onClick={() => onClick?.(v)} className={classes.row} px={8} py={8} mx={-8}>
             <Group wrap="nowrap" gap="sm" align="center">
-              <Avatar size={30} radius="md" color="gray" variant="light" fz={11}>{initials(v.name)}</Avatar>
+              <ThemeIcon size={30} radius="md" color="gray" variant="light">
+                <Icon size={16} />
+              </ThemeIcon>
               <Box style={{ minWidth: 0, flex: 1 }}>
                 <Group justify="space-between" wrap="nowrap" gap="xs">
                   <Text fz="xs" fw={600} c="slate.9" truncate>{v.name}</Text>
@@ -168,7 +171,7 @@ export function ShareList({ rows, total, onClick, limit = 5 }) {
                   <Text fz={11} c={v.alert ? 'red.7' : 'slate.6'} truncate>{v.sub}</Text>
                   <Text fz={11} c="slate.6">{pct}%</Text>
                 </Group>
-                <Progress value={pct} size={4} radius="xl" color="slate.7" mt={6} bg="gray.1" />
+                <Progress value={pct} size={4} radius="xl" color="primary.9" mt={6} bg="gray.1" />
               </Box>
             </Group>
           </UnstyledButton>

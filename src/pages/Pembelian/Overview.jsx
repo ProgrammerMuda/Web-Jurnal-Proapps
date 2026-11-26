@@ -1,7 +1,7 @@
 // Tab Ringkasan: kartu hutang, pipeline, "Perlu tindakan" per peran, umur hutang.
 import { useState } from 'react';
 import { Badge, Box, Button, Card, Grid, Group, Pagination, Progress, SegmentedControl, SimpleGrid, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
-import { CheckCircle, ListChecks, Truck, Wallet, Warning } from '@/components/Icon.jsx';
+import { CheckCircle, ListChecks, Storefront, Truck, Wallet, Warning } from '@/components/Icon.jsx';
 import { CardTitle, CompareBars, CompositionCard, FlowCard, Legend, QueueCard, Quiet, ShareList } from '@/components/overview.jsx';
 import { Callout, RoleChip } from './components.jsx';
 import { actionsFor, aging, daysLate, debtByVendor, dueSoon, pipeline, procurementMix, purchasesInMonth, readiness, unbilled, vendorClaims } from './selectors.js';
@@ -290,6 +290,7 @@ export default function Overview({ pb, go, openDialog }) {
                 <ShareList
                   rows={perVendor.map((v) => ({ ...v, display: rupiahShort(v.value), sub: `${v.count} faktur` }))}
                   total={debt}
+                  icon={Storefront}
                   onClick={() => go({ name: 'tab', tab: 'payables' })}
                 />
               )}
