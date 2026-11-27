@@ -44,7 +44,7 @@ import {
 import { customerCredit } from './returns.js';
 import { formatHash } from './routes.js';
 import { toast, useSaleActions } from './saleActions.jsx';
-import { canPay, formatDate, formatDateTime, lastSend, rupiah, rupiahShort } from './utils.js';
+import { canPay, formatDate, formatDateTime, lastSend, lateFeePolicy, lateFeeQuote, rupiah, rupiahShort } from './utils.js';
 
 const go = (v) => {
   window.location.hash = formatHash(v);
@@ -256,7 +256,7 @@ export default function Piutang({ onNavigate }) {
       canPay(r.sale) && { label: 'Terima pembayaran', icon: Wallet, onClick: () => setDialog({ type: 'pay', id: r.sale.id }) },
       { label: 'Kirim pengingat', icon: EnvelopeSimple, onClick: () => setDialog({ type: 'remind', id: r.sale.id }) },
       { label: 'Salin tautan pembayaran', icon: Link, onClick: () => copyLink(r.sale.id) },
-      r.late > 0 && { label: 'Buat faktur denda', icon: Warning, onClick: () => go({ name: 'sale-new', from: `late:${r.sale.id}` }) },
+      lateFeeQuote(r.sale, sales, lateFeePolicy(contactsById[r.sale.customerId])).amount > 0 && { label: 'Buat faktur denda', icon: Warning, onClick: () => go({ name: 'sale-new', from: `late:${r.sale.id}` }) },
       { label: 'Lihat jurnal', icon: Notebook, onClick: () => setDialog({ type: 'journal', id: r.sale.id }) },
     ],
   };

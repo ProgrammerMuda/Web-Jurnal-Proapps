@@ -4,7 +4,9 @@ import { accounts } from '@/pages/DaftarAkun/accounts.js';
 import { salesView as products } from '@/pages/Produk/catalog.js';
 
 // Tanggal "hari ini" prototype mengikuti tanggal di header aplikasi.
-export const TODAY = '2026-11-04';
+export const TODAY = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('ruang') === 'tim'
+  ? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jakarta' }).format(new Date())
+  : '2026-11-04';
 
 // Daftar produk yang dijual. Isinya BUKAN lagi daftar tetap: ini "tampilan jual" dari
 // master Produk & Jasa (src/pages/Produk/catalog.js) yang ditulis ulang di tempat setiap
@@ -17,8 +19,19 @@ export { products };
 // di dalamnya. Nantinya diambil dari menu Tutup Buku; sementara dikunci di sini.
 export const CLOSED_BEFORE = '2026-10-01';
 
-// #29: denda keterlambatan per bulan dari sisa tagihan. Nantinya diatur di Pengaturan.
-export const LATE_FEE_RATE = 0.02;
+// #29: aturan denda keterlambatan bawaan. Tiap pelanggan bisa punya aturan sendiri sesuai
+// kontraknya (Kontak → Pemetaan Akun). Nantinya bawaan ini diatur di Pengaturan.
+//   rate  : persen per periode (basis)
+//   basis : 'month' = per bulan, dihitung harian (tarif / 30 per hari); 'day' = per hari
+//   grace : masa tenggang (hari). Porsi yang dilunasi dalam masa tenggang tidak didenda;
+//           lewat dari itu, denda dihitung sejak tanggal jatuh tempo.
+export const LATE_FEE_DEFAULT = { rate: 2, basis: 'month', grace: 7 };
+export const LATE_FEE_BASIS = [
+  { value: 'month', label: 'per bulan' },
+  { value: 'day', label: 'per hari' },
+];
+// Siapa yang menyetujui penghapusan denda (peran di "Lihat sebagai").
+export const LATE_FEE_WAIVER_APPROVER = 'cfo';
 export const periodLocked = (date) => !!date && date < CLOSED_BEFORE;
 export const lockedMessage = (date) =>
   `Periode ${new Date(date).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })} sudah ditutup`;

@@ -8,6 +8,7 @@ import {
   Group,
   Modal,
   MultiSelect,
+  SegmentedControl,
   Select,
   SimpleGrid,
   Stack,
@@ -35,6 +36,7 @@ import {
   UserPlus,
 } from '@/components/Icon.jsx';
 import { useData } from '@/lib/store.jsx';
+import { LATE_FEE_BASIS, LATE_FEE_DEFAULT } from '@/pages/Penjualan/data.js';
 import {
   apAccounts,
   arAccounts,
@@ -544,7 +546,80 @@ function MappingTab({ form, set }) {
           />
         </SimpleGrid>
       </Box>
+      <LateFeeBox form={form} set={set} />
     </Stack>
+  );
+}
+
+// #29: aturan denda keterlambatan pelanggan ini, sesuai kontraknya. Tanpa pengaturan
+// khusus, faktur memakai aturan bawaan.
+function LateFeeBox({ form, set }) {
+  const lf = form.lateFee ?? { mode: 'default' };
+  const mode = lf.mode ?? 'default';
+  const val = mode === 'custom' ? { ...LATE_FEE_DEFAULT, ...lf } : LATE_FEE_DEFAULT;
+  const patch = (p) => set({ lateFee: { ...LATE_FEE_DEFAULT, ...lf, mode: 'custom', ...p } });
+  const basisLabel = LATE_FEE_BASIS.find((b) => b.value === LATE_FEE_DEFAULT.basis)?.label;
+  return (
+    <Box p="sm" style={boxStyle}>
+      <Text fz="xs" fw={700} c="primary.9" mb={4}>
+        Denda Keterlambatan
+      </Text>
+      <Text fz="xs" c="slate.7" mb="xs">
+        Ikuti klausul denda di kontrak pelanggan. Denda dihitung harian sejak jatuh tempo bila
+        pembayaran lewat dari masa tenggang.
+      </Text>
+      <SegmentedControl
+        size="xs"
+        radius="md"
+        mb="sm"
+        value={mode}
+        onChange={(m) => set({ lateFee: m === 'default' ? null : m === 'none' ? { mode: 'none' } : { ...LATE_FEE_DEFAULT, mode: 'custom' } })}
+        data={[
+          { value: 'default', label: 'Aturan bawaan' },
+          { value: 'custom', label: 'Sesuai kontrak' },
+          { value: 'none', label: 'Tanpa denda' },
+        ]}
+      />
+      {mode === 'default' && (
+        <Text fz="xs" c="slate.7">
+          {String(LATE_FEE_DEFAULT.rate).replace('.', ',')}% {basisLabel}, masa tenggang {LATE_FEE_DEFAULT.grace} hari.
+        </Text>
+      )}
+      {mode === 'none' && <Text fz="xs" c="slate.7">Faktur pelanggan ini tidak dikenai denda keterlambatan.</Text>}
+      {mode === 'custom' && (
+        <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
+          <NumberField
+            label="Tarif denda"
+            radius="md"
+            min={0}
+            max={100}
+            decimalScale={3}
+            decimalSeparator=","
+            rightSection={<Text fz="xs" c="slate.6">%</Text>}
+            value={val.rate}
+            onChange={(v) => patch({ rate: Number(v) || 0 })}
+          />
+          <Select
+            label="Dihitung"
+            radius="md"
+            allowDeselect={false}
+            data={LATE_FEE_BASIS}
+            value={val.basis}
+            onChange={(v) => patch({ basis: v })}
+          />
+          <NumberField
+            label="Masa tenggang (hari)"
+            radius="md"
+            min={0}
+            max={90}
+            decimalScale={0}
+            allowNegative={false}
+            value={val.grace}
+            onChange={(v) => patch({ grace: Number(v) || 0 })}
+          />
+        </SimpleGrid>
+      )}
+    </Box>
   );
 }
 

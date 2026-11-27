@@ -43,7 +43,7 @@ import { toast, useSaleActions } from './saleActions.jsx';
 import SaleDetail from './SaleDetail.jsx';
 import { downloadInvoice } from './invoicePdf.js';
 import { formatHash } from './routes.js';
-import { initialSale, paymentTerms, products } from './data.js';
+import { initialSale, LATE_FEE_WAIVER_APPROVER, paymentTerms, products } from './data.js';
 import { canReturnInvoice, customerCredit } from './returns.js';
 import { PAYMENT_VOID_REASONS, releaseCredit, voidPayment } from './payments.js';
 import { saleJournals } from './journal.js';
@@ -63,12 +63,18 @@ import {
   logActivity,
   nextInvoiceNumber,
   isOverdue,
+  lateFeeInvoicesOf,
+  lateFeePolicy,
+  lateFeeQuote,
   nowIso,
   rupiah,
   rupiahShort,
   statusOf,
   useCustomer,
+  waiverPending,
 } from './utils.js';
+import { personLabel } from '@/pages/Pembelian/data.js';
+import { roleLabel } from '@/pages/Pembelian/permissions.js';
 import { useData } from '@/lib/store.jsx';
 import { ListShell, TabBar } from '@/pages/Pembelian/components.jsx';
 import { canBeInvoiced, formatAddress, toCustomer } from '@/pages/Kontak/utils.js';
@@ -102,6 +108,15 @@ const statusFilters = [
 ];
 
 // #8: alasan pembatalan dibuat tetap supaya bisa dihitung, bukan teks bebas.
+// Alasan umum penghapusan denda keterlambatan.
+const WAIVE_REASONS = [
+  'Keterlambatan karena kendala dari pihak kami',
+  'Kebijakan untuk pelanggan utama',
+  'Hasil negosiasi dengan pelanggan',
+  'Nilai denda terlalu kecil untuk ditagih',
+  'Lainnya',
+];
+
 const VOID_REASONS = [
   'Salah terbit',
   'Salah pelanggan',
@@ -282,7 +297,7 @@ function SaleRow({ sale, onOpen, onPay, onCreateLink, actions }) {
             >
               Duplikat Faktur
             </Menu.Item>
-            {isOverdue(sale) && (
+            {actions.lateFeeOf(sale).amount > 0 && (
               <Menu.Item
                 fz="xs"
                 leftSection={<Warning size={14} />}
@@ -333,7 +348,7 @@ function SaleRow({ sale, onOpen, onPay, onCreateLink, actions }) {
 // Tab "Faktur Penjualan". Dipasang oleh shell modul (Penjualan.jsx).
 // params (dari halaman lain): { saleId } membuka rincian, { createFor } membuka form untuk kontak itu.
 export default function Invoices({ params }) {
-  const { sales, setSales, orders, quotes, contacts, contactsById, salesReturns, setSalesReturns } =
+  const { sales, setSales, orders, quotes, contacts, contactsById, salesReturns, setSalesReturns, pbRole } =
     useData();
   // Faktur yang sedang dibuka ditentukan alamat halaman, bukan state lokal.
   const detailId = params?.saleId ?? null;
@@ -413,6 +428,37 @@ export default function Invoices({ params }) {
 
   // #29: denda ditagih lewat faktur tersendiri supaya nilainya terpisah dari pokok.
   const toLateFeeInvoice = (sale) => goForm({ name: 'sale-new', from: `late:${sale.id}` });
+  // Denda yang belum ditagih atas satu faktur, menurut aturan kontrak pelanggannya.
+  const lateFeeOf = (sale) => lateFeeQuote(sale, sales, lateFeePolicy(contactsById[sale.customerId]));
+  const me = personLabel(pbRole);
+  const requestWaiver = (sale, reason) => {
+    updateSale(sale.id, (s) =>
+      logActivity({ ...s, waiver: { status: 'diajukan', reason, by: me, role: pbRole, at: nowIso() } }, 'waiverRequested', reason, me),
+    );
+    closeDialog();
+    toast('Penghapusan denda diajukan', `${sale.number} menunggu persetujuan ${roleLabel(LATE_FEE_WAIVER_APPROVER)}.`);
+  };
+  const decideWaiver = (sale, ok, note = '') => {
+    updateSale(sale.id, (s) => {
+      const waiver = { ...s.waiver, status: ok ? 'disetujui' : 'ditolak', decidedBy: me, decidedRole: pbRole, decidedAt: nowIso(), note };
+      const next = ok
+        ? { ...s, waiver, cancelledAt: nowIso(), cancelReason: `Denda dihapuskan — ${s.waiver.reason}` }
+        : { ...s, waiver };
+      return logActivity(next, ok ? 'waived' : 'waiverRejected', note, me);
+    });
+    closeDialog();
+    toast(
+      ok ? 'Denda dihapuskan' : 'Penghapusan denda ditolak',
+      ok ? `${sale.number} tidak lagi ditagih; jurnalnya dibalik.` : `${sale.number} tetap ditagih.`,
+      ok ? undefined : 'red',
+    );
+  };
+  // Approver penghapusan denda: peran yang ditetapkan, atau Superadmin. Pengaju tidak
+  // boleh memutuskan pengajuannya sendiri.
+  const canDecideWaiver = (sale) =>
+    waiverPending(sale)
+    && (pbRole === LATE_FEE_WAIVER_APPROVER || pbRole === 'superadmin')
+    && (pbRole === 'superadmin' || sale.waiver.by !== me);
 
   const deleteSale = (sale) => {
     setSales((list) => list.filter((s) => s.id !== sale.id));
@@ -488,6 +534,14 @@ export default function Invoices({ params }) {
     journal: (sale) => setDialog({ type: 'journal', id: sale.id }),
     void: (sale) => setDialog({ type: 'void', id: sale.id }),
     lateFee: toLateFeeInvoice,
+    lateFeeOf,
+    lateFeeInvoices: (sale) => lateFeeInvoicesOf(sales, sale.id),
+    lateFeePolicy: (sale) => lateFeePolicy(contactsById[sale.customerId]),
+    open: (id) => goForm({ name: 'invoice', id }),
+    requestWaiver: (sale) => setDialog({ type: 'waive', id: sale.id }),
+    approveWaiver: (sale) => decideWaiver(sale, true),
+    rejectWaiver: (sale) => setDialog({ type: 'waive-reject', id: sale.id }),
+    canDecideWaiver,
     // Retur punya formnya sendiri; fakturnya dibawa lewat rute, bukan state lokal.
     makeReturn: (sale) => goForm({ name: 'return-new', from: `invoice:${sale.id}` }),
     // B3: index pembayaran dipakai sebagai kuncinya, karena pembayaran tidak punya id.
@@ -590,6 +644,29 @@ export default function Invoices({ params }) {
           confirmLabel="Batalkan faktur"
           onClose={closeDialog}
           onConfirm={(reason) => voidSale(dialogSale, reason)}
+        />
+      )}
+      {dialogSale && dialog.type === 'waive' && (
+        <ReasonModal
+          title="Ajukan penghapusan denda"
+          subtitle={`${dialogSale.number} · ${rupiah(computeTotals(dialogSale).total)}. Disetujui ${roleLabel(LATE_FEE_WAIVER_APPROVER)}; setelah itu faktur denda berhenti menagih dan jurnalnya dibalik.`}
+          label="Alasan penghapusan"
+          options={WAIVE_REASONS}
+          confirmLabel="Ajukan penghapusan"
+          color="primary"
+          onClose={closeDialog}
+          onConfirm={(reason) => requestWaiver(dialogSale, reason)}
+        />
+      )}
+      {dialogSale && dialog.type === 'waive-reject' && (
+        <ReasonModal
+          title="Tolak penghapusan denda"
+          subtitle={`${dialogSale.number} tetap ditagih ke pelanggan.`}
+          label="Alasan penolakan"
+          options={['Tidak sesuai kebijakan', 'Pelanggan sering terlambat', 'Lainnya']}
+          confirmLabel="Tolak penghapusan"
+          onClose={closeDialog}
+          onConfirm={(note) => decideWaiver(dialogSale, false, note)}
         />
       )}
       {dialogSale && dialog.type === 'void-payment' && (

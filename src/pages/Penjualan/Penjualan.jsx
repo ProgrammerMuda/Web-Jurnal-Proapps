@@ -37,19 +37,25 @@ import {
 } from './quotes.js';
 import { formatHash, parseHash } from './routes.js';
 import { formatAddress } from '@/pages/Kontak/utils.js';
-import { LATE_FEE_RATE, paymentTerms, TODAY } from './data.js';
+import { paymentTerms, TODAY } from './data.js';
 import {
   addDays,
   canEdit,
-  lateFeeAmount,
+  formatDate,
+  lateFeePolicy,
+  lateFeePolicyLabel,
+  lateFeeQuote,
   nextInvoiceNumber,
   nowIso,
   numberTaken,
 } from './utils.js';
 
-// #29: isian faktur denda — satu baris denda, nilainya dari sisa tagihan yang telat.
-function lateFeePrefill(sale) {
-  const { bulan, amount } = lateFeeAmount(sale, LATE_FEE_RATE);
+// #29: isian faktur denda — satu baris denda atas periode yang belum ditagih. Faktur ini
+// mencatat faktur asal dan periodenya (`lateFeeFor`) supaya periode yang sama tidak
+// ditagih dua kali.
+function lateFeePrefill(sale, quote) {
+  const { amount, days, from, until, policy } = quote;
+  const periode = `${formatDate(from)} – ${formatDate(until)}`;
   return {
     customerId: sale.customerId,
     unit: sale.unit,
@@ -60,13 +66,14 @@ function lateFeePrefill(sale) {
     items: [
       {
         productId: 'denda',
-        description: `Denda ${bulan} bulan atas ${sale.number} (jatuh tempo ${sale.dueDate})`,
+        description: `Denda ${days} hari atas ${sale.number} (${periode})`,
         qty: 1,
         price: amount,
         tax: null,
       },
     ],
-    memo: `Denda keterlambatan ${LATE_FEE_RATE * 100}% per bulan atas faktur ${sale.number}.`,
+    memo: `Denda keterlambatan ${lateFeePolicyLabel(policy).split(' · ')[0]} atas faktur ${sale.number}, jatuh tempo ${formatDate(sale.dueDate)}. Periode ${periode}.`,
+    lateFeeFor: { saleId: sale.id, saleNumber: sale.number, from, until, days, rate: policy.rate, basis: policy.basis },
   };
 }
 
@@ -88,7 +95,7 @@ function SalePage({ view }) {
     ? (paymentTerms.find((t) => t.value === sumber.term)?.days ?? 30)
     : null;
   const prefill = telat
-    ? lateFeePrefill(telat)
+    ? lateFeePrefill(telat, lateFeeQuote(telat, sales, lateFeePolicy(contactsById[telat.customerId])))
     : order
     ? invoicePrefillFromOrder(order, {
         billingAddress: kontak ? formatAddress(kontak.billing) : '',

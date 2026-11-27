@@ -21,6 +21,7 @@ import {
 import {
   ArrowCounterClockwise,
   ArrowUpRight,
+  Check,
   ClipboardText,
   ClockCounterClockwise,
   Copy,
@@ -53,6 +54,7 @@ import {
   canDelete,
   canEdit,
   canPay,
+  canRequestWaiver,
   canResend,
   canSend,
   canVoid,
@@ -60,13 +62,14 @@ import {
   computeTotals,
   formatDate,
   formatDateTime,
-  isOverdue,
   lastSend,
+  lateFeePolicyLabel,
   lineAmount,
   rupiah,
   statusOf,
   taxLabel,
   useCustomer,
+  waiverPending,
 } from './utils.js';
 
 function SideCard({ icon: Icon, title, children }) {
@@ -206,6 +209,14 @@ export default function SaleDetail({ sale, source, onBack, onPay, onCreateLink, 
   const berlaku = activePayments(sale);
   const dibatalkan = (sale.payments ?? []).length - berlaku.length;
   const docReturns = sale.returns ?? [];
+  // #29: denda keterlambatan. Faktur biasa: denda yang belum ditagih dan faktur dendanya.
+  // Faktur denda: faktur asal, periodenya, dan status penghapusannya.
+  const feeFor = sale.lateFeeFor;
+  const policy = actions.lateFeePolicy(sale);
+  const fee = actions.lateFeeOf(sale);
+  const feeInvoices = feeFor ? [] : actions.lateFeeInvoices(sale);
+  const showFeeCard = !feeFor && !sale.draft && !sale.cancelledAt && (fee.amount > 0 || fee.inGrace || feeInvoices.length > 0);
+  const waived = sale.waiver?.status === 'disetujui';
   const returnsDeducted = docReturns
     .filter((r) => r.settlement === 'deduct')
     .reduce((n, r) => n + r.amount, 0);
@@ -315,13 +326,22 @@ export default function SaleDetail({ sale, source, onBack, onPay, onCreateLink, 
                 >
                   Duplikat faktur
                 </Menu.Item>
-                {isOverdue(sale) && (
+                {fee.amount > 0 && (
                   <Menu.Item
                     fz="xs"
                     leftSection={<Warning size={14} />}
                     onClick={() => actions.lateFee(sale)}
                   >
                     Buat faktur denda
+                  </Menu.Item>
+                )}
+                {canRequestWaiver(sale) && (
+                  <Menu.Item
+                    fz="xs"
+                    leftSection={<HandCoins size={14} />}
+                    onClick={() => actions.requestWaiver(sale)}
+                  >
+                    Ajukan penghapusan denda
                   </Menu.Item>
                 )}
                 {canReturnInvoice(sale) && (
@@ -383,7 +403,41 @@ export default function SaleDetail({ sale, source, onBack, onPay, onCreateLink, 
           </Box>
         </SimpleGrid>
 
-        {status === 'cancelled' && (
+        {waiverPending(sale) && (
+          <Alert variant="light" color="orange" radius="md" icon={<HandCoins size={16} />} mt="md" title="Penghapusan denda menunggu persetujuan">
+            <Text fz="xs">
+              Diajukan {sale.waiver.by} pada {formatDateTime(sale.waiver.at)} — {sale.waiver.reason}. Selama menunggu,
+              faktur denda ini tetap menagih.
+            </Text>
+            {actions.canDecideWaiver(sale) && (
+              <Group gap="xs" mt="sm">
+                <Button size="xs" radius="md" leftSection={<Check size={14} />} onClick={() => actions.approveWaiver(sale)}>
+                  Setujui penghapusan
+                </Button>
+                <Button size="xs" radius="md" variant="default" onClick={() => actions.rejectWaiver(sale)}>
+                  Tolak
+                </Button>
+              </Group>
+            )}
+          </Alert>
+        )}
+        {sale.waiver?.status === 'ditolak' && !sale.cancelledAt && (
+          <Alert variant="light" color="slate" radius="md" icon={<HandCoins size={16} />} mt="md">
+            <Text fz="xs">
+              Penghapusan denda ditolak {sale.waiver.decidedBy} pada {formatDateTime(sale.waiver.decidedAt)}
+              {sale.waiver.note ? ` — ${sale.waiver.note}` : ''}. Denda tetap ditagih.
+            </Text>
+          </Alert>
+        )}
+        {status === 'cancelled' && waived && (
+          <Alert variant="light" color="green" radius="md" icon={<HandCoins size={16} />} mt="md" title="Denda dihapuskan">
+            <Text fz="xs">
+              Disetujui {sale.waiver.decidedBy} pada {formatDateTime(sale.waiver.decidedAt)}. Alasan: {sale.waiver.reason}.
+              Jurnalnya dibalik dan periode dendanya dianggap selesai, jadi tidak ditagih ulang.
+            </Text>
+          </Alert>
+        )}
+        {status === 'cancelled' && !waived && (
           <Alert variant="light" color="red" radius="md" icon={<Prohibit size={16} />} mt="md">
             <Text fz="xs">
               Dibatalkan pada {formatDateTime(sale.cancelledAt)}
@@ -593,6 +647,59 @@ export default function SaleDetail({ sale, source, onBack, onPay, onCreateLink, 
                 <Field label="Termin pembayaran">{term}</Field>
               </Stack>
             </SideCard>
+
+            {showFeeCard && (
+              <SideCard icon={Warning} title="Denda keterlambatan">
+                <Stack gap="sm">
+                  <Field label="Aturan">
+                    {lateFeePolicyLabel(policy)}
+                    {policy && <Text span fz={11} c="slate.6">{policy.custom ? ' · sesuai kontrak' : ' · aturan bawaan'}</Text>}
+                  </Field>
+                  {fee.inGrace && (
+                    <Text fz="xs" c="slate.7">Masih dalam masa tenggang sampai {formatDate(fee.graceEnds)}. Kalau lunas sebelum itu, tidak ada denda.</Text>
+                  )}
+                  {fee.amount > 0 && (
+                    <Box p="sm" bg="orange.0" style={{ borderRadius: 'var(--mantine-radius-md)' }}>
+                      <Text fz={11} fw={600} c="orange.9">Belum ditagih</Text>
+                      <Text fz="lg" fw={700} c="orange.9">{rupiah(fee.amount)}</Text>
+                      <Text fz={11} c="slate.7">
+                        {fee.days} hari · {formatDate(fee.from)} – {formatDate(fee.until)}
+                        {fee.segments.length > 1 ? ` · ${fee.segments.length} porsi sisa tagihan` : ''}
+                      </Text>
+                      <Button size="xs" radius="md" mt="xs" leftSection={<Warning size={14} />} onClick={() => actions.lateFee(sale)}>
+                        Buat faktur denda
+                      </Button>
+                    </Box>
+                  )}
+                  {feeInvoices.length > 0 && (
+                    <Stack gap={4}>
+                      <Text fz={11} fw={600} c="slate.6">Sudah ditagih</Text>
+                      {feeInvoices.map((f) => (
+                        <Group key={f.id} justify="space-between" gap="xs" wrap="nowrap">
+                          <Anchor fz="xs" fw={600} onClick={() => actions.open(f.id)}>{f.number}</Anchor>
+                          <Text fz={11} c="slate.6" ta="right">
+                            {formatDate(f.lateFeeFor.from)} – {formatDate(f.lateFeeFor.until)}
+                            {f.draft ? ' · draf' : f.waiver?.status === 'disetujui' ? ' · dihapuskan' : ''}
+                          </Text>
+                        </Group>
+                      ))}
+                    </Stack>
+                  )}
+                </Stack>
+              </SideCard>
+            )}
+
+            {feeFor && (
+              <SideCard icon={Warning} title="Denda atas faktur">
+                <Stack gap="sm">
+                  <Field label="Faktur asal">
+                    <Anchor fz="sm" fw={600} onClick={() => actions.open(feeFor.saleId)}>{feeFor.saleNumber}</Anchor>
+                  </Field>
+                  <Field label="Periode denda">{formatDate(feeFor.from)} – {formatDate(feeFor.until)} ({feeFor.days} hari)</Field>
+                  <Field label="Tarif">{lateFeePolicyLabel({ rate: feeFor.rate, basis: feeFor.basis, grace: 0 }).split(' · ')[0]}</Field>
+                </Stack>
+              </SideCard>
+            )}
 
             {docReturns.length > 0 && (
               <SideCard icon={ArrowCounterClockwise} title="Retur dari faktur ini">

@@ -1,6 +1,6 @@
 import { useData } from '@/lib/store.jsx';
 import { toCustomer } from '@/pages/Kontak/utils.js';
-import { taxes, TODAY } from './data.js';
+import { LATE_FEE_BASIS, LATE_FEE_DEFAULT, taxes, TODAY } from './data.js';
 
 // Format akuntan: dua angka di belakang koma, mis. Rp 1.234.000,00.
 const number = new Intl.NumberFormat('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -172,10 +172,71 @@ export const canResend = (sale) => !['draft', 'cancelled'].includes(statusOf(sal
 // dibatalkan. Yang sudah dibayar dikoreksi lewat retur, bukan dibatalkan.
 export const canVoid = (sale) => statusOf(sale) === 'issued';
 
-// #29: denda keterlambatan = sisa tagihan × tarif × bulan keterlambatan (minimal 1).
-export function lateFeeAmount(sale, rate) {
-  const bulan = Math.max(Math.ceil((new Date(TODAY) - new Date(sale.dueDate)) / 86400000 / 30), 1);
-  return { bulan, amount: Math.round(computeTotals(sale).balance * rate * bulan) };
+// #29: denda keterlambatan ------------------------------------------------------------------
+
+// Aturan yang berlaku untuk satu pelanggan: aturan kontraknya sendiri, bawaan, atau tidak ada.
+export function lateFeePolicy(contact) {
+  const lf = contact?.lateFee;
+  if (lf?.mode === 'none') return null;
+  if (lf?.mode === 'custom') return { ...LATE_FEE_DEFAULT, ...lf, custom: true };
+  return LATE_FEE_DEFAULT;
+}
+const pctLabel = (n) => String(n).replace('.', ',');
+export const lateFeePolicyLabel = (p) =>
+  p ? `${pctLabel(p.rate)}% ${LATE_FEE_BASIS.find((b) => b.value === p.basis)?.label ?? ''} · tenggang ${p.grace} hari` : 'Tanpa denda';
+
+const dayDiff = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+
+// Faktur denda yang sudah dibuat untuk satu faktur dan masih menutup periodenya: termasuk
+// draf (supaya tidak dobel saat draf belum terbit) dan denda yang dihapuskan (sudah
+// diputuskan). Faktur denda yang dibatalkan biasa membuka lagi periodenya.
+export const lateFeeInvoicesOf = (sales, saleId) =>
+  sales.filter((s) => s.lateFeeFor?.saleId === saleId && (!s.cancelledAt || s.waiver?.status === 'disetujui'));
+
+// Penghapusan denda: diajukan atas faktur denda yang belum dibayar sama sekali, lalu
+// diputuskan approver. Kalau disetujui, fakturnya berhenti menagih dan jurnalnya dibalik.
+export const canRequestWaiver = (sale) =>
+  !!sale.lateFeeFor && !sale.draft && !sale.cancelledAt && activePayments(sale).length === 0 && sale.waiver?.status !== 'diajukan';
+export const waiverPending = (sale) => sale.waiver?.status === 'diajukan' && !sale.cancelledAt;
+
+// Hitung denda yang belum ditagih atas satu faktur sampai `until`.
+// Sisa tagihan dilacak dari tanggal ke tanggal pembayaran, jadi porsi yang dibayar lebih
+// dulu hanya didenda sampai tanggal bayarnya. Porsi yang dibayar dalam masa tenggang bebas.
+// Periode yang sudah ditagih lewat faktur denda sebelumnya tidak dihitung lagi.
+export function lateFeeQuote(sale, sales, policy, until = TODAY) {
+  const empty = { amount: 0, days: 0, segments: [], policy };
+  if (!policy || !sale?.dueDate || sale.draft || sale.cancelledAt || sale.lateFeeFor) return empty;
+  const due = sale.dueDate;
+  const t = computeTotals(sale);
+  const pays = activePayments(sale)
+    .filter((p) => p.date && p.date <= until)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  // Porsi yang dibayar sebelum jatuh tempo atau masih dalam masa tenggang dianggap tepat waktu.
+  const ontime = pays.filter((p) => dayDiff(due, p.date) <= policy.grace);
+  const late = pays.filter((p) => dayDiff(due, p.date) > policy.grace);
+  let bal = t.billed - ontime.reduce((n, p) => n + p.amount, 0);
+  // Masih dalam masa tenggang dan belum ada yang lunas terlambat: belum ada denda.
+  const lateDays = dayDiff(due, late.length && bal - late.reduce((n, p) => n + p.amount, 0) <= 0 ? late[late.length - 1].date : until);
+  if (bal <= 0 || lateDays <= policy.grace) return { ...empty, inGrace: bal > 0 && dayDiff(due, until) > 0, graceEnds: addDays(due, policy.grace) };
+  const billed = lateFeeInvoicesOf(sales, sale.id).map((s) => s.lateFeeFor.until).sort().pop();
+  const from = billed && billed > due ? billed : due;
+  const perDay = policy.basis === 'day' ? policy.rate / 100 : policy.rate / 100 / 30;
+  const segments = [];
+  let cursor = due;
+  const push = (end) => {
+    const s = cursor > from ? cursor : from;
+    const days = dayDiff(s, end);
+    if (days > 0 && bal > 0) segments.push({ from: s, until: end, balance: bal, days, fee: bal * perDay * days });
+  };
+  for (const p of late) {
+    push(p.date);
+    bal -= p.amount;
+    cursor = p.date;
+  }
+  push(until);
+  const amount = Math.round(segments.reduce((n, x) => n + x.fee, 0));
+  const end = segments.length ? segments[segments.length - 1].until : from;
+  return { amount, days: segments.reduce((n, x) => n + x.days, 0), from, until: end, segments, policy, billedUntil: billed ?? null };
 }
 
 // #31: jejak aktivitas dokumen. Ditambahkan, tidak pernah diubah atau dihapus,
@@ -194,6 +255,9 @@ export const ACTIVITY = {
   accepted: 'Diterima pelanggan',
   rejected: 'Ditolak pelanggan',
   confirmed: 'Dikonfirmasi pelanggan',
+  waiverRequested: 'Penghapusan denda diajukan',
+  waived: 'Denda dihapuskan',
+  waiverRejected: 'Penghapusan denda ditolak',
 };
 
 export const logActivity = (doc, type, note = '', by = 'Finance') => ({
@@ -218,6 +282,11 @@ export function duplicateOf(sale, termDays) {
     payments: [],
     sends: [],
     invoiceLink: null,
+    // Salinan bukan faktur denda atas periode yang sama, dan belum dibatalkan.
+    lateFeeFor: undefined,
+    waiver: undefined,
+    cancelledAt: null,
+    cancelReason: undefined,
     createdAt: now,
     updatedAt: now,
   };
