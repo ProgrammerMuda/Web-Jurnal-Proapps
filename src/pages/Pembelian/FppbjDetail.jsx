@@ -291,18 +291,18 @@ export default function FppbjDetail({ fppbj: f, pb, onBack, go }) {
 
             <Card withBorder radius="lg" padding={0} bg="white">
               <Group justify="space-between" px="lg" py="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
-                <CardHead icon={Paperclip} desc="Nomor, tanggal, dan berkas memo internal">IOM</CardHead>
+                <CardHead icon={Paperclip} desc="Nomor, tanggal, dan berkas memo">Internal Office Memo</CardHead>
                 <Badge size="sm" radius="sm" variant="light" color="slate" tt="none">{iomFiles(f.iom).length} berkas</Badge>
               </Group>
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={0}>
-                <InfoCell label="No. IOM">{f.iom.no || '—'}</InfoCell>
-                <InfoCell label="Tanggal IOM" divider>{f.iom.date ? formatDate(f.iom.date) : '—'}</InfoCell>
+                <InfoCell label="Nomor memo">{f.iom.no || '—'}</InfoCell>
+                <InfoCell label="Tanggal memo" divider>{f.iom.date ? formatDate(f.iom.date) : '—'}</InfoCell>
               </SimpleGrid>
               <Box px="lg" py="md" style={{ borderTop: '1px solid var(--mantine-color-gray-2)' }}>
                 {iomFiles(f.iom).length ? (
-                  <AttachmentList names={iomFiles(f.iom)} label={`IOM ${f.iom.no}`} />
+                  <AttachmentList names={iomFiles(f.iom)} label={`Internal Office Memo ${f.iom.no}`} />
                 ) : (
-                  <Text fz="xs" c="slate.6">Belum ada berkas IOM.</Text>
+                  <Text fz="xs" c="slate.6">Belum ada berkas memo.</Text>
                 )}
               </Box>
             </Card>

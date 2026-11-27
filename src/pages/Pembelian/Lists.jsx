@@ -107,7 +107,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
         filters={statusFilter(FPPBJ_STATUS)}
         head={[{ label: 'Permintaan & Tanggal' }, { label: 'Keperluan' }, { label: 'Departemen' }, { label: 'Jalur' }, { label: 'Status' }, { label: 'Aksi', align: 'right', w: 70 }]}
         minWidth={900}
-        empty={pb.fppbj.length === 0 ? <EmptyState icon={ClipboardText} title="Belum ada permintaan" text="Pembelian dimulai dari permintaan dan IOM yang disetujui atasan." actions={canCreate(role, 'fppbj') ? [<Button key="n" size="xs" radius="md" onClick={() => go({ name: 'fppbj-new' })}>Buat permintaan</Button>] : null} /> : undefined}
+        empty={pb.fppbj.length === 0 ? <EmptyState icon={ClipboardText} title="Belum ada permintaan" text="Pembelian dimulai dari permintaan dan Internal Office Memo yang disetujui atasan." actions={canCreate(role, 'fppbj') ? [<Button key="n" size="xs" radius="md" onClick={() => go({ name: 'fppbj-new' })}>Buat permintaan</Button>] : null} /> : undefined}
         rows={rows.map((f) => (
           <Table.Tr key={f.id}>
             <Table.Td>

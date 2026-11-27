@@ -66,7 +66,7 @@ export function fppbjPdfBlob(f, { pos = [] } = {}) {
         muted: !adaJalur,
       },
       {
-        label: 'REFERENSI IOM',
+        label: 'INTERNAL OFFICE MEMO',
         value: f.iom?.no || 'Tidak ada',
         muted: !f.iom?.no,
         sub: f.iom?.date ? formatDate(f.iom.date) : '',
@@ -86,7 +86,7 @@ export function fppbjPdfBlob(f, { pos = [] } = {}) {
         rows: [
           ['Jabatan', pemintaJabatan],
           ['Departemen', f.dept],
-          ['Lampiran IOM', berkas.join(', ')],
+          ['Lampiran memo', berkas.join(', ')],
         ],
       },
       {

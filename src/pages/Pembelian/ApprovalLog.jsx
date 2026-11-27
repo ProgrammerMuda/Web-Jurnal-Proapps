@@ -84,6 +84,10 @@ function LogRow({ e }) {
         {e.note && e.action !== 'ajukan' && (
           <Text fz={11} c="slate.7" mt={2} style={{ borderLeft: '2px solid var(--mantine-color-gray-3)', paddingLeft: 6 }}>{e.note}</Text>
         )}
+        {/* Alasan pengajuan (mis. pembatalan uang muka): dikutip di bawah, judulnya tetap "Diajukan". */}
+        {e.reason && (
+          <Text fz={11} c="slate.7" mt={2} style={{ borderLeft: '2px solid var(--mantine-color-gray-3)', paddingLeft: 6 }}>Alasan: {e.reason}</Text>
+        )}
       </Box>
     </Group>
   );

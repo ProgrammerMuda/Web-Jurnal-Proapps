@@ -9,11 +9,11 @@ import { approvalState, canCreate, logEntry, signApproval } from './permissions.
 import { BiddingSection, Hint, ProcGuide, RouteSelector, SingleSection } from './procurement.jsx';
 import { TODAY } from './data.js';
 import { toast } from './usePb.js';
-import { biddingWinner, createPOs, routeLabel, routeSwitchEffects } from './utils.js';
+import { biddingWinner, createPOs, poDocLabel, routeLabel, routeSwitchEffects } from './utils.js';
 
 export default function ProcurementPanel({ f, pb, role, go }) {
   const [quoteOpen, setQuoteOpen] = useState(false);
-  const [approvedPos, setApprovedPos] = useState(null); // daftar PO draf yang baru dibuat; tidak null = modal sukses tampil
+  const [approvedPos, setApprovedPos] = useState(null); // daftar PO yang baru dibuat; tidak null = modal sukses tampil
   const [editQuote, setEditQuote] = useState(null); // id penawaran yang sedang diubah
   const [delQuote, setDelQuote] = useState(null); // id penawaran yang menunggu konfirmasi hapus
   const [viewQuote, setViewQuote] = useState(null); // id penawaran yang dibuka detailnya
@@ -220,11 +220,11 @@ export default function ProcurementPanel({ f, pb, role, go }) {
         opened={approvedPos !== null}
         onClose={() => setApprovedPos(null)}
         title="Pengadaan disetujui"
-        text={approvedPos?.length ? `${approvedPos.length} PO dibuat sebagai draf. Kirim ke vendor dari detail PO.` : 'Pengadaan sudah disetujui.'}
+        text={draftText(approvedPos)}
       >
         <Button variant="default" radius="md" onClick={() => setApprovedPos(null)}>Tutup</Button>
         {approvedPos?.length === 1 && go && (
-          <Button radius="md" onClick={() => { const id = approvedPos[0].id; setApprovedPos(null); go({ name: 'po', id }); }}>Lihat PO</Button>
+          <Button radius="md" onClick={() => { const id = approvedPos[0].id; setApprovedPos(null); go({ name: 'po', id }); }}>Buka {poDocLabel(approvedPos[0])}</Button>
         )}
       </SuccessModal>
       <ReasonModal
@@ -237,4 +237,13 @@ export default function ProcurementPanel({ f, pb, role, go }) {
       />
     </>
   );
+}
+
+// Pesan sukses setelah pengadaan disetujui. PO/SPK langsung berlaku sejak dibuat; mengirim
+// dokumennya ke vendor langkah terpisah dari halaman detailnya. Nomornya sudah memuat jenis
+// dokumen (PO/… atau SPK/…), jadi tidak diawali kata "PO" lagi.
+function draftText(pos) {
+  if (!pos?.length) return 'Pengadaan sudah disetujui.';
+  if (pos.length === 1) return `${pos[0].number} sudah dibuat. Kirim dokumennya ke vendor dari halaman ${poDocLabel(pos[0])}.`;
+  return `${pos.length} pesanan sudah dibuat, satu untuk tiap vendor. Kirim dokumennya ke masing-masing vendor dari halaman detailnya.`;
 }

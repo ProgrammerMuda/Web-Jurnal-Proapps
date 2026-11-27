@@ -5,9 +5,10 @@ import { ActionIcon, Badge, Box, Button, Card, Divider, Grid, Group, Menu, Selec
 import { ArrowCounterClockwise, ArrowsClockwise, Calculator, Check, ClipboardText, CurrencyCircleDollar, DotsThreeVertical, DownloadSimple, Info, Money, Package, PaperPlaneTilt, Prohibit, Receipt, ShoppingCart, Truck, X } from '@/components/Icon.jsx';
 import { BackLink, Callout, CardHead, CopyIcon, DataTable, DocNumber, RoleChip, Section, StatusPill } from './components.jsx';
 import PurchaseFlow from './PurchaseFlow.jsx';
-import TermBreakdown from './TermBreakdown.jsx';
+import TermBreakdown, { termStages } from './TermBreakdown.jsx';
 import ApprovalLog, { chainSteps } from './ApprovalLog.jsx';
 import SpkScope from './SpkScope.jsx';
+import RequestCard, { CompareTable } from './RequestCard.jsx';
 import { ReasonModal, SendPoModal } from './Dialogs.jsx';
 import { personLabel, TODAY } from './data.js';
 import { freightShare } from './landedCost.js';
@@ -34,6 +35,7 @@ import {
   DP_STATE,
   poAllBarang,
   poAllJasa,
+  effectivePoTerm,
   poDocLabel,
   vendorEmail,
   poDpAmount,
@@ -327,6 +329,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                 <StatusPill map={poStatusMap(po)} status={status} />
                 {/* Status utama tetap posisi barangnya; ubah harga yang menahan faktur ditandai terpisah. */}
                 {pcPending && <Badge size="sm" radius="sm" variant="light" color="orange" fw={700} tt="none">Ubah harga diajukan</Badge>}
+                {waiverPending && <Badge size="sm" radius="sm" variant="light" color="orange" fw={700} tt="none">Pembatalan DP diajukan</Badge>}
               </Group>
               <Text fz="sm" c="slate.6">{formatDate(po.date)}</Text>
               {po.note && <Text fz={11} c="teal.8" fw={600}>{po.note}</Text>}
@@ -478,54 +481,6 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
         confirmLabel="Tolak"
         onConfirm={rejectReorder}
       />
-      {pcPending && (
-        <Callout tone="wait" title={`Ubah harga menunggu approval ${roleLabel(approvalState(pc, 'priceChange').next)} · faktur ditahan`}>
-          <Stack gap={8}>
-            <Text fz="xs">
-              Diajukan oleh {pc.by}{pc.invoiceNo ? ` sesuai invoice vendor ${pc.invoiceNo}` : ''}. Alasan: {pc.reason || '—'}
-            </Text>
-            {/* Approver memutuskan dari angka ini: harga lama, harga baru, dan dampaknya ke sisa pesanan. */}
-            {!noPrice && (
-              <Box style={{ overflowX: 'auto', background: 'var(--mantine-color-white)', border: '1px solid var(--mantine-color-gray-3)', borderRadius: 'var(--mantine-radius-md)' }}>
-                <Table verticalSpacing={6} horizontalSpacing="sm" miw={640} fz="xs" styles={{ th: { whiteSpace: 'nowrap' }, td: { whiteSpace: 'nowrap' } }}>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Item</Table.Th>
-                      <Table.Th ta="right">Harga PO</Table.Th>
-                      <Table.Th ta="right">Diajukan</Table.Th>
-                      <Table.Th ta="right">Per unit</Table.Th>
-                      <Table.Th ta="right">Belum difaktur</Table.Th>
-                      <Table.Th ta="right">Dampak</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {pc.items.map((c) => {
-                      const it = po.items.find((i) => i.id === c.itemId);
-                      const d = c.price - c.oldPrice;
-                      const open = pcOpenQty(c.itemId);
-                      return (
-                        <Table.Tr key={c.itemId}>
-                          <Table.Td fw={600}>{it?.desc ?? c.itemId}</Table.Td>
-                          <Table.Td ta="right">{rupiah(c.oldPrice)}</Table.Td>
-                          <Table.Td ta="right" fw={700}>{rupiah(c.price)}</Table.Td>
-                          <Table.Td ta="right" fw={600} c={d > 0 ? 'red.7' : 'green.8'} style={{ whiteSpace: 'nowrap' }}>{d > 0 ? 'naik' : 'turun'} {rupiah(Math.abs(d))}</Table.Td>
-                          <Table.Td ta="right">{open} {it?.unit}</Table.Td>
-                          <Table.Td ta="right" fw={600} c={d > 0 ? 'red.7' : 'green.8'} style={{ whiteSpace: 'nowrap' }}>{d > 0 ? '+' : '−'}{rupiah(Math.abs(d * open))}</Table.Td>
-                        </Table.Tr>
-                      );
-                    })}
-                  </Table.Tbody>
-                </Table>
-              </Box>
-            )}
-            {!noPrice && (
-              <Text fz="xs" fw={600}>
-                Total dampak ke sisa {label}: {pcImpact > 0 ? 'naik' : pcImpact < 0 ? 'turun' : 'tetap'} {rupiah(Math.abs(pcImpact))} sebelum pajak
-              </Text>
-            )}
-          </Stack>
-        </Callout>
-      )}
       {pc?.status === 'ditolak' && (
         <Callout tone="stop" title="Ubah harga ditolak · harga PO tetap">
           {pc.rejectNote} Minta vendor merevisi invoice sesuai harga PO.
@@ -539,7 +494,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
         confirmLabel="Tolak"
         onConfirm={rejectPrice}
       />
-      {dp && !inactive && <DpStatusStrip dp={dp} po={po} go={go} />}
+      {dp && !inactive && !waiverPending && <DpStatusStrip dp={dp} po={po} go={go} />}
       <ReasonModal
         opened={waiverOpen}
         onClose={() => setWaiverOpen(false)}
@@ -578,6 +533,51 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
       <Grid gutter="lg" align="flex-start">
         <Grid.Col span={{ base: 12, lg: 8.5 }}>
           <Stack gap="lg">
+            {/* Pengajuan yang menunggu keputusan, sejajar kartu Informasi di kolom utama. */}
+            {pcPending && (
+              <RequestCard
+                title="Ubah harga PO"
+                waitingFor={approvalState(pc, 'priceChange').next}
+                by={pc.by}
+                at={(pc.log ?? []).find((e) => e.action === 'ajukan')?.at ?? pc.at}
+                source={pc.invoiceNo ? `Invoice vendor ${pc.invoiceNo}` : null}
+                reason={pc.reason}
+                note="Selama menunggu, faktur untuk sisa pesanan ditahan. Harga baru hanya berlaku untuk qty yang belum difaktur."
+              >
+                {/* Approver memutuskan dari angka ini: harga lama, harga baru, dan dampaknya ke sisa pesanan. */}
+                {!noPrice && (
+                  <CompareTable head={['Item', 'Harga PO', 'Harga baru', 'Dampak']} minWidth={560}>
+                    {pc.items.map((c) => {
+                      const it = po.items.find((i) => i.id === c.itemId);
+                      const d = c.price - c.oldPrice;
+                      const open = pcOpenQty(c.itemId);
+                      const tone = d > 0 ? 'red.7' : 'green.8';
+                      return (
+                        <Table.Tr key={c.itemId}>
+                          <Table.Td style={{ whiteSpace: 'normal' }}>
+                            <Text fz="sm" c="slate.9">{it?.desc ?? c.itemId}</Text>
+                            <Text fz="xs" c="slate.6">{open} {it?.unit} belum difaktur</Text>
+                          </Table.Td>
+                          <Table.Td ta="right" c="slate.7">{rupiah(c.oldPrice)}</Table.Td>
+                          <Table.Td ta="right">
+                            <Text fz="sm" c="slate.9">{rupiah(c.price)}</Text>
+                            <Text fz="xs" c={tone}>{d > 0 ? 'naik' : 'turun'} {rupiah(Math.abs(d))} / {it?.unit ?? 'unit'}</Text>
+                          </Table.Td>
+                          <Table.Td ta="right" c={tone}>{d > 0 ? '+' : '−'}{rupiah(Math.abs(d * open))}</Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                    <Table.Tr bg="slate.0">
+                      <Table.Td colSpan={3} fw={600} c="slate.9">Total dampak ke sisa {label}, sebelum pajak</Table.Td>
+                      <Table.Td ta="right" fw={700} c={pcImpact > 0 ? 'red.7' : pcImpact < 0 ? 'green.8' : 'slate.9'}>
+                        {pcImpact > 0 ? '+' : pcImpact < 0 ? '−' : ''}{rupiah(Math.abs(pcImpact))}
+                      </Table.Td>
+                    </Table.Tr>
+                  </CompareTable>
+                )}
+              </RequestCard>
+            )}
+            {waiverPending && !inactive && <DpWaiverCallout po={po} waiver={waiver} noPrice={noPrice} />}
             <Card withBorder radius="lg" padding={0} bg="white">
               <Box px="lg" py="md" style={{ borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
                 <CardHead icon={Info} desc={isJasa ? 'Vendor, target selesai, jadwal tagihan, dan termin bayar' : 'Vendor, perkiraan tiba, gudang, dan termin bayar'}>Informasi {label}</CardHead>
@@ -945,10 +945,10 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                   done: po.dpWaiver.status === 'disetujui' ? { by: po.dpWaiver.decidedBy, at: po.dpWaiver.decidedAt } : null,
                   state: { disetujui: 'done', ditolak: 'rejected', diajukan: 'current' }[po.dpWaiver.status] ?? 'idle',
                 }]}
-                log={po.dpWaiver.log ?? [
+                log={(po.dpWaiver.log ?? [
                   { action: 'ajukan', role: 'accounting', by: po.dpWaiver.by, at: po.dpWaiver.at, note: po.dpWaiver.reason },
                   ...(po.dpWaiver.decidedAt ? [{ action: po.dpWaiver.status === 'disetujui' ? 'setuju' : 'tolak', role: 'cfo', step: 'cfo', by: po.dpWaiver.decidedBy, at: po.dpWaiver.decidedAt, note: po.dpWaiver.rejectNote }] : []),
-                ]}
+                ]).map((e) => (e.action === 'ajukan' && e.note ? { ...e, note: undefined, reason: e.note } : e))}
               />
             )}
             <PurchaseFlow pb={pb} go={go} current={{ kind: 'po', id: po.id }} />
@@ -956,6 +956,51 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
         </Grid.Col>
       </Grid>
     </Stack>
+  );
+}
+
+// Pengajuan pembatalan uang muka yang menunggu Chief Finance: pengaju, waktu, alasan, dan
+// termin sebelum/sesudah, supaya approver bisa memutuskan tanpa membuka log.
+function DpWaiverCallout({ po, waiver, noPrice }) {
+  const sent = (waiver.log ?? []).filter((e) => e.action === 'ajukan').at(-1);
+  // Jadwal sekarang vs jadwal bila DP dibatalkan, dihitung dengan rumus yang sama dengan
+  // rincian termin di kartu Informasi, jadi baris per termin (progres, berkala, retensi) ikut.
+  const total = poTotal(po);
+  const base = { total, jasa: poAllJasa(po), dppRatio: total ? poSubtotal(po) / total : 1 };
+  const now = termStages({ ...base, term: effectivePoTerm(po) });
+  const after = termStages({ ...base, term: effectivePoTerm({ ...po, dpWaiver: { status: 'disetujui' } }) });
+  const afterBy = Object.fromEntries(after.map((s) => [s.key, s]));
+  const keys = [...now.map((s) => s.key), ...after.map((s) => s.key).filter((k) => !now.some((s) => s.key === k))];
+  const cell = (s) => (s ? `${s.pct != null ? `${s.pct}% · ` : ''}${rupiah(s.amount)}${s.amountSuffix ?? ''}` : 'Tidak ditagih');
+  return (
+    <RequestCard
+      title="Pembatalan uang muka"
+      waitingFor="cfo"
+      by={waiver.by}
+      at={sent?.at ?? waiver.at}
+      reason={waiver.reason}
+      note={`Selama menunggu, faktur uang muka ditahan. Jika disetujui, nilai uang muka tidak ditagih di muka dan ${poDocLabel(po)} ditagih penuh sesuai jadwal di atas.`}
+    >
+      {!noPrice && (
+        <CompareTable head={['Tahap', 'Sekarang', 'Jika disetujui']}>
+          {keys.map((k) => {
+            const cur = now.find((s) => s.key === k);
+            const nxt = afterBy[k];
+            const changed = cell(cur) !== cell(nxt);
+            return (
+              <Table.Tr key={k}>
+                <Table.Td style={{ whiteSpace: 'normal' }}>
+                  <Text fz="sm" c="slate.9">{(cur ?? nxt).label}</Text>
+                  {cur?.sub && <Text fz="xs" c="slate.6">{cur.sub}</Text>}
+                </Table.Td>
+                <Table.Td ta="right" c="slate.7">{cur ? cell(cur) : '–'}</Table.Td>
+                <Table.Td ta="right" c={changed ? 'slate.9' : 'slate.7'} fw={changed ? 600 : undefined}>{cell(nxt)}</Table.Td>
+              </Table.Tr>
+            );
+          })}
+        </CompareTable>
+      )}
+    </RequestCard>
   );
 }
 

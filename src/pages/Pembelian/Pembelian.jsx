@@ -58,7 +58,7 @@ const buatBaruOrder = ['fppbj', 'po', 'reorder', 'receipt', 'invoice', 'retentio
 // Judul & deskripsi halaman per menu sidebar.
 const pageIntros = {
   overview: { icon: ShoppingCart, title: 'Pembelian', description: 'Kelola pembelian dari permintaan, pengadaan, PO, penerimaan barang/jasa, tagihan vendor hingga pembayaran.' },
-  fppbj: { icon: FileText, title: 'Permintaan Pembelian', description: 'Ajukan kebutuhan barang atau jasa; IOM opsional. Setelah diverifikasi, jalur bidding atau vendor tunggal dipilih di tahap pengadaan.' },
+  fppbj: { icon: FileText, title: 'Permintaan Pembelian', description: 'Ajukan kebutuhan barang atau jasa; Internal Office Memo opsional. Setelah diverifikasi, jalur bidding atau vendor tunggal dipilih di tahap pengadaan.' },
   orders: { icon: Package, title: 'Pesanan Pembelian', description: 'Pesanan ke vendor yang dibuat dari pengadaan yang sudah disetujui.' },
   receipts: { icon: Truck, title: 'Penerimaan Barang/Jasa', description: 'Catat barang (FPB) atau jasa (BAPP) dari vendor yang sudah sampai. Penerimaan bisa sebagian.' },
   bills: { icon: Invoice, title: 'Tagihan Vendor', description: 'Faktur dari vendor, dibuat dari penerimaan dan dicocokkan 3 arah dengan PO sebelum dibayar.' },

@@ -1,0 +1,11 @@
+/* Pemisah antar fakta di kartu ringkasan permintaan: garis tegak di layar lebar,
+   tanpa garis saat bertumpuk di ponsel. */
+.sep {
+  padding-left: 0;
+}
+@media (min-width: 36em) {
+  .sep {
+    padding-left: var(--mantine-spacing-md);
+    border-left: 1px solid rgba(255, 255, 255, 0.18);
+  }
+}

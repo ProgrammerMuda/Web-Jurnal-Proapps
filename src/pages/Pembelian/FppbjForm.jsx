@@ -17,7 +17,7 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { useState } from 'react';
-import { Briefcase, Buildings, CalendarBlank, ClipboardText, FileText, Info, Package, Plus, Trash } from '@/components/Icon.jsx';
+import { Briefcase, Buildings, CalendarBlank, ClipboardText, Info, Package, Plus, Trash } from '@/components/Icon.jsx';
 import DateField from '@/components/DateField.jsx';
 import NumberField from '@/components/NumberField.jsx';
 import { BackLink, FormModal, PageIntro, Section } from './components.jsx';
@@ -28,6 +28,8 @@ import { defaultWarehouseId, warehouseOptions } from '@/pages/Gudang/data.js';
 import { formatDate, iomFiles, nextNumber, uid } from './utils.js';
 import { toast } from './usePb.js';
 import { logEntry, withLog } from './permissions.js';
+import review from './FppbjReview.module.css';
+import AttachmentList from './Attachments.jsx';
 
 const blank = (extra = {}) => ({
   id: uid('it'),
@@ -89,7 +91,7 @@ export default function FppbjForm({ pb, editing, onBack, onSaved }) {
   // IOM opsional: tidak ada satu pun field IOM yang wajib. Yang tersisa hanya pemeriksaan
   // kewajaran tanggal, dan itu pun baru berlaku kalau tanggal IOM memang diisi.
   const errors = {
-    date: (!f.date && 'Tanggal permintaan wajib diisi') || (f.date > TODAY && 'Tidak boleh setelah hari ini') || (f.iomDate && f.date < f.iomDate && 'Tidak boleh sebelum tanggal IOM'),
+    date: (!f.date && 'Tanggal permintaan wajib diisi') || (f.date > TODAY && 'Tidak boleh setelah hari ini') || (f.iomDate && f.date < f.iomDate && 'Tidak boleh sebelum tanggal memo'),
     iomDate: !!f.iomDate && !!f.date && f.iomDate > f.date && 'Tidak boleh setelah tanggal permintaan',
     purpose: !f.purpose.trim() && 'Keperluan wajib diisi',
     dept: !f.dept && 'Departemen wajib dipilih',
@@ -98,7 +100,7 @@ export default function FppbjForm({ pb, editing, onBack, onSaved }) {
       (!items.length || items.some((i) => !i.desc.trim() || !(i.qty > 0))) &&
       'Setiap item butuh deskripsi dan qty',
   };
-  const labels = { date: 'Tanggal permintaan', neededBy: 'Dibutuhkan pada', dept: 'Departemen', purpose: 'Keperluan', iomDate: 'Tanggal IOM', items: 'Barang atau jasa' };
+  const labels = { date: 'Tanggal permintaan', neededBy: 'Dibutuhkan pada', dept: 'Departemen', purpose: 'Keperluan', iomDate: 'Tanggal memo', items: 'Barang atau jasa' };
   const missing = Object.keys(errors).filter((k) => errors[k]).map((k) => labels[k]);
   const invalid = missing.length > 0;
 
@@ -178,11 +180,11 @@ export default function FppbjForm({ pb, editing, onBack, onSaved }) {
               </SimpleGrid>
             </Section>
 
-            <Section title="IOM (opsional)" description="Internal Office Memo yang sudah disetujui atasan. Lampirkan bila memang ada — permintaan tetap bisa diajukan tanpa IOM.">
+            <Section title="Internal Office Memo (opsional)" description="Memo yang sudah disetujui atasan. Lampirkan bila memang ada; permintaan tetap bisa diajukan tanpa memo.">
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                <TextInput label="No. IOM" placeholder="Contoh: IOM/OPS/11/021" size="sm" radius="md" value={f.iomNo} onChange={(e) => set({ iomNo: e.currentTarget.value })} />
-                <DateField label="Tanggal IOM" size="sm" radius="md" max={f.date || TODAY} value={f.iomDate} error={f.iomDate && errors.iomDate} onChange={(e) => set({ iomDate: e.currentTarget.value })} />
-                <Box style={{ gridColumn: '1 / -1' }}><DropField label="Upload IOM" multiple value={f.iomFile} onChange={(v) => set({ iomFile: v })} /></Box>
+                <TextInput label="Nomor memo" placeholder="Contoh: IOM/OPS/11/021" size="sm" radius="md" value={f.iomNo} onChange={(e) => set({ iomNo: e.currentTarget.value })} />
+                <DateField label="Tanggal memo" size="sm" radius="md" max={f.date || TODAY} value={f.iomDate} error={f.iomDate && errors.iomDate} onChange={(e) => set({ iomDate: e.currentTarget.value })} />
+                <Box style={{ gridColumn: '1 / -1' }}><DropField label="Upload memo" multiple value={f.iomFile} onChange={(v) => set({ iomFile: v })} /></Box>
               </SimpleGrid>
             </Section>
 
@@ -288,41 +290,49 @@ export default function FppbjForm({ pb, editing, onBack, onSaved }) {
           }}
         >
           <Text fz={11} fw={600} style={{ opacity: 0.75, letterSpacing: 0.5 }} tt="uppercase">Keperluan</Text>
-          <Text fz={20} fw={700} lh={1.3} mt={2}>{f.purpose}</Text>
-          <Group justify="space-between" align="flex-end" mt="md" wrap="nowrap">
-            <Box>
-              <Text fz={11} fw={600} style={{ opacity: 0.75 }}>Dibutuhkan pada</Text>
-              <Text fz={22} fw={700} lh={1.2}>{formatDate(f.neededBy)}</Text>
-            </Box>
-            <Badge size="lg" radius="xl" variant="white" color="primary.9" fw={700} tt="none">{items.length} item</Badge>
-          </Group>
-          <SimpleGrid cols={{ base: 1, xs: 2 }} spacing="xs" mt="lg">
-            <ReviewMeta icon={Buildings} label="Departemen">{f.dept}</ReviewMeta>
+          <Text fz={20} fw={700} lh={1.3} mt={4}>{f.purpose}</Text>
+          {/* Tiga fakta sejajar dalam satu baris, dipisah garis tipis; di ponsel bertumpuk. */}
+          <SimpleGrid
+            cols={{ base: 1, xs: 3 }}
+            spacing={0}
+            verticalSpacing="sm"
+            mt="lg"
+            pt="md"
+            style={{ borderTop: '1px solid rgba(255,255,255,0.18)' }}
+          >
+            <ReviewMeta icon={Buildings} label="Departemen" first>{f.dept}</ReviewMeta>
             <ReviewMeta icon={CalendarBlank} label="Tanggal permintaan">{formatDate(f.date)}</ReviewMeta>
             <ReviewMeta icon={CalendarBlank} label="Dibutuhkan pada">{formatDate(f.neededBy)}</ReviewMeta>
           </SimpleGrid>
           {f.note.trim() && (
-            <Box mt="md" p="sm" style={{ borderRadius: 'var(--mantine-radius-md)', background: 'rgba(255,255,255,0.12)' }}>
+            <Box mt="md" pt="md" style={{ borderTop: '1px solid rgba(255,255,255,0.18)' }}>
               <Text fz={11} fw={600} style={{ opacity: 0.75 }}>Catatan</Text>
-              <Text fz="sm" style={{ whiteSpace: 'pre-wrap' }}>{f.note}</Text>
+              <Text fz="sm" lh={1.5} mt={2} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{f.note}</Text>
             </Box>
           )}
         </Box>
 
         {(f.iomNo.trim() || f.iomDate || f.iomFile.length > 0) && (
           <Box>
-            <Group justify="space-between" mb={8}>
-              <Text fz="sm" fw={700} c="slate.9">IOM</Text>
-              <Text fz="xs" c="slate.6">{[f.iomNo.trim(), f.iomDate && formatDate(f.iomDate)].filter(Boolean).join(' · ') || '—'}</Text>
-            </Group>
-            <Group gap="xs">
-              {f.iomFile.map((name) => (
-                <Group key={name} gap={6} wrap="nowrap" px="sm" py={6} style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 999, maxWidth: '100%' }}>
-                  <FileText size={16} color="var(--mantine-color-primary-9)" />
-                  <Text fz="xs" fw={600} truncate>{name}</Text>
-                </Group>
-              ))}
-            </Group>
+            <Text fz="sm" fw={700} c="slate.9" mb={8}>Internal Office Memo</Text>
+            <Stack gap="xs">
+              <SimpleGrid cols={3} spacing="md">
+                <Box style={{ minWidth: 0 }}>
+                  <Text fz={11} c="slate.6">Nomor memo</Text>
+                  <Text fz="sm" fw={600} c="slate.9" truncate>{f.iomNo.trim() || '—'}</Text>
+                </Box>
+                <Box style={{ minWidth: 0 }}>
+                  <Text fz={11} c="slate.6">Tanggal memo</Text>
+                  <Text fz="sm" fw={600} c="slate.9">{f.iomDate ? formatDate(f.iomDate) : '—'}</Text>
+                </Box>
+                <Box style={{ minWidth: 0 }}>
+                  <Text fz={11} c="slate.6">Berkas</Text>
+                  <Text fz="sm" fw={600} c="slate.9">{f.iomFile.length ? `${f.iomFile.length} berkas` : '—'}</Text>
+                </Box>
+              </SimpleGrid>
+              {/* Berkas yang diunggah bisa dilihat atau diunduh sebelum diajukan. */}
+              {f.iomFile.length > 0 && <AttachmentList names={f.iomFile} label={`Internal Office Memo ${f.iomNo.trim()}`.trim()} />}
+            </Stack>
           </Box>
         )}
 
@@ -359,12 +369,18 @@ export default function FppbjForm({ pb, editing, onBack, onSaved }) {
   );
 }
 
-function ReviewMeta({ icon: Icon, label, children }) {
+function ReviewMeta({ icon: Icon, label, first, children }) {
   return (
-    <Group gap="xs" wrap="nowrap" p="xs" style={{ minWidth: 0, borderRadius: 'var(--mantine-radius-md)', background: 'rgba(255,255,255,0.12)' }}>
-      <Icon size={20} style={{ flexShrink: 0 }} />
+    <Group
+      gap="xs"
+      wrap="nowrap"
+      align="flex-start"
+      className={first ? undefined : review.sep}
+      style={{ minWidth: 0 }}
+    >
+      <Icon size={18} style={{ flexShrink: 0, marginTop: 2, opacity: 0.85 }} />
       <Box style={{ minWidth: 0 }}>
-        <Text fz={10} fw={600} style={{ opacity: 0.75 }}>{label}</Text>
+        <Text fz={11} fw={600} style={{ opacity: 0.75 }}>{label}</Text>
         <Text fz="sm" fw={700} truncate>{children}</Text>
       </Box>
     </Group>
