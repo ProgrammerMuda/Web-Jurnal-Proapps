@@ -300,7 +300,7 @@ export default function Pembelian() {
       )}
       {d?.type === 'retention-release' && <RetentionReleaseModal opened onClose={close} po={pb.posById[d.poId]} pb={pb} onSaved={(id) => go({ name: 'invoice', id })} />}
       {d?.type === 'dp-invoice' && <DpInvoiceModal opened onClose={close} po={pb.posById[d.poId]} pb={pb} onSaved={(id) => go({ name: 'invoice', id })} />}
-      {d?.type === 'pv' && prDoc && <VoucherModal opened onClose={close} pr={prDoc} pb={pb} />}
+      {d?.type === 'pv' && prDoc && <VoucherModal opened onClose={close} pr={prDoc} pb={pb} onSaved={(id) => go({ name: 'voucher', id })} />}
       {d?.type === 'pay' && pb.vouchersById[d.voucherId] && <PayModal opened onClose={close} voucher={pb.vouchersById[d.voucherId]} pb={pb} />}
       {d?.type === 'pr-reject' && prDoc && (
         <ReasonModal

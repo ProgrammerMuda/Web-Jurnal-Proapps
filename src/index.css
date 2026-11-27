@@ -384,3 +384,8 @@
     overflow: visible;
   }
 }
+
+/* Alur pembelian: baris dokumen dalam kelompok pembayaran dipisah garis tipis. */
+.pb-subrow + .pb-subrow {
+  border-top: 1px solid var(--mantine-color-gray-2);
+}

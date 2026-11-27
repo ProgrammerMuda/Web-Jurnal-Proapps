@@ -169,6 +169,13 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
   // DP tidak akan pernah tertagih. Pesanan seperti itu harus direvisi terminnya.
   const canWaive = !po.closedAs && dp?.state === 'belum_faktur' && !waiverPending && !scheduleExcludesDp(po.term) && canCreate(role, 'invoice');
   const canDecideWaiver = waiverPending && canApprove(role, 'dpWaiver');
+  // Faktur uang muka sudah dicatat: pembatalan tidak bisa langsung dari sini. Menunya tetap
+  // tampil (nonaktif) dengan jalan keluarnya, supaya pengguna tidak mencari tombol yang hilang.
+  const waiverBlocked = !po.closedAs && dp?.inv && (dp.state === 'belum_bayar' || dp.state === 'lunas') && !scheduleExcludesDp(po.term) && canCreate(role, 'invoice')
+    ? (dp.pr || dp.state === 'lunas'
+      ? { text: `Uang muka sudah ${dp.state === 'lunas' ? 'dibayar' : 'diajukan bayar'}, jadi tidak bisa dibatalkan. Nilainya dipotong dari tagihan berikutnya.` }
+      : { text: `Faktur uang muka ${dp.inv.number} sudah dicatat. Batalkan fakturnya dulu, lalu ajukan pembatalan uang muka dari sini.`, inv: dp.inv })
+    : null;
   const [waiverOpen, setWaiverOpen] = useState(false);
   const [waiverReject, setWaiverReject] = useState(false);
   const askWaiver = (note) => {
@@ -427,7 +434,7 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                 <Button radius="md" leftSection={<ArrowsClockwise size={16} />} disabled={!!roBlock} onClick={() => openDialog({ type: 'reorder', poId: po.id })}>Pesan ulang</Button>
               </Tooltip>
             )}
-            {(canClose || canWaive) && (
+            {(canClose || canWaive || waiverBlocked) && (
               <>
                 <Divider orientation="vertical" mx={2} />
                 <Menu position="bottom-end" width={240} shadow="md" withinPortal>
@@ -441,6 +448,18 @@ export default function PoDetail({ po, pb, onBack, go, openDialog }) {
                       <>
                         <Menu.Label>Uang muka</Menu.Label>
                         <Menu.Item leftSection={<Prohibit size={16} />} onClick={() => setWaiverOpen(true)}>Batalkan uang muka</Menu.Item>
+                      </>
+                    )}
+                    {waiverBlocked && (
+                      <>
+                        <Menu.Label>Uang muka</Menu.Label>
+                        <Menu.Item disabled leftSection={<Prohibit size={16} />}>Batalkan uang muka</Menu.Item>
+                        <Text fz="xs" c="slate.6" px="sm" pb={6}>{waiverBlocked.text}</Text>
+                        {waiverBlocked.inv && (
+                          <Menu.Item leftSection={<Receipt size={16} />} onClick={() => go({ name: 'invoice', id: waiverBlocked.inv.id })}>
+                            Buka faktur {waiverBlocked.inv.number}
+                          </Menu.Item>
+                        )}
                       </>
                     )}
                     {canClose && (

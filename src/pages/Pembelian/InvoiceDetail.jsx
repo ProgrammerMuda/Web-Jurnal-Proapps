@@ -76,7 +76,9 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
       }) }));
     });
     setCancelOpen(false);
-    toast('Faktur dibatalkan. Qty-nya kembali terbuka untuk difaktur ulang.');
+    toast(isDpInvoice(inv)
+      ? `Faktur uang muka dibatalkan. Uang muka ${po?.number ?? ''} kembali belum ditagih.`
+      : 'Faktur dibatalkan. Qty-nya kembali terbuka untuk difaktur ulang.');
   };
   // Payment Request yang menyentuh faktur ini, termasuk yang masih menunggu approval.
   const prs = pb.prs.filter((p) => p.invoiceIds?.includes(inv.id) || (p.kind !== 'dp' && p.poId === inv.poId && !p.invoiceIds));
@@ -196,15 +198,24 @@ export default function InvoiceDetail({ invoice: inv, pb, onBack, go, openDialog
           {inv.cancelNote}
           {inv.cancelledBy && <> — {inv.cancelledBy}</>}
           {inv.cancelledAt && <>, {formatDate(inv.cancelledAt)}</>}
-          <Text fz="xs" mt={4}>Qty pada penerimaan kembali terbuka dan bisa difaktur ulang.</Text>
+          {isDpInvoice(inv) ? (
+            <Text fz="xs" mt={4}>
+              Uang muka kembali belum ditagih. Kalau vendor tidak jadi menagih uang muka, ajukan pembatalannya dari{' '}
+              {po ? <DocNumber onClick={() => go({ name: 'po', id: po.id })}>{po.number}</DocNumber> : 'pesanannya'} lewat menu Batalkan uang muka.
+            </Text>
+          ) : (
+            <Text fz="xs" mt={4}>Qty pada penerimaan kembali terbuka dan bisa difaktur ulang.</Text>
+          )}
         </Callout>
       )}
 
       <ReasonModal
         opened={cancelOpen}
         onClose={() => setCancelOpen(false)}
-        title="Batalkan faktur"
-        label="Alasan pembatalan"
+        title={isDpInvoice(inv) ? 'Batalkan faktur uang muka' : 'Batalkan faktur'}
+        label={isDpInvoice(inv)
+          ? `Alasan pembatalan. Jurnalnya dibalik dan uang muka kembali belum ditagih; pembatalan uang muka sendiri diajukan dari ${po?.number ?? 'pesanannya'}.`
+          : 'Alasan pembatalan'}
         confirmLabel="Batalkan faktur"
         onConfirm={cancelInvoice}
       />

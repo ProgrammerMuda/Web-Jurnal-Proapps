@@ -69,21 +69,21 @@ export function FlowStep({ index, current, last, title, meta, right, children, m
 
 const Empty = ({ children }) => <Text fz="xs" c="slate.6">{children}</Text>;
 
-// Baris dokumen di dalam kelompok pembayaran: nama dokumen di kiri, nomornya di kanan.
-// Kolom kiri selebar tetap supaya ketiga baris (Faktur, Payment Request, Payment Voucher)
-// rata dan terbaca sebagai urutan.
+// Baris dokumen di dalam kelompok pembayaran: nama dokumen kecil di atas, nomornya di bawah.
+// Kolom samping terlalu sempit untuk label + nomor + dua status sebaris (badge terpotong),
+// jadi label ditaruh di atas dan tiap baris dipisah garis tipis.
 function SubRow({ label, children }) {
   return (
-    <Group gap="sm" wrap="nowrap" align="flex-start" py={3}>
-      <Text fz={11} c="slate.6" w={104} style={{ flexShrink: 0 }} lh="20px">{label}</Text>
-      <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>{children}</Stack>
-    </Group>
+    <Box py={8} className="pb-subrow">
+      <Text fz={11} c="slate.6" mb={4}>{label}</Text>
+      <Stack gap={6}>{children}</Stack>
+    </Box>
   );
 }
 const SubGroup = ({ children }) => (
   <Box
     px="sm"
-    py={6}
+    py={2}
     style={{ border: '1px solid var(--mantine-color-gray-2)', borderRadius: 'var(--mantine-radius-md)', background: 'var(--mantine-color-slate-0)' }}
   >
     {children}
@@ -178,7 +178,7 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
 
   // Satu baris dokumen: nomor (klik = pindah halaman) + penanda + status opsional.
   const docRow = (route, id, number, extra) => (
-    <Group key={id} gap={6} wrap="nowrap">
+    <Group key={id} gap={6} rowGap={4} wrap="wrap">
       {here(route, id) ? (
         <Text fz="xs" fw={700} c="primary.9">{number}</Text>
       ) : (
@@ -190,6 +190,10 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
   );
   const prRow = (p) => docRow('pr', p.id, p.number, <StatusPill map={PR_STATUS} status={p.status} size="xs" approval={{ doc: p, kind: 'pr' }} />);
   const pvRow = (v) => docRow('voucher', v.id, v.number, <StatusPill map={PV_STATUS} status={pvStatus(v)} size="xs" />);
+  // Faktur yang dibatalkan tetap ditampilkan (dokumen nyata), di bawah yang masih berlaku dan
+  // diberi tanda, supaya tidak terbaca sebagai dua tagihan aktif.
+  const invRows = (list) => [...list].sort((x, y) => !!x.cancelled - !!y.cancelled).map((i) => docRow('invoice', i.id, i.number,
+    i.cancelled ? <Badge size="xs" radius="sm" variant="light" color="gray" tt="none">Dibatalkan</Badge> : null));
 
   // --- Uang muka ---------------------------------------------------------------------------
   // Ditampilkan bila termin pesanan memuat pembayaran di muka, atau dokumennya sudah ada
@@ -297,7 +301,7 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
           <SubGroup>
             {!legacyDp && (
               <SubRow label="Faktur uang muka">
-                {dpInvoices.length ? dpInvoices.map((i) => docRow('invoice', i.id, i.number)) : <Empty>Belum dicatat</Empty>}
+                {dpInvoices.length ? invRows(dpInvoices) : <Empty>Belum dicatat</Empty>}
               </SubRow>
             )}
             <SubRow label="Payment Request">
@@ -313,7 +317,7 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
           receipts.length ? <Stack gap={2}>{receipts.map((r) => docRow('receipt', r.id, r.number))}</Stack> : <Empty>Belum ada</Empty>)}
 
         {step('invoice', { title: tagihan ? `Faktur ${tagihan}` : 'Faktur' },
-          billInvoices.length ? <Stack gap={2}>{billInvoices.map((i) => docRow('invoice', i.id, i.number))}</Stack> : <Empty>Belum dibuat</Empty>)}
+          billInvoices.length ? <Stack gap={4}>{invRows(billInvoices)}</Stack> : <Empty>Belum dibuat</Empty>)}
 
         {step('pay', { title: tagihan ? `Pembayaran ${tagihan}` : 'Pembayaran' },
           <SubGroup>
@@ -336,7 +340,7 @@ export default function PurchaseFlow({ pb, go, current, description = 'Dokumen y
         },
         <SubGroup>
           <SubRow label={`Pelepasan (${retentionDocName(pos[0])})`}>
-            {releases.length ? releases.map((i) => docRow('invoice', i.id, i.number)) : <Empty>{retensi.maintenanceEnd ? `Tersedia ${formatDate(retensi.maintenanceEnd)}` : 'Setelah termin terakhir difaktur'}</Empty>}
+            {releases.length ? invRows(releases) : <Empty>{retensi.maintenanceEnd ? `Tersedia ${formatDate(retensi.maintenanceEnd)}` : 'Setelah termin terakhir difaktur'}</Empty>}
           </SubRow>
           <SubRow label="Payment Request">
             {retPrs.length ? retPrs.map(prRow) : <Empty>Belum diajukan</Empty>}

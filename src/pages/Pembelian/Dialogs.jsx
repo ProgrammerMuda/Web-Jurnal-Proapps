@@ -1238,7 +1238,7 @@ function PayeeStrip({ vendor, subtotalLabel, subtotal }) {
 // --- Terbitkan Payment Voucher dari PR yang sudah disetujui ------------------------------------
 // PV adalah perintah bayar: terbit lebih dulu, baru uangnya keluar. Memisahkan keduanya membuat
 // "siapa memerintahkan" dan "siapa mentransfer" jadi dua jejak yang berbeda.
-export function VoucherModal({ opened, onClose, pr, pb }) {
+export function VoucherModal({ opened, onClose, pr, pb, onSaved }) {
   // Satu PR boleh mencakup faktur dari beberapa vendor, tapi satu transfer hanya bisa ke satu
   // rekening — jadi PV diterbitkan per vendor, masing-masing sebesar bagian vendor itu.
   const vendorIds = pr.vendorIds?.length ? pr.vendorIds : [pr.vendorId];
@@ -1286,9 +1286,12 @@ export function VoucherModal({ opened, onClose, pr, pb }) {
     });
     pb.update('prs', pr.id, (d) => ({ ...d, status: 'diproses', voucherId: dibuat[0].id, voucherIds: dibuat.map((x) => x.id) }));
     toast(dibuat.length > 1
-      ? `${dibuat.length} Payment Voucher terbit, satu per vendor.`
+      ? `${dibuat.length} Payment Voucher terbit, satu per vendor. Menampilkan ${dibuat[0].number}.`
       : 'Payment Voucher terbit. Tinggal dicatat pembayarannya.');
     onClose();
+    // Langsung ke detail PV yang baru terbit; bila beberapa vendor, ke PV pertama
+    // (PV lainnya tertaut dari detail PR dan daftar PV).
+    onSaved?.(dibuat[0].id);
   };
   return (
     <FormModal
