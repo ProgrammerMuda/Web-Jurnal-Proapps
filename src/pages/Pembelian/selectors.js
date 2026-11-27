@@ -1,5 +1,5 @@
 // Turunan data untuk menu "Buat baru" (dokumen siap dilanjutkan) dan halaman Ringkasan.
-import { TODAY } from './data.js';
+import { personLabel, TODAY } from './data.js';
 import { blockedBySoD, approvalState, canApprove, isApproverTurn, canCreate, canVerify, prBlockedBySoD, receiptDoc, receiptKind, receiptName } from './permissions.js';
 import {
   canReturn,
@@ -32,7 +32,10 @@ import {
   returnGross,
   returnState,
   vendorCredit,
+  isExpense,
+  isPendingExpense,
 } from './utils.js';
+import { expenseApprovalKind } from './expenses.js';
 import { accountOf, AKUN, invoiceJournal, receiptJournal, returnJournal } from './journal.js';
 
 export function readiness(pb) {
@@ -70,7 +73,7 @@ export function readiness(pb) {
     ),
     prPay: pb.invoices.filter((i) => invTotals(i, c).free > 0),
     returns: pb.invoices.filter((i) => {
-      return canReturn(i, pb.posById[i.poId], pb.returns);
+      return !isExpense(i) && canReturn(i, pb.posById[i.poId], pb.returns);
     }),
   };
   // Payment Request gabungan DP/CBD + pelunasan.
@@ -110,6 +113,7 @@ export const SLA = {
   dpReceived: 1, // barang/jasa SUDAH diterima tapi uang mukanya belum beres -> faktur pelunasan tertahan
   prApprove: 5, // PR diajukan -> disetujui
   pv: 2, // PR disetujui -> Payment Voucher terbit
+  expenseVerify: 3, // biaya diajukan -> diverifikasi Accounting (juga: dikembalikan -> diajukan ulang)
   pay: 3, // PV terbit -> uang ditransfer
   returned: 7, // permintaan dikembalikan -> diperbaiki peminta
   draft: 14, // draf permintaan tidak diajukan-ajukan
@@ -172,6 +176,20 @@ export function actionsFor(role, pb) {
     const since = dpHot(poId);
     return since ? { ...base, since, limit: SLA.dpReceived, due: undefined } : base;
   };
+  // Biaya operasional: verifikasi Accounting, persetujuan berjenjang, dan perbaikan oleh pengaju.
+  const expSince = (x, action) => [...(x.log ?? [])].reverse().find((e) => e.action === action)?.at?.slice(0, 10) ?? x.date;
+  pb.invoices.filter((x) => isExpense(x) && !x.cancelled).forEach((x) => {
+    const to = { name: 'expense', id: x.id };
+    if (x.stage === 'verifikasi' && canVerify(role, 'expense')) {
+      add({ id: `xv-${x.id}`, title: 'Verifikasi biaya', sub: x.number, cta: 'Verifikasi', to, since: expSince(x, 'ajukan'), limit: SLA.expenseVerify });
+    }
+    if (x.stage === 'persetujuan' && isApproverTurn(role, x, expenseApprovalKind(x)) && x.createdBy !== personLabel(role)) {
+      add({ id: `xa-${x.id}`, title: 'Approval biaya', sub: x.number, cta: 'Tinjau', to, since: expSince(x, 'verifikasi'), limit: SLA.approve });
+    }
+    if (x.stage === 'dikembalikan' && x.createdBy === personLabel(role)) {
+      add({ id: `xk-${x.id}`, title: 'Biaya dikembalikan', sub: x.number, cta: 'Perbaiki', to, since: expSince(x, 'kembalikan'), limit: SLA.expenseVerify });
+    }
+  });
   // Pembatalan uang muka menunggu Chief Finance.
   if (canApprove(role, 'dpWaiver')) {
     pb.pos
@@ -308,7 +326,7 @@ export function pipeline(pb) {
 function pbBalance(pb, ctx, account, { receipts = false, returns = false } = {}) {
   const lines = [
     ...(receipts ? pb.receipts.filter(receiptConfirmed).flatMap((x) => receiptJournal(x, pb, ctx)) : []),
-    ...liveInvoices(pb.invoices).flatMap((i) => invoiceJournal(i, pb, ctx)),
+    ...liveInvoices(pb.invoices).filter((i) => !isPendingExpense(i)).flatMap((i) => invoiceJournal(i, pb, ctx)),
     ...(returns ? pb.returns.flatMap((x) => returnJournal(x, pb, ctx)) : []),
   ];
   const code = accountOf(account).code;
@@ -353,7 +371,7 @@ export function debtByVendor(pb) {
 // opsional hanya sampai tanggal ke-`untilDay` supaya awal bulan bisa dibanding periode yang sama.
 export function purchasesInMonth(pb, ym, untilDay = 31) {
   return liveInvoices(pb.invoices)
-    .filter((i) => !isDpInvoice(i) && !isRetentionRelease(i) && i.date?.startsWith(ym) && Number(i.date.slice(8, 10)) <= untilDay)
+    .filter((i) => !isExpense(i) && !isDpInvoice(i) && !isRetentionRelease(i) && i.date?.startsWith(ym) && Number(i.date.slice(8, 10)) <= untilDay)
     .reduce((n, i) => n + invTotals(i, pb.calc).dpp, 0);
 }
 
@@ -389,6 +407,7 @@ const ACTION_MENU = {
   r: 'receipts', ba: 'receipts', rt: 'receipts',
   f: 'bills', fo: 'bills', b: 'bills',
   ar: 'payments', fp: 'payments', pv: 'payments',
+  xv: 'expenses', xa: 'expenses', xk: 'expenses',
 };
 // Jumlah tugas peran ini per menu Pembelian: { fppbj: 2, receipts: 1, ... }.
 export function actionCountsByMenu(role, pb) {

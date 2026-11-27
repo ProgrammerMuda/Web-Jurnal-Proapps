@@ -1,7 +1,7 @@
 import StatCards from '@/components/StatCards.jsx';
 import { CheckCircle, ClipboardText, Clock, Invoice, ShoppingCart, Truck, Wallet, Warning } from '@/components/Icon.jsx';
 import { hidesPrices } from './permissions.js';
-import { fppbjStatus, invStatus, invTotals, poStatus, prCancelledPo, receiptStatus, rupiah, sum } from './utils.js';
+import { fppbjStatus, invStatus, invTotals, purchaseInvoices, poStatus, prCancelledPo, receiptStatus, rupiah, sum } from './utils.js';
 
 const card = (label, value, hint, icon, color) => ({ label, value, hint, icon, color });
 const count = (statuses, key) => statuses.filter((status) => status === key).length;
@@ -36,7 +36,7 @@ function metrics(tab, pb) {
       ];
     }
     case 'bills': {
-      const bills = pb.invoices.map((invoice) => {
+      const bills = purchaseInvoices(pb.invoices).map((invoice) => {
         const totals = invTotals(invoice, pb.calc);
         return { balance: totals.balance, status: invStatus(invoice, totals) };
       });

@@ -128,6 +128,37 @@ export const vendorsSeed = [
     bank: { bank: 'BCA', branch: 'KCP Gading', number: '777-000-1212', holder: 'PT Prima Furnindo' },
     stats: { po: 0, onTime: 0 },
   },
+  // Penerima tagihan rutin yang dicatat lewat menu Biaya (tanpa PO).
+  {
+    id: 'v-pln',
+    name: 'PT PLN (Persero)',
+    npwp: '01.001.608.7-093.000',
+    pic: 'Layanan Pelanggan',
+    email: 'pelanggan@pln.co.id',
+    phone: '123',
+    bank: { bank: 'Mandiri', branch: 'KCP Gambir', number: '070-00-0000123', holder: 'PT PLN (Persero)' },
+    stats: { po: 0, onTime: 0 },
+  },
+  {
+    id: 'v-pam',
+    name: 'PAM Jaya',
+    npwp: '01.002.555.1-073.000',
+    pic: 'Layanan Pelanggan',
+    email: 'pelanggan@pamjaya.co.id',
+    phone: '021-5795 9999',
+    bank: { bank: 'BCA', branch: 'KCP Penjernihan', number: '288-000-4455', holder: 'PAM Jaya' },
+    stats: { po: 0, onTime: 0 },
+  },
+  {
+    id: 'v-sentosa',
+    name: 'PT Sentosa Bersih Mandiri',
+    npwp: '02.777.888.9-015.000',
+    pic: 'Yudi Prasetyo',
+    email: 'billing@sentosabersih.co.id',
+    phone: '021-5550777',
+    bank: { bank: 'BNI', branch: 'KCP Kuningan', number: '0912-334-455', holder: 'PT Sentosa Bersih Mandiri' },
+    stats: { po: 0, onTime: 0 },
+  },
 ];
 
 // Item permintaan: tanpa harga. Harga baru muncul di penawaran vendor.
@@ -1163,11 +1194,64 @@ const fakturRutin = [
   },
 ];
 
+// Contoh dokumen menu Biaya (lihat expenses.js): satu per tahap supaya alurnya bisa dicoba.
+const expLog = (action, role, by, at, extra = {}) => ({ action, role, by, at, ...extra });
+const expensesSeed = [
+  {
+    id: 'exp-0001', type: 'biaya', number: 'EXP/2026/10/0001', vendorId: 'v-pln', vendorNo: '5381-1022-2026-10',
+    date: '2026-10-25', dueDate: '2026-11-10', dept: 'Engineering', note: 'Tagihan listrik gedung dan common area, periode Oktober 2026.',
+    lines: [{ id: 'l1', category: 'listrik', desc: 'Listrik gedung & common area · Oktober 2026', gross: 18_650_000, account: '5-10001', kind: 'jasa', qty: 1, unit: 'bulan', price: 18_650_000, ppnRate: 0, received: true }],
+    pphType: 'none', pphPct: 0, files: ['tagihan-pln-okt-2026.pdf'], stage: 'dibukukan',
+    approvals: { cfo: { by: 'Hendra Wijaya · Chief Finance', role: 'cfo', at: '2026-10-27T10:12' }, bm: { by: 'Budi Hartono · Building Manager', role: 'bm', at: '2026-10-27T15:40' } },
+    createdBy: 'Rudi Hermawan · Kepala Gudang', bookedAt: '2026-10-27', bookedBy: 'Budi Hartono · Building Manager',
+    log: [
+      expLog('ajukan', 'gudang', 'Rudi Hermawan · Kepala Gudang', '2026-10-25T09:05'),
+      expLog('verifikasi', 'accounting', 'Maya Sari · Staff Accounting', '2026-10-26T11:20'),
+      expLog('setuju', 'cfo', 'Hendra Wijaya · Chief Finance', '2026-10-27T10:12', { step: 'cfo' }),
+      expLog('setuju', 'bm', 'Budi Hartono · Building Manager', '2026-10-27T15:40', { step: 'bm' }),
+    ],
+  },
+  {
+    id: 'exp-0002', type: 'biaya', number: 'EXP/2026/10/0002', vendorId: 'v-pam', vendorNo: 'PAM-77120-1026',
+    date: '2026-10-26', dueDate: '2026-10-26', dept: 'Engineering', note: 'Dibayar autodebet rekening operasional.',
+    lines: [{ id: 'l1', category: 'air', desc: 'Air PAM gedung · Oktober 2026', gross: 4_320_000, account: '5-10002', kind: 'jasa', qty: 1, unit: 'bulan', price: 4_320_000, ppnRate: 0, received: true }],
+    pphType: 'none', pphPct: 0, files: ['tagihan-pam-okt-2026.pdf', 'mutasi-autodebet-pam.pdf'], stage: 'dibukukan',
+    paidDirect: { source: 'BCA 288-123-9001 · Kas Operasional', account: '1-10004', date: '2026-10-26' },
+    approvals: { bm: { by: 'Budi Hartono · Building Manager', role: 'bm', at: '2026-10-28T09:30' } },
+    createdBy: 'Maya Sari · Staff Accounting', bookedAt: '2026-10-28', bookedBy: 'Budi Hartono · Building Manager',
+    log: [
+      expLog('ajukan', 'accounting', 'Maya Sari · Staff Accounting', '2026-10-27T08:45'),
+      expLog('verifikasi', 'accounting', 'Maya Sari · Staff Accounting', '2026-10-27T08:47'),
+      expLog('setuju', 'bm', 'Budi Hartono · Building Manager', '2026-10-28T09:30', { step: 'bm' }),
+    ],
+  },
+  {
+    id: 'exp-0003', type: 'biaya', number: 'EXP/2026/11/0001', vendorId: 'v-sentosa', vendorNo: 'SBM/INV/2026/1102',
+    date: '2026-11-02', dueDate: '2026-11-16', dept: 'Housekeeping', note: 'Jasa cleaning service bulan November sesuai kontrak tahunan.',
+    lines: [{ id: 'l1', category: 'kebersihan', desc: 'Jasa cleaning service · November 2026', gross: 12_210_000, account: '6-40001', kind: 'jasa', qty: 1, unit: 'bulan', price: 11_000_000, ppnRate: RULES.ppn, received: true }],
+    pphType: 'pph23', pphPct: 2, pphAccount: '2-50003', taxNo: '010.002-26.11223344', files: ['invoice-sbm-1102.pdf', 'faktur-pajak-sbm-1102.pdf'], stage: 'persetujuan',
+    createdBy: 'Andi Wijaya · Staff Housekeeping',
+    log: [
+      expLog('ajukan', 'peminta', 'Andi Wijaya · Staff Housekeeping', '2026-11-02T13:10'),
+      expLog('verifikasi', 'accounting', 'Maya Sari · Staff Accounting', '2026-11-03T10:05'),
+    ],
+  },
+  {
+    id: 'exp-0004', type: 'biaya', number: 'EXP/2026/11/0002', vendorId: 'v-karya', vendorNo: 'TKO-88123',
+    date: '2026-11-03', dueDate: '2026-11-17', dept: 'Management', note: 'ATK kantor pengelola: kertas, tinta printer, map.',
+    lines: [{ id: 'l1', category: 'atk', desc: 'Kertas A4, tinta printer, map dokumen', gross: 1_450_000, account: '6-60003', kind: 'jasa', qty: 1, unit: '', price: 1_450_000, ppnRate: 0, received: true }],
+    pphType: 'none', pphPct: 0, files: ['nota-karya-88123.jpg'], stage: 'verifikasi',
+    createdBy: 'Andi Wijaya · Staff Housekeeping',
+    log: [expLog('ajukan', 'peminta', 'Andi Wijaya · Staff Housekeeping', '2026-11-03T16:20')],
+  },
+];
+
 export const invoicesSeed = [
   invOngkir,
   ...histInvoices,
   ...gudangInvoices,
   ...fakturRutin,
+  ...expensesSeed,
   {
     id: 'fkt-0024',
     number: 'FKT/2026/10/0024',
@@ -1265,7 +1349,7 @@ export const seedAdditions = {
   fppbj: fppbjSeed.filter((f) => gudangDocs.some((d) => d.po.fppbjId === f.id)),
   pos: gudangDocs.map((d) => d.po),
   receipts: gudangReceipts,
-  invoices: gudangInvoices,
+  invoices: [...gudangInvoices, ...expensesSeed],
   prs: gudangPrs,
   vouchers: vouchersSeed.filter((v) => v.prIds.some((id) => gudangPrIds.has(id))),
 };

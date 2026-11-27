@@ -56,6 +56,7 @@ import {
   reorderBlock,
   priceChangePending,
   fppbjStatus,
+  purchaseInvoices,
 } from './utils.js';
 import { approvalState, canCreate, hidesPrices, isApproverTurn, prBlockedBySoD, receiptDoc, receiptKind, receiptName, signApproval } from './permissions.js';
 import { toast } from './usePb.js';
@@ -242,7 +243,7 @@ export default function ListTab({ tab, pb, go, openDialog }) {
   }
 
   if (tab === 'bills') {
-    const rows = pb.invoices
+    const rows = purchaseInvoices(pb.invoices)
       .map((i) => ({ i, t: invTotals(i, pb.calc) }))
       .filter(({ i, t }) => match(q, i.number, i.vendorNo, vendor(i.vendorId)) && (!status || invStatus(i, t) === status));
     return (

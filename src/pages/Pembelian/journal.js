@@ -24,6 +24,7 @@ import {
   isRetentionRelease,
   invTotals,
   isDpInvoice,
+  isExpense,
   lineRate,
   poDocLabel,
   pvPaid,
@@ -256,8 +257,9 @@ export function invoiceJournal(inv, pb, ctx = {}) {
       // Tanpa penerimaan (langsung dari PO/SPK atau faktur manual): langsung ke akunnya.
       const product = productOfItem(ctx.products, item ?? { productId: l.productId, desc: l.desc });
       const kind = item?.kind ?? l.kind;
-      const akun = kind === 'jasa' || !product?.tracked ? expenseOf(product) : AKUN.persediaan;
-      lines.push(dr(akun, dpp, memo));
+      // Baris Biaya membawa akun bebannya sendiri (ditetapkan Accounting saat verifikasi).
+      const akun = l.account ?? (kind === 'jasa' || !product?.tracked ? expenseOf(product) : AKUN.persediaan);
+      lines.push(dr(akun, dpp, isExpense(inv) ? l.desc || 'Biaya' : memo));
       didebit += dpp;
       ppnMasukan += ppn;
       didebit += ppn;
@@ -302,10 +304,13 @@ export function invoiceJournal(inv, pb, ctx = {}) {
   }
 
   if (retensi) lines.push(cr(AKUN.hutangRetensi, retensi, 'Retensi ditahan sampai masa pemeliharaan selesai'));
-  if (pph) lines.push(cr(AKUN.hutangPph, pph, `PPh ${inv.pphPct}%`));
+  if (pph) lines.push(cr(inv.pphAccount ?? AKUN.hutangPph, pph, `PPh ${inv.pphPct}%`));
   if (dp) lines.push(cr(AKUN.uangMuka, dp, 'Potongan uang muka'));
   if (credit) lines.push(cr(AKUN.uangMuka, credit, 'Alokasi kredit vendor'));
-  lines.push(cr(AKUN.hutangUsaha, dpp + ppn - pph - dp - credit - retensi, `Hutang ke ${vendor}`));
+  const net = dpp + ppn - pph - dp - credit - retensi;
+  // Biaya yang sudah dibayar perusahaan: langsung mengurangi rekening sumbernya, tanpa hutang.
+  if (inv.paidDirect) lines.push(cr(inv.paidDirect.account ?? AKUN.kas, net, `Dibayar dari ${inv.paidDirect.source ?? 'kas/bank'}`));
+  else lines.push(cr(AKUN.hutangUsaha, net, `Hutang ke ${vendor}`));
   return finish(lines);
 }
 
@@ -468,6 +473,24 @@ export function journalEntry(kind, doc, pb, ctx = {}) {
         files: (doc.files ?? []).filter(Boolean),
         filesLabel: `Berkas ${retentionDocName(po)}`,
         back: { name: 'invoice', id: doc.id },
+      };
+    }
+    if (isExpense(doc)) {
+      return {
+        kind,
+        typeLabel: 'Biaya',
+        date: doc.date,
+        lines: invoiceJournal(doc, pb, ctx),
+        note: `Biaya ${doc.number} · ${vendor}`,
+        source: { label: doc.number, view: { name: 'expense', id: doc.id } },
+        party: vendor,
+        basisLabel: 'Tagihan vendor',
+        basis: [],
+        extra: [['No. tagihan vendor', doc.vendorNo || '—']],
+        by: doc.bookedBy || '—',
+        files: (doc.files ?? []).filter(Boolean),
+        filesLabel: 'Bukti biaya',
+        back: { name: 'expense', id: doc.id },
       };
     }
     return {

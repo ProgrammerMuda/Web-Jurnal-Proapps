@@ -26,6 +26,9 @@ import ReorderModal from './ReorderModal.jsx';
 import ReceiptDetail from './ReceiptDetail.jsx';
 import InvoiceDetail from './InvoiceDetail.jsx';
 import InvoiceForm from './InvoiceForm.jsx';
+import ExpenseList from './ExpenseList.jsx';
+import ExpenseForm from './ExpenseForm.jsx';
+import ExpenseDetail from './ExpenseDetail.jsx';
 import JournalDetail from './JournalDetail.jsx';
 import PrForm from './PrForm.jsx';
 import PrDetail from './PrDetail.jsx';
@@ -33,7 +36,7 @@ import VoucherDetail from './VoucherDetail.jsx';
 import { formatHash, parseHash } from './routes.js';
 import { readiness } from './selectors.js';
 import { approvalState, canCreate, logEntry, nowStamp, receiptKind, receiptName } from './permissions.js';
-import { formatDate, invTotals, poTotal, reorderBlock, routeLabel, rupiah, sum, remainingQty } from './utils.js';
+import { formatDate, invTotals, isExpense, poTotal, reorderBlock, routeLabel, rupiah, sum, remainingQty } from './utils.js';
 import { toast, usePb } from './usePb.js';
 import { legacyLog } from './ApprovalLog.jsx';
 import { ConfirmHost } from './confirm.jsx';
@@ -389,6 +392,21 @@ export default function Pembelian() {
       </>
     );
   }
+  if (view.name === 'expense-new') {
+    return <ExpenseForm pb={pb} onBack={() => go({ name: 'tab', tab: 'expenses' })} onSaved={(id) => go({ name: 'expense', id })} />;
+  }
+  if (view.name === 'expense-edit' && pb.invoicesById[view.id]) {
+    return <ExpenseForm key={view.id} pb={pb} editing={pb.invoicesById[view.id]} onBack={() => go({ name: 'expense', id: view.id })} onSaved={(id) => go({ name: 'expense', id })} />;
+  }
+  // Biaya disimpan di koleksi faktur; tautan lama ke 'invoice' tetap dibuka sebagai Biaya.
+  if ((view.name === 'expense' || view.name === 'invoice') && isExpense(pb.invoicesById[view.id])) {
+    return (
+      <>
+        <ExpenseDetail key={view.id} expense={pb.invoicesById[view.id]} pb={pb} onBack={() => go({ name: 'tab', tab: 'expenses' })} go={go} openDialog={setDialog} />
+        {dialogs}
+      </>
+    );
+  }
   if (view.name === 'invoice' && pb.invoicesById[view.id]) {
     return (
       <>
@@ -402,7 +420,7 @@ export default function Pembelian() {
     ? ({ pv: pb.vouchersById, invoice: pb.invoicesById, receipt: pb.receiptsById }[view.kind ?? 'pv'] ?? {})[view.id]
     : null;
   if (view.name === 'journal' && journalDoc) {
-    const kembali = { pv: 'voucher', invoice: 'invoice', receipt: 'receipt' }[view.kind ?? 'pv'];
+    const kembali = isExpense(journalDoc) ? 'expense' : { pv: 'voucher', invoice: 'invoice', receipt: 'receipt' }[view.kind ?? 'pv'];
     return (
       <>
         <JournalDetail kind={view.kind ?? 'pv'} doc={journalDoc} pb={pb} onBack={() => go({ name: kembali, id: view.id })} go={go} />
@@ -438,6 +456,8 @@ export default function Pembelian() {
     <Stack gap="lg" p="lg" maw={1440} mx="auto">
       {tab === 'payables' ? (
         <LaporanHutang pb={pb} go={go} onBack={() => go({ name: 'tab', tab: 'overview' })} />
+      ) : tab === 'expenses' ? (
+        <ExpenseList pb={pb} go={go} />
       ) : (
         <>
           <PageIntro

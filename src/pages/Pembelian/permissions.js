@@ -16,6 +16,9 @@ const CREATE = {
   pr: ['accounting'], // PR DP, pelunasan, retensi
   pv: ['finance'],
   return: ['gudang', 'accounting'],
+  // Biaya operasional boleh diajukan siapa saja yang menerima tagihannya; akun dan pajaknya
+  // ditetapkan Accounting saat verifikasi.
+  expense: ['peminta', 'accounting', 'bm', 'gudang', 'cfo', 'finance'],
 };
 
 // Superadmin boleh membuat dan menyetujui apa pun, serta tidak terkena pemisahan tugas.
@@ -28,6 +31,8 @@ export const isSuperadmin = (role) => role === 'superadmin';
 // membaca lewat canVerify().
 const VERIFY = {
   fppbj: ['accounting'],
+  // Biaya: Accounting memilih akun beban, PPN, dan PPh sebelum biaya diajukan ke approver.
+  expense: ['accounting'],
 };
 export const canVerify = (role, doc = 'fppbj') => isSuperadmin(role) || (VERIFY[doc] ?? []).includes(role);
 // Peran yang ditunggu untuk verifikasi; dipakai pada chip "Menunggu <peran>".
@@ -55,6 +60,10 @@ const APPROVE = {
   pr: ['cfo', 'bm'], // PR DP, pelunasan, retensi
   // Membatalkan uang muka mengubah syarat bayar yang disepakati di pengadaan: cukup Chief Finance.
   dpWaiver: ['cfo'],
+  // Biaya operasional berjenjang menurut nilainya (lihat expenses.js): sampai batas cukup
+  // Building Manager, di atasnya Chief Finance lebih dulu.
+  expense: ['bm'],
+  expenseBig: ['cfo', 'bm'],
 };
 export const approvalChain = (doc) => APPROVE[doc] ?? [];
 

@@ -9,6 +9,9 @@ export const pembelianTabs = [
   { value: 'payments', label: 'Pembayaran', title: 'Pembayaran' },
   { value: 'returns', label: 'Retur Pembelian', title: 'Retur Pembelian' },
   { value: 'payables', label: 'Hutang Usaha', title: 'Hutang Usaha' },
+  // Menu Biaya di sidebar berdiri sendiri, tapi datanya milik modul ini (Hutang Usaha dan
+  // Payment Request yang sama), jadi rutenya ikut di sini: #pembelian/tab/expenses, #pembelian/biaya/<id>.
+  { value: 'expenses', label: 'Biaya', title: 'Biaya' },
 ];
 const tabKeys = pembelianTabs.map((t) => t.value);
 
@@ -34,6 +37,9 @@ export function parseHash(h) {
   if (a === 'pr' && b) return { tab: 'payments', view: { name: 'pr', id: b } };
   if (a === 'pv' && b && c === 'jurnal') return { tab: 'payments', view: { name: 'journal', kind: 'pv', id: b } };
   if (a === 'pv' && b) return { tab: 'payments', view: { name: 'voucher', id: b } };
+  if (a === 'biaya' && b === 'new') return { tab: 'expenses', view: { name: 'expense-new' } };
+  if (a === 'biaya' && b && c === 'edit') return { tab: 'expenses', view: { name: 'expense-edit', id: b } };
+  if (a === 'biaya' && b) return { tab: 'expenses', view: { name: 'expense', id: b } };
   if (a === 'laporan-hutang') return { tab: 'payables', view: { name: 'home' } };
   return { tab: a === 'tab' && tabKeys.includes(b) ? b : 'overview', view: { name: 'home' } };
 }
@@ -51,6 +57,9 @@ export function formatHash(v) {
     case 'pr-new': return `#pembelian/pr/new${v.poId ? `?po=${v.poId}` : v.invoiceIds?.length ? `?inv=${v.invoiceIds.join(',')}` : ''}`;
     case 'pr': return `#pembelian/pr/${v.id}`;
     case 'voucher': return `#pembelian/pv/${v.id}`;
+    case 'expense-new': return '#pembelian/biaya/new';
+    case 'expense': return `#pembelian/biaya/${v.id}`;
+    case 'expense-edit': return `#pembelian/biaya/${v.id}/edit`;
     case 'journal': return `#pembelian/${v.kind && v.kind !== 'pv' ? v.kind : 'pv'}/${v.id}/jurnal`;
     default: return '#pembelian';
   }

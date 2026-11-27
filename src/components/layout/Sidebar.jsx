@@ -118,7 +118,7 @@ const groups = [
           { key: 'pembelian:payables', label: 'Hutang Usaha', icon: ChartBar },
         ],
       },
-      { label: 'Biaya', icon: Receipt },
+      { key: 'pembelian:expenses', label: 'Biaya', icon: Receipt },
       { label: 'Persetujuan Perubahan', icon: ShieldCheck },
     ],
   },

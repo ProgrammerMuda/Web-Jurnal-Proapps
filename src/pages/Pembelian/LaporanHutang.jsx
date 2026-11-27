@@ -15,7 +15,7 @@ import { Callout, DocNumber, ListShell, PageIntro, RowMenu, TabBar } from './com
 import { TODAY } from './data.js';
 import { canCreate } from './permissions.js';
 import { daysLate, readiness } from './selectors.js';
-import { formatDate, invTotals, isDpInvoice, rupiah, rupiahShort, sum, vendorCredit } from './utils.js';
+import { formatDate, invTotals, isDpInvoice, isExpense, rupiah, rupiahShort, sum, vendorCredit } from './utils.js';
 
 // Akun Hutang Usaha di jurnal Pembelian (2-10200). Retensi punya akun sendiri (2-10160) dan
 // baru masuk Hutang Usaha saat dilepas, jadi tidak ikut di angka utama.
@@ -327,8 +327,8 @@ export default function LaporanHutang({ pb, go }) {
   const invoiceRows = filteredRows.map(({ inv, t, late }) => (
     <Table.Tr key={inv.id}>
       <Table.Td>
-        <DocNumber onClick={() => go({ name: 'invoice', id: inv.id })}>{inv.number}</DocNumber>
-        <Text fz={11} c="slate.6">{[isDpInvoice(inv) && 'Uang muka', inv.vendorNo].filter(Boolean).join(' · ') || '–'}</Text>
+        <DocNumber onClick={() => go({ name: isExpense(inv) ? 'expense' : 'invoice', id: inv.id })}>{inv.number}</DocNumber>
+        <Text fz={11} c="slate.6">{[isDpInvoice(inv) && 'Uang muka', isExpense(inv) && 'Biaya', inv.vendorNo].filter(Boolean).join(' · ') || '–'}</Text>
       </Table.Td>
       <Table.Td>
         <Anchor fz="sm" c="slate.9" fw={600} onClick={() => { setVendorId(inv.vendorId); setPage(1); }}>{vname(inv.vendorId)}</Anchor>
@@ -344,7 +344,7 @@ export default function LaporanHutang({ pb, go }) {
         <RowMenu
           label={inv.number}
           items={[
-            { label: 'Lihat faktur', icon: Eye, onClick: () => go({ name: 'invoice', id: inv.id }) },
+            { label: isExpense(inv) ? 'Lihat biaya' : 'Lihat faktur', icon: Eye, onClick: () => go({ name: isExpense(inv) ? 'expense' : 'invoice', id: inv.id }) },
             canPr && t.free > 0 && { label: 'Ajukan pembayaran', icon: Money, onClick: () => go({ name: 'pr-new', invoiceIds: [inv.id] }) },
             inv.poId && { label: 'Lihat pesanan', icon: Package, onClick: () => go({ name: 'po', id: inv.poId }) },
           ]}

@@ -10,7 +10,7 @@ import { formatHash as gudangHash } from '@/pages/Gudang/routes.js';
 import { listMoves, MOVE_TYPE } from '@/pages/Gudang/stock.js';
 import { invoiceJournal as pbInvoiceJournal, invoiceReversal, priceAdjustJournals, receiptJournal, refundJournal, returnJournal, voucherJournal } from '@/pages/Pembelian/journal.js';
 import { formatHash as pembelianHash } from '@/pages/Pembelian/routes.js';
-import { isDpInvoice, receiptConfirmed } from '@/pages/Pembelian/utils.js';
+import { isDpInvoice, isExpense, isPendingExpense, receiptConfirmed } from '@/pages/Pembelian/utils.js';
 import { saleJournals } from '@/pages/Penjualan/journal.js';
 import { formatHash as penjualanHash } from '@/pages/Penjualan/routes.js';
 
@@ -92,14 +92,15 @@ function pembelianEntries(rawPb, ctx) {
   // Faktur yang dibatalkan tetap dijurnal di tanggalnya, lalu dibalik di tanggal pembatalan,
   // supaya laporan periode sebelum pembatalan tidak berubah. Faktur batal lama yang tidak
   // menyimpan tanggal pembatalannya tidak bisa ditempatkan, jadi keduanya tidak ikut.
-  (pb.invoices ?? []).filter((i) => !i.cancelled || i.cancelledAt).forEach((inv) => {
+  // Biaya yang belum disetujui belum berjurnal; biaya yang ditolak tidak pernah berjurnal.
+  (pb.invoices ?? []).filter((i) => (!i.cancelled || i.cancelledAt) && !isPendingExpense(i)).forEach((inv) => {
     list.push(entry({
       id: `pb-inv-${inv.id}`,
       module: 'Pembelian',
       date: inv.date,
-      title: isDpInvoice(inv) ? 'Faktur uang muka' : 'Faktur pembelian',
+      title: isExpense(inv) ? 'Biaya' : isDpInvoice(inv) ? 'Faktur uang muka' : 'Faktur pembelian',
       ref: inv.number,
-      href: pembelianHash({ name: 'invoice', id: inv.id }),
+      href: pembelianHash({ name: isExpense(inv) ? 'expense' : 'invoice', id: inv.id }),
       lines: pbInvoiceJournal(inv, pb, ctx),
     }));
     if (inv.cancelled) {
@@ -107,9 +108,9 @@ function pembelianEntries(rawPb, ctx) {
         id: `pb-invx-${inv.id}`,
         module: 'Pembelian',
         date: inv.cancelledAt,
-        title: 'Pembatalan faktur',
+        title: isExpense(inv) ? 'Pembatalan biaya' : 'Pembatalan faktur',
         ref: inv.number,
-        href: pembelianHash({ name: 'invoice', id: inv.id }),
+        href: pembelianHash({ name: isExpense(inv) ? 'expense' : 'invoice', id: inv.id }),
         lines: invoiceReversal(inv, pb, ctx),
       }));
     }

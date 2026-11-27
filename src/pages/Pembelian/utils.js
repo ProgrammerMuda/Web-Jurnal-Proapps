@@ -200,6 +200,12 @@ export function bappProgress(po, receipts, pickedItemIds) {
 // Qty pada baris penerimaan yang sudah masuk faktur.
 // Faktur yang dibatalkan tidak lagi menghitung apa pun: qty-nya kembali terbuka untuk difaktur ulang.
 export const liveInvoices = (invoices) => invoices.filter((i) => !i.cancelled);
+// Dokumen Biaya (menu Biaya) disimpan bersama faktur pembelian supaya ikut Hutang Usaha dan
+// antrean Payment Request yang sama. Selama belum disetujui ia belum punya nilai hutang.
+export const isExpense = (inv) => inv?.type === 'biaya';
+export const isPendingExpense = (inv) => isExpense(inv) && inv.stage !== 'dibukukan';
+// Faktur pembelian "asli" (dari PO atau tagihan manual), tanpa dokumen Biaya.
+export const purchaseInvoices = (invoices) => invoices.filter((i) => !isExpense(i));
 export const invoicedQty = (receiptId, itemId, invoices) =>
   sum(
     liveInvoices(invoices).flatMap((i) => i.lines),
@@ -542,7 +548,8 @@ export function prAllocated(inv, prs, { onlyPaid }) {
 
 export function invTotals(inv, { pos, prs, returns, invoices = [] }) {
   // Faktur batal bernilai nol di mana pun ia muncul (hutang, sisa, daftar pembayaran).
-  if (inv.cancelled) return { dpp: 0, ppn: 0, pph: 0, dp: 0, ret: 0, retensi: 0, credit: 0, total: 0, paid: 0, balance: 0, free: 0 };
+  // Biaya yang belum disetujui juga: hutangnya baru lahir saat biaya dibukukan.
+  if (inv.cancelled || isPendingExpense(inv)) return { dpp: 0, ppn: 0, pph: 0, dp: 0, ret: 0, retensi: 0, credit: 0, total: 0, paid: 0, balance: 0, free: 0 };
   if (isRetentionRelease(inv)) {
     // Pelepasan retensi: saldo Hutang Retensi pindah ke Hutang Usaha, dipotong PPh-nya
     // (PPh atas porsi retensi dipotong saat retensi dibayar). Tanpa PPN.
@@ -566,8 +573,10 @@ export function invTotals(inv, { pos, prs, returns, invoices = [] }) {
   const ret = invReturns(inv, returns);
   const credit = inv.credit ?? 0; // kredit vendor yang dialokasikan ke faktur ini
   const total = Math.max(dpp + ppn - pph - dp - ret - retensi - credit, 0);
-  const paid = prAllocated(inv, prs, { onlyPaid: true });
-  const committed = prAllocated(inv, prs, { onlyPaid: false });
+  // Biaya yang sudah dibayar perusahaan saat diajukan (debit otomatis, kartu perusahaan):
+  // lunas begitu dibukukan, tanpa Payment Request.
+  const paid = inv.paidDirect ? total : prAllocated(inv, prs, { onlyPaid: true });
+  const committed = inv.paidDirect ? total : prAllocated(inv, prs, { onlyPaid: false });
   return {
     dpp,
     ppn,
