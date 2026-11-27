@@ -1,8 +1,26 @@
 import { Box, Card, Group, SimpleGrid, Text, ThemeIcon } from '@mantine/core';
+import styles from './StatCards.module.css';
 
-export function StatCard({ label, value, hint, icon: Icon }) {
+// onClick (opsional): kartu jadi tombol, mis. untuk menyaring tabel di bawahnya.
+// active menandai saringan yang sedang dipakai.
+export function StatCard({ label, value, hint, icon: Icon, onClick, active = false }) {
   return (
-    <Card withBorder radius="md" padding="md" bg="white">
+    <Card
+      withBorder
+      radius="md"
+      padding="md"
+      bg={onClick ? undefined : 'white'}
+      className={onClick ? styles.card : undefined}
+      component={onClick ? 'button' : 'div'}
+      onClick={onClick}
+      aria-pressed={onClick ? active : undefined}
+      ta="left"
+      w="100%"
+      style={{
+        cursor: onClick ? 'pointer' : undefined,
+        font: 'inherit',
+      }}
+    >
       <Group justify="space-between" align="flex-start" wrap="nowrap">
         <Box>
           <Text fz={11} fw={600} c="slate.6" tt="uppercase" style={{ letterSpacing: 0.5 }}>

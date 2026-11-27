@@ -186,6 +186,7 @@ export const ACTIVITY = {
   issued: 'Diterbitkan',
   sent: 'Dikirim ke pelanggan',
   resent: 'Dikirim ulang',
+  reminded: 'Pengingat tagihan dikirim',
   paid: 'Pembayaran dicatat',
   paymentVoided: 'Pembayaran dibatalkan',
   cancelled: 'Dibatalkan',

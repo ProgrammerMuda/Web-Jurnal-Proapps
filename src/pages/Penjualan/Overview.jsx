@@ -11,6 +11,7 @@ import { PageIntro } from './components.jsx';
 import { TODAY } from './data.js';
 import { orderStatus } from './orders.js';
 import { isExpired, quoteStatus } from './quotes.js';
+import { BUCKETS, openSales } from './receivables.js';
 import { creditPart, returnStatus } from './returns.js';
 import { formatHash } from './routes.js';
 import { actionsOf, days, isLate, sum, unsent } from './selectors.js';
@@ -32,14 +33,6 @@ function ageLine(a) {
   return `Batas ${formatDate(a.due)} · ${a.late === 0 ? 'hari ini' : `${-a.late} hari lagi`}`;
 }
 
-const BUCKETS = [
-  { key: 'current', label: 'Belum jatuh tempo', color: 'green.6', test: (d) => d <= 0 },
-  { key: 'd30', label: '1–30 hari', color: 'yellow.6', test: (d) => d <= 30 },
-  { key: 'd60', label: '31–60 hari', color: 'orange.6', test: (d) => d <= 60 },
-  { key: 'd90', label: '61–90 hari', color: 'red.5', test: (d) => d <= 90 },
-  { key: 'old', label: '> 90 hari', color: 'red.8', test: () => true },
-];
-
 // Bulan sebelumnya dari "YYYY-MM".
 const prevMonth = (ym) => {
   const [y, m] = ym.split('-').map(Number);
@@ -52,10 +45,8 @@ export default function Overview() {
   const nameOf = (id) => contactsById[id]?.displayName ?? 'Pelanggan';
 
   // --- Piutang dan komposisinya menurut jatuh tempo ---
-  const open = sales
-    .filter((s) => ['issued', 'partial'].includes(statusOf(s)))
-    .map((s) => ({ s, balance: computeTotals(s).balance }))
-    .filter((x) => x.balance > 0);
+  // Aturan faktur terbuka dan kelompok umur sama dengan halaman Piutang Usaha (receivables.js).
+  const open = openSales(sales).map((r) => ({ s: r.sale, balance: r.balance }));
   const piutang = sum(open, (x) => x.balance);
   const telatList = open.filter((x) => x.s.dueDate < TODAY);
   const overdue = sum(telatList, (x) => x.balance);
@@ -202,7 +193,7 @@ export default function Overview() {
           <CompositionCard
             title="Piutang usaha berjalan"
             text={`${open.length} faktur belum lunas${masaDepan ? ` · ${masaDepan} bertanggal setelah hari ini` : ''}`}
-            action={{ label: 'Faktur penjualan', onClick: () => go({ name: 'tab', tab: 'invoices' }) }}
+            action={{ label: 'Piutang usaha', onClick: () => go({ name: 'tab', tab: 'receivables' }) }}
             figure={rupiah(piutang)}
             parts={komposisi}
           />
@@ -296,7 +287,11 @@ export default function Overview() {
         <Grid.Col span={{ base: 12, lg: 4 }}>
           <Stack gap="lg">
             <Card withBorder radius="lg" padding="lg" bg="white">
-              <CardTitle title="Umur piutang" text="Sisa tagihan menurut lama jatuh tempo" />
+              <CardTitle
+                title="Umur piutang"
+                text="Sisa tagihan menurut lama jatuh tempo"
+                right={<Button variant="default" size="compact-xs" radius="xl" onClick={() => go({ name: 'tab', tab: 'receivables' })} style={{ flexShrink: 0 }}>Rincian</Button>}
+              />
               <Progress.Root size={8} radius="xl" my="sm" bg="gray.1">
                 {buckets.map((b) => b.value > 0 && <Progress.Section key={b.key} value={(b.value / piutang) * 100} color={b.color} />)}
               </Progress.Root>
@@ -316,7 +311,7 @@ export default function Overview() {
                     alert: p.late > 0,
                   }))}
                   total={piutang}
-                  onClick={() => go({ name: 'tab', tab: 'invoices' })}
+                  onClick={() => go({ name: 'tab', tab: 'receivables' })}
                 />
               )}
             </Card>

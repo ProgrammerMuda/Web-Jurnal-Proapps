@@ -1,20 +1,14 @@
 // Shell modul Penjualan: menentukan tab aktif dari hash, lalu memasang halaman tab itu.
-// Tab yang belum dibangun memakai Placeholder — struktur menu dan rutenya sudah jalan.
-import { Stack } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useEffect, useState } from 'react';
-import {
-  ChartBar,
-  CheckCircle,
-  Invoice as InvoiceIcon,
-} from '@/components/Icon.jsx';
+import { CheckCircle } from '@/components/Icon.jsx';
 import { useData } from '@/lib/store.jsx';
 import Invoices from './Invoices.jsx';
 import Orders from './Orders.jsx';
 import Overview from './Overview.jsx';
 import Payments from './Payments.jsx';
 import Quotes from './Quotes.jsx';
-import Placeholder from './Placeholder.jsx';
+import Piutang from './Piutang.jsx';
 import Returns from './Returns.jsx';
 import ReturnForm from './ReturnForm.jsx';
 import SaleForm from './SaleForm.jsx';
@@ -52,22 +46,6 @@ import {
   nowIso,
   numberTaken,
 } from './utils.js';
-
-// Isi tiap tab yang belum dibangun: ikon, judul, deskripsi, dan rencana isinya.
-// Tab yang belum dibangun: ikon, judul, deskripsi, dan rencana isinya.
-const stubs = {
-  receivables: {
-    icon: ChartBar,
-    title: 'Piutang Usaha',
-    description:
-      'Umur piutang per pelanggan, dihitung dari faktur yang belum lunas dan tanggal jatuh temponya.',
-    plan: [
-      'Kelompok umur: belum jatuh tempo, 1\u201330, 31\u201360, 61\u201390, > 90 hari',
-      'Rekap per pelanggan dengan rincian faktur di dalamnya',
-      'Ekspor dan penanda faktur yang perlu segera ditagih',
-    ],
-  },
-};
 
 // #29: isian faktur denda — satu baris denda, nilainya dari sisa tagihan yang telat.
 function lateFeePrefill(sale) {
@@ -415,7 +393,7 @@ const goHash = (v) => {
 };
 
 // params (dari halaman lain): { saleId } membuka rincian faktur, { createFor } membuka form.
-export default function Penjualan({ params }) {
+export default function Penjualan({ params, onNavigate }) {
   const [hash, setHash] = useState(() => window.location.hash);
   useEffect(() => {
     const on = () => setHash(window.location.hash);
@@ -468,15 +446,6 @@ export default function Penjualan({ params }) {
     );
   }
 
-  const stub = stubs[tab];
-  return (
-    <Stack gap="lg" p="lg" maw={1440} mx="auto">
-      <Placeholder
-        icon={stub.icon ?? InvoiceIcon}
-        title={stub.title}
-        description={stub.description}
-        plan={stub.plan}
-      />
-    </Stack>
-  );
+  // Tab tersisa: Piutang Usaha.
+  return <Piutang onNavigate={onNavigate} />;
 }

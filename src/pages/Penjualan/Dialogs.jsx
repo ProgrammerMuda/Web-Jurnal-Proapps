@@ -56,10 +56,41 @@ const emailLooksValid = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
 // Kirim faktur draf, atau kirim ulang faktur yang sudah terbit.
 // Dipasang hanya saat ada faktur terpilih, dengan key={sale.id} dari pemanggilnya.
-export function SendModal({ sale, doc = DOC.invoice, resend = false, onClose, onSend }) {
+// Teks pengingat bawaan: sisa tagihan, jatuh tempo, dan tautan pembayaran bila ada.
+export function reminderNote(sale) {
+  const t = computeTotals(sale);
+  const telat = sale.dueDate < TODAY;
+  return [
+    `Kami ingin mengingatkan faktur ${sale.number} dengan sisa tagihan ${rupiah(t.balance)}, ` +
+      `${telat ? 'yang sudah jatuh tempo pada' : 'yang jatuh tempo pada'} ${formatDate(sale.dueDate)}.`,
+    sale.invoiceLink ? `Pembayaran dapat dilakukan melalui tautan berikut: ${sale.invoiceLink}` : null,
+    'Abaikan pesan ini bila pembayaran sudah dilakukan. Terima kasih.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+// Pengingat per pelanggan: satu pesan berisi semua faktur terlambat miliknya.
+export function customerReminderNote(sales) {
+  if (sales.length === 1) return reminderNote(sales[0]);
+  const total = sales.reduce((n, s) => n + computeTotals(s).balance, 0);
+  return [
+    `Kami ingin mengingatkan ${sales.length} faktur yang sudah lewat jatuh tempo dengan total sisa tagihan ${rupiah(total)}:`,
+    sales
+      .map((s) => `- ${s.number}: ${rupiah(computeTotals(s).balance)}, jatuh tempo ${formatDate(s.dueDate)}`)
+      .join('\n'),
+    'Abaikan pesan ini bila pembayaran sudah dilakukan. Terima kasih.',
+  ].join('\n\n');
+}
+
+// reminder: kirim ulang faktur sebagai pengingat tagihan (dari halaman Piutang Usaha).
+// initialNote: isi pesan bawaan pengganti, mis. pengingat gabungan per pelanggan.
+export function SendModal({ sale, doc = DOC.invoice, resend = false, reminder = false, initialNote, onClose, onSend }) {
   const customer = useCustomer(sale.customerId);
   const [to, setTo] = useState(() => customer?.email ?? '');
-  const [note, setNote] = useState(() => sale.message ?? '');
+  const [note, setNote] = useState(
+    () => initialNote ?? (reminder ? reminderNote(sale) : (sale.message ?? '')),
+  );
   const [submitted, setSubmitted] = useState(false);
 
   const error =
@@ -78,9 +109,17 @@ export function SendModal({ sale, doc = DOC.invoice, resend = false, onClose, on
       onClose={onClose}
       size={920}
       icon={PaperPlaneTilt}
-      title={resend ? `Kirim Ulang ${cap(doc.word)}` : `Kirim ${cap(doc.word)} ke Pelanggan`}
+      title={
+        reminder
+          ? 'Kirim Pengingat Tagihan'
+          : resend
+            ? `Kirim Ulang ${cap(doc.word)}`
+            : `Kirim ${cap(doc.word)} ke Pelanggan`
+      }
       subtitle={
-        resend
+        reminder
+          ? 'Faktur yang sama dikirim ulang dengan pesan pengingat. Status dan nomornya tidak berubah.'
+          : resend
           ? `${cap(doc.word)} yang sama dikirim ulang, status dan nomornya tidak berubah.`
           : `Setelah dikirim, ${doc.word} tidak bisa diubah atau dihapus lagi.`
       }
@@ -90,7 +129,7 @@ export function SendModal({ sale, doc = DOC.invoice, resend = false, onClose, on
             Batal
           </Button>
           <Button radius="md" leftSection={<PaperPlaneTilt size={16} />} onClick={submit}>
-            {resend ? 'Kirim ulang' : `Kirim ${doc.word}`}
+            {reminder ? 'Kirim pengingat' : resend ? 'Kirim ulang' : `Kirim ${doc.word}`}
           </Button>
         </>
       }

@@ -14,12 +14,10 @@ import {
 } from '@mantine/core';
 import { useEffect, useMemo, useState } from 'react';
 import StatCards from '@/components/StatCards.jsx';
-import { notifications } from '@mantine/notifications';
 import {
   ArrowCounterClockwise,
   ArrowsClockwise,
   Check,
-  CheckCircle,
   ClipboardText,
   Clock,
   Copy,
@@ -41,11 +39,12 @@ import {
 import { CopyIcon, PageIntro, StatusBadge } from './components.jsx';
 import { BulkBillingModal, DeleteModal, JournalModal, ReasonModal, SendModal } from './Dialogs.jsx';
 import PaymentModal from './PaymentModal.jsx';
+import { toast, useSaleActions } from './saleActions.jsx';
 import SaleDetail from './SaleDetail.jsx';
 import { downloadInvoice } from './invoicePdf.js';
-import { formatHash, invoiceLinkFor } from './routes.js';
+import { formatHash } from './routes.js';
 import { initialSale, paymentTerms, products } from './data.js';
-import { canReturnInvoice, creditPart, customerCredit, returnStatus } from './returns.js';
+import { canReturnInvoice, customerCredit } from './returns.js';
 import { PAYMENT_VOID_REASONS, releaseCredit, voidPayment } from './payments.js';
 import { saleJournals } from './journal.js';
 import {
@@ -125,18 +124,6 @@ const goForm = (v) => {
   window.location.hash = formatHash(v);
   window.scrollTo({ top: 0 });
 };
-
-// Umpan balik aksi, mengikuti gaya notifikasi halaman Kontak.
-const toast = (title, message, color = 'green') =>
-  notifications.show({
-    color,
-    icon: color === 'red' ? <Trash size={18} /> : <CheckCircle size={18} />,
-    title,
-    message,
-    autoClose: 5000,
-    withBorder: true,
-    radius: 'md',
-  });
 
 function SaleRow({ sale, onOpen, onPay, onCreateLink, actions }) {
   const t = computeTotals(sale);
@@ -360,51 +347,15 @@ export default function Invoices({ params }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState('10');
 
-  const updateSale = (id, fn) =>
-    setSales((list) => list.map((s) => (s.id === id ? { ...fn(s), updatedAt: nowIso() } : s)));
+  const { updateSale, recordPayment, recordSend, copyLink } = useSaleActions();
 
   const openDetail = (id) => goForm({ name: 'invoice', id });
   const closeDetail = () => goForm({ name: 'tab', tab: 'invoices' });
 
-  // Tautan faktur dibuat sekali, lalu disalin ke clipboard setiap kali diminta.
-  // Tautannya mengarah ke halaman faktur pelanggan (#invoice/<id>) di aplikasi ini,
-  // jadi benar-benar bisa dibuka, bukan sekadar alamat contoh.
-  const createLink = (id) => {
-    const sale = sales.find((s) => s.id === id);
-    const link = sale.invoiceLink ?? invoiceLinkFor(id);
-    if (!sale.invoiceLink) updateSale(id, (s) => ({ ...s, invoiceLink: link }));
-    navigator.clipboard?.writeText(link).catch(() => {});
-    toast(
-      sale.invoiceLink ? 'Tautan disalin' : 'Tautan faktur dibuat',
-      'Tautan sudah ada di papan klip dan bisa dibuka pelanggan.',
-    );
-  };
+  const createLink = copyLink;
 
   const savePayment = (payment) => {
-    updateSale(payId, (s) =>
-      logActivity(
-        { ...s, payments: [...s.payments, payment] },
-        'paid',
-        `${rupiah(payment.amount)} · ${payment.method}`,
-      ),
-    );
-    // B3: saldo kredit yang terpakai dicatat di returnya, diambil dari retur terlama
-    // lebih dulu supaya kredit tidak menggantung tanpa pemilik.
-    if (payment.fromCredit) {
-      const pelanggan = paying?.customerId;
-      let sisa = payment.amount;
-      setSalesReturns((list) =>
-        list.map((r) => {
-          if (sisa <= 0 || r.customerId !== pelanggan) return r;
-          if (!['issued'].includes(returnStatus(r))) return r;
-          const tersedia = creditPart(r) - (r.creditUsed ?? 0);
-          if (tersedia <= 0) return r;
-          const pakai = Math.min(tersedia, sisa);
-          sisa -= pakai;
-          return { ...r, creditUsed: (r.creditUsed ?? 0) + pakai, updatedAt: nowIso() };
-        }),
-      );
-    }
+    recordPayment(paying, payment);
     setPayId(null);
   };
 
@@ -446,23 +397,9 @@ export default function Invoices({ params }) {
 
   // Mengirim draf menerbitkan fakturnya: status menjadi Terkirim dan ikut dihitung
   // sebagai piutang. Kirim ulang hanya menambah catatan pengiriman.
-  const sendSale = (sale, { to, note }, resend) => {
-    const entry = { at: nowIso(), to };
-    updateSale(sale.id, (s) =>
-      logActivity(
-        {
-          ...s,
-          draft: resend ? s.draft : false,
-          number: s.number || nextInvoiceNumber(sales),
-          message: note || s.message,
-          sends: [...(s.sends ?? []), entry],
-        },
-        resend ? 'resent' : 'sent',
-        to,
-      ),
-    );
+  const sendSale = (sale, data, resend) => {
+    recordSend(sale, data, resend ? 'resend' : 'send');
     closeDialog();
-    toast(resend ? 'Faktur dikirim ulang' : 'Faktur terkirim', `${sale.number} dikirim ke ${to}.`);
   };
 
   // #8: pembatalan tidak menghapus apa pun — fakturnya tetap ada, jurnalnya dibalik.
