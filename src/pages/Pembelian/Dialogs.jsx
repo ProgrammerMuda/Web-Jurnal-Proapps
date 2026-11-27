@@ -250,7 +250,29 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
   const quoteNet = quoteGross - discRp + shipRp;
   // Termin dibagi dari nilai yang benar-benar ditagih vendor, jadi sesudah diskon dan ongkir.
   const base = scheduleBase(quoteNet, buildTerm(f, spec));
-  const setPct = (k, v) => setF((x) => ({ ...x, termPcts: x.termPcts.map((p, i) => (i === k ? Number(v) || 0 : p)) }));
+  // Pratinjau jadwal tagihan: persen termin dari nilai penawaran, lalu tiap faktur termin
+  // dipotong DP (sebanding) dan retensi. Yang dibaca pengguna adalah kolom "Dibayar", supaya
+  // jelas bahwa DP + seluruh termin + retensi tetap berjumlah nilai penawaran, bukan lebih.
+  const dpOut = scheduleExcludesDp(buildTerm(f, spec));
+  const dpPctNow = needs('dp') ? Number(f.dpPct) || 0 : 0;
+  const retPctNow = needs('retention') ? Number(f.retentionPct) || 0 : 0;
+  const dpRp = dpPctNow > 0 ? Math.round((quoteNet * dpPctNow) / 100) : 0;
+  // Termin terakhir menyerap sisa pembulatan (nilai dan potongan DP) bila bobotnya pas 100%.
+  const exact = Math.abs(pctSum - 100) <= 0.05;
+  const rawVals = pcts.map((p) => Math.round((base * (Number(p) || 0)) / 100));
+  const rawDps = rawVals.map((v) => (dpOut ? 0 : Math.round((v * dpPctNow) / 100)));
+  const sumBefore = (arr, k) => arr.slice(0, k).reduce((n, x) => n + x, 0);
+  const slots = rawVals.map((raw, k) => {
+    const last = exact && k === rawVals.length - 1;
+    const value = last ? base - sumBefore(rawVals, k) : raw;
+    const dpCut = last && !dpOut ? dpRp - sumBefore(rawDps, k) : rawDps[k];
+    const ret = Math.round((value * retPctNow) / 100);
+    return { value, dpCut, ret, paid: value - dpCut - ret };
+  });
+  const retRp = slots.reduce((n, s) => n + s.ret, 0);
+  const billedRp = dpRp + retRp + slots.reduce((n, s) => n + s.paid, 0);
+  const showDpCut = dpPctNow > 0 && !dpOut;
+  const setPct =(k, v) => setF((x) => ({ ...x, termPcts: x.termPcts.map((p, i) => (i === k ? Number(v) || 0 : p)) }));
 
   const usedVendors = fppbj.quotes.filter((q) => q.id !== editing?.id).map((q) => q.vendorId);
   const vendorData = pb.vendors
@@ -579,32 +601,67 @@ export function QuoteModal({ opened, onClose, fppbj, pb, editing, single }) {
                 <Table verticalSpacing={6} horizontalSpacing="sm" styles={th}>
                   <Table.Thead>
                     <Table.Tr>
-                      <Table.Th>Termin</Table.Th>
-                      <Table.Th w={120} ta="right">Bobot (%)</Table.Th>
-                      <Table.Th ta="right">Nilai</Table.Th>
+                      <Table.Th>Tagihan</Table.Th>
+                      <Table.Th w={110} ta="right">Bobot (%)</Table.Th>
+                      <Table.Th ta="right">Nilai termin</Table.Th>
+                      {showDpCut && <Table.Th ta="right">Potong DP</Table.Th>}
+                      {retPctNow > 0 && <Table.Th ta="right">Retensi</Table.Th>}
+                      <Table.Th ta="right">Dibayar</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
+                    {dpRp > 0 && (
+                      <Table.Tr>
+                        <Table.Td fz="sm" fw={600}>Uang muka</Table.Td>
+                        <Table.Td ta="right" fz="sm" c="slate.7">{dpPctNow}%</Table.Td>
+                        <Table.Td ta="right" fz="sm" c="slate.5">–</Table.Td>
+                        {showDpCut && <Table.Td ta="right" fz="sm" c="slate.5">–</Table.Td>}
+                        {retPctNow > 0 && <Table.Td ta="right" fz="sm" c="slate.5">–</Table.Td>}
+                        <Table.Td ta="right" fz="sm" fw={600} style={{ whiteSpace: 'nowrap' }}>{rupiah(dpRp)}</Table.Td>
+                      </Table.Tr>
+                    )}
                     {pcts.map((p, k) => (
                       <Table.Tr key={k}>
                         <Table.Td fz="sm" fw={600}>Termin {k + 1}</Table.Td>
                         <Table.Td>
                           <NumberField size="xs" radius="md" min={0} max={100} clampBehavior="strict" decimalScale={1} value={p} onChange={(v) => setPct(k, v)} />
                         </Table.Td>
-                        <Table.Td ta="right" fz="sm">{base > 0 ? rupiah(Math.round((base * (Number(p) || 0)) / 100)) : '—'}</Table.Td>
+                        <Table.Td ta="right" fz="sm" c="slate.7" style={{ whiteSpace: 'nowrap' }}>{base > 0 ? rupiah(slots[k].value) : '–'}</Table.Td>
+                        {showDpCut && <Table.Td ta="right" fz="sm" c="slate.7" style={{ whiteSpace: 'nowrap' }}>{base > 0 ? `− ${rupiah(slots[k].dpCut)}` : '–'}</Table.Td>}
+                        {retPctNow > 0 && <Table.Td ta="right" fz="sm" c="slate.7" style={{ whiteSpace: 'nowrap' }}>{base > 0 ? `− ${rupiah(slots[k].ret)}` : '–'}</Table.Td>}
+                        <Table.Td ta="right" fz="sm" fw={600} style={{ whiteSpace: 'nowrap' }}>{base > 0 ? rupiah(slots[k].paid) : '–'}</Table.Td>
                       </Table.Tr>
                     ))}
+                    {retRp > 0 && (
+                      <Table.Tr>
+                        <Table.Td fz="sm" fw={600}>Pelepasan retensi</Table.Td>
+                        <Table.Td ta="right" fz="sm" c="slate.7">{retPctNow}%</Table.Td>
+                        <Table.Td ta="right" fz="sm" c="slate.5" colSpan={1 + (showDpCut ? 1 : 0) + 1}>
+                          setelah pemeliharaan {f.retentionMonths} bulan
+                        </Table.Td>
+                        <Table.Td ta="right" fz="sm" fw={600} style={{ whiteSpace: 'nowrap' }}>{rupiah(retRp)}</Table.Td>
+                      </Table.Tr>
+                    )}
                   </Table.Tbody>
                 </Table>
-                <Group justify="space-between" px="md" py={8} style={{ borderTop: '1px solid var(--mantine-color-gray-2)' }}>
+                <Group justify="space-between" align="flex-start" px="md" py={8} gap="md" wrap="nowrap" style={{ borderTop: '1px solid var(--mantine-color-gray-2)' }}>
                   <Text fz="xs" c="slate.6">
-                    {scheduleExcludesDp(buildTerm(f, spec))
-                      ? `Dihitung dari nilai setelah dikurangi uang muka ${f.dpPct}%`
-                      : f.dpPct > 0 && needs('dp') ? `Dihitung dari nilai penawaran · DP ${f.dpPct}% dipotong proporsional di tiap termin` : 'Dihitung dari nilai penawaran'}
-                    {needs('retention') ? ` · retensi ${f.retentionPct}% ditahan dari tiap termin` : ''}
-                    {base > 0 ? ` · ${rupiah(base)}` : ''}
+                    {dpOut
+                      ? `Bobot termin dihitung dari sisa setelah uang muka ${dpPctNow}% (${rupiah(base)}).`
+                      : `Bobot termin dihitung dari nilai penawaran ${rupiah(quoteNet)}.`}
+                    {showDpCut ? ` Tiap termin dipotong DP ${dpPctNow}% sampai uang muka habis.` : ''}
+                    {retPctNow > 0 ? ` Retensi ${retPctNow}% ditahan dari tiap termin.` : ''}
                   </Text>
-                  <Text fz="xs" fw={700} c={Math.abs(pctSum - 100) > 0.05 ? 'red.7' : 'slate.9'}>Total {pctSum}%</Text>
+                  <Box ta="right" style={{ flexShrink: 0 }}>
+                    <Text fz="xs" fw={700} c={Math.abs(pctSum - 100) > 0.05 ? 'red.7' : 'slate.9'}>
+                      Bobot termin {pctSum}%{Math.abs(pctSum - 100) > 0.05 ? ` (harus 100%)` : ''}
+                    </Text>
+                    {base > 0 && (
+                      <Text fz="xs" c={Math.abs(billedRp - quoteNet) > 1 ? 'red.7' : 'slate.6'} style={{ whiteSpace: 'nowrap' }}>
+                        Total dibayar {rupiah(billedRp)} dari {rupiah(quoteNet)}
+                      </Text>
+                    )}
+                  </Box>
                 </Group>
               </Box>
             )}
