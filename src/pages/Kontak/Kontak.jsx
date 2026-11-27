@@ -5,11 +5,10 @@ import {
   Button,
   Card,
   Center,
-  Grid,
+  SimpleGrid,
   Group,
   Menu,
   Pagination,
-  Progress,
   ScrollArea,
   Select,
   Stack,
@@ -17,6 +16,7 @@ import {
   Table,
   Text,
   TextInput,
+  ThemeIcon,
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
@@ -53,7 +53,8 @@ import ContactDetail from './ContactDetail.jsx';
 import ContactFormModal from './ContactFormModal.jsx';
 import ContactHistory from './ContactHistory.jsx';
 import { ContactAvatar, TypeBadges } from './components.jsx';
-import { accountLabel, contactTypes } from './data.js';
+import { accountLabel } from './data.js';
+import styles from './ContactFilters.module.css';
 import { ArchiveModal, GroupModal, ImportModal } from './OtherModals.jsx';
 import { contactRows, downloadCsv, fullName, generateContactNumber } from './utils.js';
 
@@ -67,74 +68,24 @@ const tabs = [
 ];
 const pageSizes = ['10', '20', '50'].map((v) => ({ value: v, label: `${v} / hal` }));
 const number = new Intl.NumberFormat('id-ID');
-const pct = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
-
-function Composition({ contacts }) {
-  const total = contacts.length;
-  const counts = contactTypes.map((t) => ({
-    ...t,
-    count: contacts.filter((c) => c.types.includes(t.value)).length,
-  }));
-  const sum = counts.reduce((n, t) => n + t.count, 0) || 1;
-
+function ContactFilters({ contacts, selected, onSelect }) {
   return (
-    <Card withBorder radius="lg" padding="lg" bg="white">
-      <Grid gutter="lg" align="center">
-        <Grid.Col span={{ base: 12, md: 3 }}>
-          <Text fz={11} fw={600} c="slate.7" tt="uppercase" style={{ letterSpacing: 0.5 }}>
-            Total Kontak
-          </Text>
-          <Text fz={34} fw={700} c="primary.9" lh={1.3}>
-            {number.format(total)}
-          </Text>
-          <Text fz="xs" c="slate.6">
-            Seluruh entitas terdaftar
-          </Text>
-        </Grid.Col>
-        <Grid.Col
-          span={{ base: 12, md: 9 }}
-          style={{ borderLeft: '1px solid var(--mantine-color-gray-3)' }}
-          pl={{ md: 'lg' }}
-        >
-          <Group justify="space-between" mb="xs">
-            <Text fz="xs" fw={700} c="slate.9">
-              Komposisi tipe kontak
-            </Text>
-            <Text fz={11} c="slate.6">
-              Jumlah dan proporsi per tipe
-            </Text>
-          </Group>
-          {/* Panjang segmen dinormalisasi ke jumlah semua tipe agar muat satu bar */}
-          <Progress.Root size={16} radius="xl">
-            {counts.map((t) => (
-              <Tooltip key={t.value} label={`${t.label}: ${t.count}`} withArrow fz="xs">
-                <Progress.Section value={(t.count / sum) * 100} color={t.color} />
-              </Tooltip>
-            ))}
-          </Progress.Root>
-          <Group gap="lg" mt="sm">
-            {counts.map((t) => (
-              <Group key={t.value} gap={6} wrap="nowrap">
-                <Box w={10} h={10} bg={t.color} style={{ borderRadius: '50%' }} />
-                <Text fz="xs" c="slate.8">
-                  {t.label}
-                </Text>
-                <Text fz="xs" fw={700} c="slate.9">
-                  {number.format(t.count)}
-                </Text>
-                <Text fz={11} c="slate.6">
-                  {pct.format(total ? (t.count / total) * 100 : 0)}%
-                </Text>
-              </Group>
-            ))}
-          </Group>
-          <Text fz={11} c="slate.6" mt="xs">
-            Kontak multi-tipe dihitung pada setiap tipenya; panjang segmen dinormalisasi agar muat
-            dalam satu bar.
-          </Text>
-        </Grid.Col>
-      </Grid>
-    </Card>
+    <SimpleGrid component="section" aria-label="Statistik kontak" cols={{ base: 2, sm: 3, lg: 6 }} spacing={6} p="sm">
+      {tabs.map(({ value, label, icon: Icon }) => {
+        const count = value === 'all' ? contacts.length : contacts.filter((c) => c.types.includes(value)).length;
+        return (
+          <UnstyledButton key={value} className={styles.filter} aria-pressed={selected === value} onClick={() => onSelect(value)}>
+            <Group justify="space-between" wrap="nowrap" gap="xs">
+              <ThemeIcon variant="light" bg="secondary.0" c="secondary.7" radius="md" size={28}>
+                <Icon size={16} />
+              </ThemeIcon>
+              <Text component="span" className={styles.count}>{number.format(count)}</Text>
+            </Group>
+            <Text component="span" className={styles.label}>{label}</Text>
+          </UnstyledButton>
+        );
+      })}
+    </SimpleGrid>
   );
 }
 
@@ -510,41 +461,11 @@ export default function Kontak({ params, onNavigate }) {
         </Alert>
       )}
 
-      <Composition contacts={pool} />
-
       <Card withBorder radius="lg" padding={0} bg="white" style={{ overflow: 'hidden' }}>
-        {/* Header kartu: tab tipe kontak (gaya pill seperti sebelumnya), garis bawah mentok kiri-kanan */}
-        <Group
-          gap={4}
-          px="lg"
-          py="sm"
-          style={{ borderBottom: '1px solid var(--mantine-color-gray-3)' }}
-        >
-          {tabs.map((t) => {
-            const active = tab === t.value;
-            return (
-              <Button
-                key={t.value}
-                size="sm"
-                radius="md"
-                // Tab aktif mengikuti gaya item aktif sidebar: latar slate-1, teks primary, tebal.
-                variant="subtle"
-                color={active ? 'primary.9' : 'slate.7'}
-                bg={active ? 'slate.1' : undefined}
-                c={active ? 'primary.9' : 'slate.7'}
-                leftSection={<t.icon size={16} />}
-                fw={active ? 700 : 500}
-                fz="xs"
-                onClick={() => {
-                  setTab(t.value);
-                  setPage(1);
-                }}
-              >
-                {t.label}
-              </Button>
-            );
-          })}
-        </Group>
+        <ContactFilters contacts={pool} selected={tab} onSelect={(value) => {
+          setTab(value);
+          setPage(1);
+        }} />
 
         {/* Section filter: latar abu muda, garis bawah mentok kiri-kanan */}
         <Group
